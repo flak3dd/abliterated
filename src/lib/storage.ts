@@ -18,6 +18,7 @@ import {
   clampSelfDeepenPasses,
   type AgentRunRecord,
 } from './agentHelpers';
+import { getLicenseState } from './license';
 import { LEGACY_PROMPTS, SYSTEM_PROMPT } from './systemPrompt';
 
 export const KEYS = {
@@ -61,7 +62,9 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   selfDeepenPasses: DEFAULT_SELF_DEEPEN_PASSES,
   midRunInjectEnabled: true,
   completionFooterEnabled: true,
+  coalesceReasoningToContent: true,
   planModeEnabled: false,
+  buildModeEnabled: true,
   fastModel: '',
   maxConcurrentJobs: 1,
   inferenceProvider: 'abliteration',
@@ -81,6 +84,7 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   imageModel: 'abliterated-flux-klein',
   imageViaProxy: true,
   mcpServers: [],
+  licenseKey: import.meta.env.DEV ? 'ABLIT-ADMIN' : '',
 };
 
 export function isPlaceholderRoot(path: string): boolean {
@@ -113,7 +117,24 @@ function readJson<T>(key: string, fallback: T): T {
 }
 
 function writeJson(key: string, value: unknown): void {
-  localStorage.setItem(key, JSON.stringify(value));
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (err) {
+    const name = err instanceof DOMException ? err.name : '';
+    const quota =
+      name === 'QuotaExceededError' ||
+      name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+      (typeof err === 'object' &&
+        err != null &&
+        'code' in err &&
+        (err as { code?: number }).code === 22) ||
+      (err instanceof Error && /quota/i.test(err.message));
+    if (quota) {
+      console.warn(`[ablit] localStorage quota exceeded writing ${key}`);
+      return;
+    }
+    console.warn(`[ablit] localStorage write failed for ${key}`, err);
+  }
 }
 
 export function getSettings(): ClientSettings {
@@ -136,12 +157,25 @@ export function getSettings(): ClientSettings {
       stored.maxAgentTurns != null ? stored.maxAgentTurns : DEFAULT_MAX_AGENT_TURNS,
     ),
     selfDeepenEnabled: stored.selfDeepenEnabled !== false,
-    selfDeepenPasses: clampSelfDeepenPasses(
-      stored.selfDeepenPasses != null ? stored.selfDeepenPasses : DEFAULT_SELF_DEEPEN_PASSES,
-    ),
+    selfDeepenPasses: (() => {
+      let passes = clampSelfDeepenPasses(
+        stored.selfDeepenPasses != null ? stored.selfDeepenPasses : DEFAULT_SELF_DEEPEN_PASSES,
+      );
+      // Free tier: cap self-deepen cost (0–1 max).
+      const license = getLicenseState({
+        licenseKey:
+          typeof stored.licenseKey === 'string' ? stored.licenseKey.trim() : DEFAULT_SETTINGS.licenseKey,
+      });
+      if (license.isFree) {
+        passes = Math.min(passes, license.features.maxSelfDeepenPasses);
+      }
+      return passes;
+    })(),
     midRunInjectEnabled: stored.midRunInjectEnabled !== false,
     completionFooterEnabled: stored.completionFooterEnabled !== false,
+    coalesceReasoningToContent: stored.coalesceReasoningToContent !== false,
     planModeEnabled: stored.planModeEnabled === true,
+    buildModeEnabled: stored.buildModeEnabled !== false,
     fastModel: stored.fastModel?.trim() || '',
     maxConcurrentJobs: clampMaxConcurrentJobs(
       stored.maxConcurrentJobs != null ? stored.maxConcurrentJobs : DEFAULT_MAX_CONCURRENT_JOBS,
@@ -178,6 +212,8 @@ export function getSettings(): ClientSettings {
     imageModel: stored.imageModel?.trim() || DEFAULT_SETTINGS.imageModel,
     imageViaProxy: stored.imageViaProxy !== false,
     mcpServers: Array.isArray(stored.mcpServers) ? stored.mcpServers : [],
+    licenseKey:
+      typeof stored.licenseKey === 'string' ? stored.licenseKey.trim() : DEFAULT_SETTINGS.licenseKey,
     systemPrompt,
   };
 }

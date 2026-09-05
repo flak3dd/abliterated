@@ -1,5 +1,6 @@
 import { hunkToPatch, parseUnifiedDiff } from './diffParser';
 import { bridge } from './bridgeClient';
+import { isPathInsideAppRoot, workspaceGate } from './workspaceGuard';
 
 export type GrokEdit = {
   file: string;
@@ -293,8 +294,17 @@ export async function applyGrokEdits(
 ): Promise<GrokApplyResult[]> {
   const root = opts.root || bridge.currentRoot;
   const results: GrokApplyResult[] = [];
+  const gate = workspaceGate(root, bridge.currentAppRoot);
 
   for (const edit of edits) {
+    if (!gate.ok) {
+      results.push({ file: edit.file, kind: edit.kind, status: 'error', error: gate.message });
+      continue;
+    }
+    if (isPathInsideAppRoot(edit.file, root, bridge.currentAppRoot)) {
+      results.push({ file: edit.file, kind: edit.kind, status: 'error', error: 'install dir write blocked' });
+      continue;
+    }
     if (!isPathInsideRoot(edit.file, root)) {
       results.push({ file: edit.file, kind: edit.kind, status: 'error', error: 'path escape blocked' });
       continue;

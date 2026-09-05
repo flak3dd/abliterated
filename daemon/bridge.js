@@ -12,10 +12,12 @@ import { applyUnified, decodeBuffer, detectEol, encodeFileText, restoreEol } fro
 import { outlineFromText, MAX_OUTLINE_LINES, MAX_READ_FOR_OUTLINE } from './outline.js';
 import { semanticSearch } from './semantic.js';
 import { isInsideRoot as isInsideRootPath, matchGlob, skipDirentName, skipSearchName, toRel as toRelPath, walkFiles } from './search.js';
+import { appRootRefuseMessage, isInsideAppRoot, resolveAppRoot } from './appRoot.js';
 import * as mcp from './mcp.js';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.ABLIT_PORT || 17322);
+const APP_ROOT = resolveAppRoot();
 let ROOT = path.resolve(process.env.ABLIT_ROOT || process.cwd());
 const MAX_READ_BYTES = 8 * 1024 * 1024;
 const MAX_GREP_MATCHES = 200;
@@ -29,9 +31,25 @@ function send(ws, payload) {
 }
 
 function sendHello(ws, runId) {
-  const payload = { type: 'hello', root: ROOT, port: PORT };
+  const payload = {
+    type: 'hello',
+    root: ROOT,
+    port: PORT,
+    appRoot: APP_ROOT,
+    workspaceOk: !isInsideAppRoot(APP_ROOT, ROOT),
+  };
   if (runId) payload.runId = runId;
   send(ws, payload);
+}
+
+function assertNotAppInstall(target, action = 'path') {
+  if (isInsideAppRoot(APP_ROOT, target)) {
+    throw new Error(appRootRefuseMessage(action));
+  }
+}
+
+function assertWorkspaceNotInstall(action = 'operation') {
+  assertNotAppInstall(ROOT, action);
 }
 
 function isInsideRoot(target) {
@@ -86,6 +104,13 @@ function handleExec(ws, msg) {
   }
   if (isDeadly(command)) {
     send(ws, { runId, type: 'stderr', data: 'refused: deadly command blocked by local daemon\n' });
+    send(ws, { runId, type: 'exit', code: 126 });
+    return;
+  }
+  try {
+    assertWorkspaceNotInstall('exec');
+  } catch (err) {
+    send(ws, { runId, type: 'stderr', data: `${err instanceof Error ? err.message : String(err)}\n` });
     send(ws, { runId, type: 'exit', code: 126 });
     return;
   }
@@ -170,7 +195,9 @@ async function handlePatch(ws, msg) {
   const patch = String(msg.patch || '');
   try {
     if (!file) throw new Error('missing file');
+    assertWorkspaceNotInstall('patch');
     const abs = resolveInside(file);
+    assertNotAppInstall(abs, 'patch');
     await mkdir(path.dirname(abs), { recursive: true });
     let original = '';
     let encoding = 'utf8';
@@ -205,7 +232,9 @@ async function handleWrite(ws, msg) {
   const content = String(msg.content ?? '');
   try {
     if (!file) throw new Error('missing file');
+    assertWorkspaceNotInstall('write');
     const abs = resolveInside(file);
+    assertNotAppInstall(abs, 'write');
     await mkdir(path.dirname(abs), { recursive: true });
     const prev = fileMeta.get(abs);
     const encoding = String(msg.encoding || prev?.encoding || 'utf8');
@@ -230,7 +259,9 @@ async function handleDelete(ws, msg) {
   const file = String(msg.file || msg.path || '');
   try {
     if (!file) throw new Error('missing file');
+    assertWorkspaceNotInstall('delete');
     const abs = resolveInside(file);
+    assertNotAppInstall(abs, 'delete');
     await unlink(abs);
     fileMeta.delete(abs);
     send(ws, { runId, status: 'ok' });
@@ -245,6 +276,7 @@ async function handleSetRoot(ws, msg) {
     const raw = String(msg.path || '').trim();
     if (!raw) throw new Error('missing path');
     const resolved = path.resolve(raw);
+    assertNotAppInstall(resolved, 'workspace');
     let st;
     try {
       st = await stat(resolved);
@@ -253,7 +285,7 @@ async function handleSetRoot(ws, msg) {
     }
     if (!st.isDirectory()) throw new Error('not a directory');
     ROOT = resolved;
-    send(ws, { runId, status: 'ok', root: ROOT });
+    send(ws, { runId, status: 'ok', root: ROOT, appRoot: APP_ROOT });
   } catch (err) {
     send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
   }
@@ -493,6 +525,7 @@ async function handleGitStatus(ws, msg) {
 async function handleGitCommit(ws, msg) {
   const runId = msg.runId;
   try {
+    assertWorkspaceNotInstall('git_commit');
     const message = String(msg.message || '').trim();
     if (!message) throw new Error('empty commit message');
     if (isDeadly(message)) throw new Error('refused: deadly command blocked by local daemon');
@@ -507,7 +540,9 @@ async function handleGitCommit(ws, msg) {
     if (paths.length) {
       const rels = [];
       for (const p of paths) {
-        rels.push(toRel(resolveInside(p)));
+        const abs = resolveInside(p);
+        assertNotAppInstall(abs, 'git_commit');
+        rels.push(toRel(abs));
       }
       const add = await runGit(['add', '--', ...rels]);
       if (add.code !== 0) throw new Error((add.err || add.out || 'git add failed').trim());
@@ -552,6 +587,7 @@ async function handleGitDiff(ws, msg) {
 async function handleCreatePr(ws, msg) {
   const runId = msg.runId;
   try {
+    assertWorkspaceNotInstall('create_pr');
     const title = String(msg.title || '').trim();
     if (!title) throw new Error('empty PR title');
     const body = String(msg.body || '');
@@ -582,6 +618,7 @@ async function handleCreatePr(ws, msg) {
 async function handleCheckpointSave(ws, msg) {
   const runId = msg.runId;
   try {
+    assertWorkspaceNotInstall('checkpoint_save');
     const label = String(msg.label || '').trim() || 'checkpoint';
     const id = `cp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const dir = path.join(ROOT, '.ablit', 'checkpoints', id);
@@ -608,6 +645,7 @@ async function handleCheckpointSave(ws, msg) {
 async function handleCheckpointRestore(ws, msg) {
   const runId = msg.runId;
   try {
+    assertWorkspaceNotInstall('checkpoint_restore');
     const id = String(msg.id || '').trim();
     if (!id) throw new Error('missing checkpoint id');
     if (id.includes('..') || id.includes('/') || id.includes('\\')) throw new Error('invalid checkpoint id');
@@ -690,6 +728,7 @@ async function handleCheckpointList(ws, msg) {
 async function handleMcpConnect(ws, msg) {
   const runId = msg.runId;
   try {
+    assertWorkspaceNotInstall('mcp_connect');
     const result = await mcp.connect(
       { id: msg.id, name: msg.name, command: msg.command, args: msg.args, env: msg.env },
       ROOT,
@@ -726,8 +765,35 @@ const server = http.createServer((_req, res) => {
   res.end('abliterated-bridge localhost only\n');
 });
 
-const wss = new WebSocketServer({ server, path: '/' });
-wss.on('connection', (ws) => {
+function isLocalAddress(addr) {
+  if (!addr) return false;
+  const a = String(addr).replace(/^::ffff:/, '');
+  return a === '127.0.0.1' || a === '::1' || a === 'localhost';
+}
+
+const wss = new WebSocketServer({
+  server,
+  path: '/',
+  verifyClient(info) {
+    const addr = info.req.socket?.remoteAddress;
+    if (!isLocalAddress(addr)) {
+      console.warn(`[bridge] rejected non-localhost WS from ${addr}`);
+      return false;
+    }
+    return true;
+  },
+});
+wss.on('connection', (ws, req) => {
+  const addr = req?.socket?.remoteAddress;
+  if (!isLocalAddress(addr)) {
+    console.warn(`[bridge] closing non-localhost connection from ${addr}`);
+    try {
+      ws.close(1008, 'localhost only');
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
   sendHello(ws);
   ws.on('message', (data) => {
     let msg;
@@ -748,6 +814,25 @@ wss.on('connection', (ws) => {
     if (type === 'set_root') {
       void handleSetRoot(ws, msg);
       return;
+    }
+    const needsWorkspace = type === 'ls' || type === 'read_file' || type === 'grep' || type === 'glob'
+      || type === 'file_outline' || type === 'semantic_search' || type === 'git_status' || type === 'git_commit'
+      || type === 'git_diff' || type === 'create_pr' || type === 'checkpoint_save' || type === 'checkpoint_restore'
+      || type === 'checkpoint_list' || type === 'mcp_connect' || type === 'exec' || type === 'apply_patch'
+      || type === 'write_file' || type === 'delete_file';
+    if (needsWorkspace) {
+      try {
+        assertWorkspaceNotInstall(type);
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        if (type === 'exec') {
+          send(ws, { runId: msg.runId, type: 'stderr', data: `${error}\n` });
+          send(ws, { runId: msg.runId, type: 'exit', code: 126 });
+        } else {
+          send(ws, { runId: msg.runId, status: 'error', error });
+        }
+        return;
+      }
     }
     if (type === 'ls') {
       void handleLs(ws, msg);
@@ -834,7 +919,7 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`abliterated bridge ws://${HOST}:${PORT} root=${ROOT}`);
+  console.log(`abliterated bridge ws://${HOST}:${PORT} root=${ROOT} appRoot=${APP_ROOT}`);
 });
 
 let shuttingDown = false;

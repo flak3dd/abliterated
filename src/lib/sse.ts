@@ -1,5 +1,5 @@
 import { ALL_TOOL_TYPES, type ChatOpenAiMessage, type ClientSettings, type ToolCallPayload, type ToolType } from '../types';
-import { resolveActiveSettings } from './activeEndpoint';
+import { missingInferenceAuthError, rejectedInferenceAuthError, resolveActiveSettings } from './activeEndpoint';
 import { endpointUrl } from './apiUrl';
 import { detokenizeArtifacts } from './detokenizeArtifacts';
 
@@ -365,6 +365,11 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     return { finishReason: 'stop', toolCalls: [] };
   }
 
+  const missingAuth = missingInferenceAuthError(active);
+  if (missingAuth) {
+    throw new Error(missingAuth);
+  }
+
   const url = endpointUrl(
     {
       baseUrl: active.baseUrl,
@@ -454,7 +459,7 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
         res.status === 429
           ? ' Concurrency/rate limit; model may use full plan per request; Stop chat; wait ~30s; avoid parallel chats/jobs; self-deepen needs a free slot; or switch to cheaper model.'
           : res.status === 401 || res.status === 403
-            ? ' Auth/token rejected.'
+            ? rejectedInferenceAuthError(active, snippet)
             : res.status >= 500
               ? ' Provider server error.'
               : '';
@@ -483,6 +488,8 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
         delta?: {
           content?: string | null;
           reasoning?: string | null;
+          reasoning_content?: string | null;
+          thinking?: string | null;
           tool_calls?: Array<{
             index?: number;
             id?: string;
@@ -500,8 +507,13 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     const choice = json.choices?.[0];
     const delta = choice?.delta;
     if (delta?.content) onDelta(detokenizeArtifacts(delta.content));
-    if (delta?.reasoning) {
-      const r = detokenizeArtifacts(delta.reasoning);
+    const reasoningChunk =
+      (typeof delta?.reasoning_content === 'string' && delta.reasoning_content) ||
+      (typeof delta?.reasoning === 'string' && delta.reasoning) ||
+      (typeof delta?.thinking === 'string' && delta.thinking) ||
+      '';
+    if (reasoningChunk) {
+      const r = detokenizeArtifacts(reasoningChunk);
       if (onReasoningDelta) onReasoningDelta(r);
       else onDelta(r);
     }

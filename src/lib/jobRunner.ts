@@ -5,15 +5,19 @@ import { applyGrokEdits, parseGrokEdits } from "./grokLayer";
 import {
   buildLargeJobNudge,
   clampMaxAgentTurns,
-  clampMaxConcurrentJobs,
+  EMPTY_CONTENT_REPLY_NOTE,
+  isMissingContentAnswer,
   looksLargeJob,
   parseTodoBullets,
 } from "./agentHelpers";
+import { finalizeReasoningChannel } from "./agentPhase";
 import { executeMcpToolCall } from "./mcpClient";
 import { streamChatCompletion } from "./sse";
 import { getJobs, getSettings, getWorkspace, setJobs, uid, upsertJob } from "./storage";
+import { workspaceGate } from "./workspaceGuard";
 import type { ChatOpenAiMessage, ClientSettings, Job, ToolType } from "../types";
 import { DEFAULT_ENABLED_TOOLS } from "../types";
+import { clampJobsByLicense, getLicenseState } from './license';
 
 
 type Listener = (jobs: Job[]) => void;
@@ -57,9 +61,11 @@ export function enqueueJob(input: {
   projectName?: string;
 }): Job {
   const ws = getWorkspace();
-  const root = bridge.currentRoot || ws.rootPath || "";
+  const root = bridge.validWorkspaceRoot || ws.rootPath || "";
   const prompt = input.prompt.trim();
   if (!prompt) throw new Error("prompt required");
+  const gate = workspaceGate(root, bridge.currentAppRoot);
+  if (!gate.ok) throw new Error(gate.message);
 
   const job: Job = {
     id: uid("job"),
@@ -108,7 +114,9 @@ export function clearFinishedJobs(): void {
 }
 
 async function pumpQueue() {
-  const cap = clampMaxConcurrentJobs(getSettings().maxConcurrentJobs);
+  const settingsNow = getSettings();
+  const license = getLicenseState(settingsNow);
+  const cap = clampJobsByLicense(settingsNow.maxConcurrentJobs, license);
   while (runningIds.size < cap) {
     const next = getJobs().find((j) => j.status === "queued" && !runningIds.has(j.id));
     if (!next) break;
@@ -140,7 +148,19 @@ async function runJob(initial: Job, settings: ClientSettings) {
   abortById.set(job.id, ac);
 
   const ws = getWorkspace();
-  const workspaceRoot = bridge.currentRoot || ws.rootPath || "";
+  const workspaceRoot = bridge.validWorkspaceRoot || ws.rootPath || "";
+  const gate = workspaceGate(workspaceRoot, bridge.currentAppRoot);
+  if (!gate.ok) {
+    persist({
+      ...job,
+      status: "error",
+      error: gate.message,
+      endedAt: Date.now(),
+      logs: [...job.logs, `[${new Date().toISOString()}] ${gate.message}`],
+    });
+    abortById.delete(job.id);
+    return;
+  }
   const turnCap = clampMaxAgentTurns(settings.maxAgentTurns);
   const enabledTools: ToolType[] = [...DEFAULT_ENABLED_TOOLS];
   const active = resolveActiveSettings(settings);
@@ -155,6 +175,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
       ? "Auto-accept edits is ON for this job."
       : "Auto-accept edits is OFF — gated write tools skip in headless mode.",
     settings.autoRunShell ? "Auto-run shell is ON." : "Auto-run shell is OFF — shell skips in headless mode.",
+    "The final user-visible answer MUST be in content tokens; reasoning-only is incomplete.",
     large ? buildLargeJobNudge() : "",
   ].filter(Boolean);
 
@@ -199,6 +220,20 @@ async function runJob(initial: Job, settings: ClientSettings) {
       }
       }
 
+      // Finalize/coalesce BEFORE applyGrokEdits so diffs in reasoning are promoted first.
+      const coalesceOn = settings.coalesceReasoningToContent !== false;
+      const bubble = { content: assistantText, reasoning: assistantReasoning || undefined };
+      if (finalizeReasoningChannel(bubble, coalesceOn)) {
+        assistantText = bubble.content;
+        assistantReasoning = bubble.reasoning || "";
+        job = appendLog(
+          job,
+          bubble.reasoning === undefined
+            ? "coalesced/finalized reasoning → content (zero-cost)"
+            : "coalesce promote failed — hard error content",
+        );
+      }
+
       if (settings.autoAcceptEdits && bridge.connected) {
         const source = assistantText || assistantReasoning;
         const edits = parseGrokEdits(source, workspaceRoot);
@@ -223,6 +258,19 @@ async function runJob(initial: Job, settings: ClientSettings) {
       });
 
       if (!toolCalls.length) {
+        if (isMissingContentAnswer(assistantText)) {
+          const hasReasoning = !!(assistantReasoning || "").trim();
+          if (!hasReasoning) {
+            assistantText = EMPTY_CONTENT_REPLY_NOTE;
+            const last = history[history.length - 1];
+            if (last && last.role === "assistant") {
+              last.content = assistantText;
+            }
+            job = appendLog(job, "empty content and reasoning — stopping");
+          } else if (!coalesceOn) {
+            job = appendLog(job, "content empty; coalesce off — keeping reasoning only");
+          }
+        }
         job = appendLog(job, "no tool calls — done");
         break;
       }

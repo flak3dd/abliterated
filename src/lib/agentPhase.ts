@@ -132,3 +132,84 @@ export function formatElapsedSec(ms: number): string {
 
 /** One-liner when the model finishes with reasoning but no content tokens. */
 export const NO_CONTENT_REASONING_NOTE = '(No content tokens — see reasoning)';
+
+/**
+ * Lightly unwrap common thinking wrappers. Prefer leaving real answer text intact.
+ */
+export function stripThinkingWrappers(reasoning: string): string {
+  let text = (reasoning || '').trim();
+  if (!text) return '';
+  text = text.replace(/^<think>\s*/i, '').replace(/\s*<\/think>\s*$/i, '');
+  text = text.replace(/^\[thinking\]\s*/i, '').replace(/\s*\[\/thinking\]\s*$/i, '');
+  text = text.replace(/^Thinking:\s*/i, '');
+  return text.trim();
+}
+
+/**
+ * When the model shipped reasoning but empty content, promote reasoning into the
+ * visible answer. Falls back to NO_CONTENT_REASONING_NOTE only if nothing useful remains.
+ * Prefer {@link coalesceEmptyContentFromReasoning} (zero-cost) over an API content-channel retry.
+ */
+export function promoteReasoningToContent(content: string, reasoning?: string): string {
+  if ((content || '').trim()) return content;
+  const promoted = stripThinkingWrappers(reasoning || '');
+  if (promoted) return promoted;
+  return NO_CONTENT_REASONING_NOTE;
+}
+
+/** Short hard error when coalesce cannot produce a user-facing answer. */
+export const MODEL_NO_ANSWER_NOTE = '(Model returned no answer.)';
+
+/**
+ * Zero-cost coalesce for R1-style dual channels: empty content + non-empty reasoning →
+ * promote stripped reasoning into content (no second completion call).
+ * On success, clears reasoning to avoid double display in MessageBubble.
+ * On promote failure, leaves reasoning and sets MODEL_NO_ANSWER_NOTE.
+ * When `enabled` is false, no-op (reasoning panel only).
+ */
+export function coalesceEmptyContentFromReasoning(
+  assistant: { content: string; reasoning?: string },
+  enabled: boolean,
+): boolean {
+  if ((assistant.content || '').trim()) return false;
+  if (!(assistant.reasoning || '').trim()) return false;
+  if (!enabled) return false;
+  const promoted = stripThinkingWrappers(assistant.reasoning || '');
+  if (promoted) {
+    assistant.content = promoted;
+    assistant.reasoning = undefined;
+    return true;
+  }
+  // Promote yielded nothing useful — leave reasoning; hard error in content.
+  assistant.content = MODEL_NO_ANSWER_NOTE;
+  return true;
+}
+
+/**
+ * End-of-stream reasoning channel cleanup.
+ * - empty content → promote stripped reasoning (same as coalesceEmptyContentFromReasoning)
+ * - else if enabled && reasoning && content is prefix/equal of stripped reasoning → clear reasoning
+ *   (live-mirrored preview already filled content; avoid double panel)
+ * - else leave both channels
+ * Returns true when content or reasoning was mutated.
+ */
+export function finalizeReasoningChannel(
+  assistant: { content: string; reasoning?: string },
+  enabled: boolean,
+): boolean {
+  if (!enabled) return false;
+  const contentTrim = (assistant.content || '').trim();
+  if (!contentTrim) {
+    return coalesceEmptyContentFromReasoning(assistant, enabled);
+  }
+  const reasoningRaw = (assistant.reasoning || '').trim();
+  if (!reasoningRaw) return false;
+  const stripped = stripThinkingWrappers(assistant.reasoning || '');
+  if (!stripped) return false;
+  // content is equal to, or a prefix of, the stripped reasoning → mirrored live preview
+  if (contentTrim === stripped || stripped.startsWith(contentTrim)) {
+    assistant.reasoning = undefined;
+    return true;
+  }
+  return false;
+}

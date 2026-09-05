@@ -116,3 +116,47 @@ export function applyInferenceProvider(
 export function providerShortLabel(settings: ClientSettings): string {
   return resolveActiveSettings(settings).label;
 }
+
+function endpointHost(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+/** Local Settings admin login is not an inference API key. */
+export function missingInferenceAuthError(active: ActiveEndpoint): string | null {
+  if (active.token.trim()) return null;
+  const host = endpointHost(active.baseUrl);
+  if (active.provider === 'featherless' || host === 'api.featherless.ai') {
+    return (
+      'Featherless requires a cloud API key. Local admin login (Settings) only unlocks the IDE license — it does not sign you into Featherless. ' +
+      'Open API → Featherless and paste a key, or switch the provider to Abliteration.'
+    );
+  }
+  if (active.provider === 'abliteration' || host === 'api.abliteration.ai') {
+    return (
+      'Abliteration API key is missing. Local admin login is not an API token. ' +
+      'Paste the key on API → Token, or set VITE_ABLITERATED_TOKEN in .env.local and restart Vite.'
+    );
+  }
+  if (active.provider === 'custom' && /^https?:/.test(active.baseUrl) && !/127\.0\.0\.1|localhost/i.test(host)) {
+    return `No token set for ${active.label}. Add it on the API tab. Local admin login does not authenticate remote APIs.`;
+  }
+  return null;
+}
+
+export function rejectedInferenceAuthError(active: ActiveEndpoint, body: string): string {
+  const signedIn = /must be signed in|unauthorized/i.test(body);
+  if (active.provider === 'featherless' || endpointHost(active.baseUrl) === 'api.featherless.ai' || signedIn) {
+    return (
+      ' Featherless rejected auth. Local admin login does not count. ' +
+      'Paste a Featherless API key on the API tab, or switch provider to Abliteration.'
+    );
+  }
+  if (!active.token.trim()) {
+    return ' No API token was sent. Local admin login is not an inference key — add one on the API tab.';
+  }
+  return ` Auth/token rejected by ${active.label}. Check the API tab token.`;
+}

@@ -14,10 +14,11 @@ import {
   Zap,
 } from 'lucide-react';
 import { DiffViewer } from './DiffViewer';
-import { TerminalPane } from './TerminalPane';
+import { TerminalPane, type TerminalTone } from './TerminalPane';
 import { formatGrokStatus, type GrokApplyResult } from '../../lib/grokLayer';
 import { cn } from '../../lib/cn';
 import { isMidRunMessageContent, stripMidRunPrefix } from '../../lib/agentHelpers';
+import { NO_CONTENT_REASONING_NOTE } from '../../lib/agentPhase';
 import { parseCompletionFooter } from '../../lib/completionFooter';
 import type { Message, ToolCallPayload } from '../../types';
 
@@ -240,10 +241,21 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
   );
 }
 
-function renderMessageContent(content: string, autoAccept: boolean) {
+function renderMessageContent(
+  content: string,
+  autoAccept: boolean,
+  writesLocked = false,
+  terminalTone: TerminalTone = 'discuss',
+) {
   return splitMessageContent(content).map((block, i) => {
-    if (block.kind === 'diff') return <DiffViewer key={i} rawDiff={block.code} autoAccept={autoAccept} />;
-    if (block.kind === 'shell') return <TerminalPane key={i} command={block.code} />;
+    if (block.kind === 'diff') {
+      if (writesLocked) return <CodeBlock key={i} lang="diff" code={block.code} />;
+      return <DiffViewer key={i} rawDiff={block.code} autoAccept={autoAccept} />;
+    }
+    if (block.kind === 'shell') {
+      if (writesLocked) return <CodeBlock key={i} lang="bash" code={block.code} />;
+      return <TerminalPane key={i} command={block.code} tone={terminalTone} />;
+    }
     if (block.kind === 'code') {
       return <CodeBlock key={i} lang={block.lang} code={block.code} />;
     }
@@ -258,6 +270,8 @@ function renderMessageContent(content: string, autoAccept: boolean) {
 export type MessageBubbleProps = {
   message: Message;
   autoAcceptEdits: boolean;
+  /** Plan mode: hide Apply / Run / Commit so writes stay locked. */
+  writesLocked?: boolean;
   grokResults?: GrokApplyResult[];
   bridgeConnected: boolean;
   onGitCommit: (message: Message) => void;
@@ -268,11 +282,13 @@ export type MessageBubbleProps = {
   completionFooterEnabled?: boolean;
   /** One-click send (or fill) a Continue prompt from the completion footer. */
   onContinuePrompt?: (text: string) => void;
+  terminalTone?: TerminalTone;
 };
 
 function MessageBubbleInner({
   message: m,
   autoAcceptEdits,
+  writesLocked = false,
   grokResults,
   bridgeConnected,
   onGitCommit,
@@ -281,13 +297,21 @@ function MessageBubbleInner({
   onShellExecuted,
   completionFooterEnabled = true,
   onContinuePrompt,
+  terminalTone = 'discuss',
 }: MessageBubbleProps) {
   const [copied, setCopied] = useState(false);
 
+  const promoteReasoning =
+    m.role === 'assistant' &&
+    m.status === 'complete' &&
+    (!(m.content || '').trim() || (m.content || '').trim() === NO_CONTENT_REASONING_NOTE) &&
+    !!(m.reasoning || '').trim();
+
   const displayContent = useMemo(() => {
     if (m.role === 'user' && isMidRunMessageContent(m.content)) return stripMidRunPrefix(m.content);
+    if (promoteReasoning) return m.reasoning || '';
     return m.content;
-  }, [m.role, m.content]);
+  }, [m.role, m.content, m.reasoning, m.status, promoteReasoning]);
 
   const textToCopy = useMemo(() => {
     if (m.toolCall) return m.toolCall.result || m.content;
@@ -314,8 +338,13 @@ function MessageBubbleInner({
 
   const contentNode = useMemo(() => {
     if (!(mainContent.trim() || !m.reasoning)) return null;
-    return renderMessageContent(mainContent, autoAcceptEdits && m.status === 'complete');
-  }, [mainContent, m.reasoning, autoAcceptEdits, m.status]);
+    return renderMessageContent(
+      mainContent,
+      autoAcceptEdits && m.status === 'complete',
+      writesLocked,
+      terminalTone,
+    );
+  }, [mainContent, m.reasoning, autoAcceptEdits, m.status, writesLocked, terminalTone]);
 
   const isUser = m.role === 'user';
   const ToolIcon = m.toolCall ? getToolIcon(m.toolCall.name) : Zap;
@@ -374,7 +403,8 @@ function MessageBubbleInner({
                 </span>
               ) : null}
             </div>
-            {(m.toolCall.name === 'git_commit' ||
+            {!writesLocked &&
+            (m.toolCall.name === 'git_commit' ||
               m.toolCall.name === 'create_pr' ||
               m.toolCall.name === 'checkpoint_restore') &&
             (m.toolCall.status === 'allowed' || m.toolCall.status === 'pending') ? (
@@ -398,12 +428,14 @@ function MessageBubbleInner({
                       : 'Commit'}
                 </button>
               </div>
-            ) : m.toolCall.name === 'shell' &&
+            ) : !writesLocked &&
+              m.toolCall.name === 'shell' &&
               m.toolCall.status !== 'executed' &&
               m.toolCall.status !== 'error' ? (
               <TerminalPane
                 command={toolArgString(m.toolCall.arguments, ['command', 'cmd', 'script']) || m.content}
                 onExecuted={onShellExecuted ? (result) => onShellExecuted(m, result) : undefined}
+                tone={terminalTone}
               />
             ) : m.toolCall.name === 'generate_image' ? (
               maybeImageResult(m.toolCall.result || m.content)
@@ -419,7 +451,7 @@ function MessageBubbleInner({
                 <span>reasoning (synthesizing plan)…</span>
               </div>
             ) : null}
-            {m.reasoning ? (
+            {m.reasoning && !promoteReasoning ? (
               <details
                 className="mb-2.5 rounded-md border border-zinc-800/80 bg-zinc-950/80 px-2.5 py-1.5 transition-all"
                 open={m.status === 'streaming' && !m.content.trim()}

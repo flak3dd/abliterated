@@ -1,3 +1,9 @@
+import {
+  APP_ROOT_REFUSED,
+  isPathInsideAppRoot,
+  workspaceGate,
+} from './workspaceGuard';
+
 export type BridgeStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 export type BridgeDirEntry = {
@@ -11,7 +17,7 @@ type Incoming =
   | { runId: string; type: 'exit'; code: number }
   | { runId: string; status: 'ok' | 'error'; error?: string; root?: string; content?: string; encoding?: string; eol?: string; entries?: BridgeDirEntry[]; branch?: string; dirty?: boolean; porcelain?: string; text?: string; hash?: string }
   | { type: 'pong' }
-  | { type: 'hello'; root?: string; port?: number; runId?: string }
+  | { type: 'hello'; root?: string; port?: number; appRoot?: string; workspaceOk?: boolean; runId?: string }
   | Record<string, unknown>;
 
 type Pending = {
@@ -26,10 +32,12 @@ export class BridgeClient {
   private status: BridgeStatus = 'disconnected';
   private listeners = new Set<(status: BridgeStatus) => void>();
   private rootListeners = new Set<(root: string) => void>();
+  private appRootListeners = new Set<(appRoot: string) => void>();
   private pending = new Map<string, Pending>();
   private reconnectTimer: number | null = null;
   private closedByUser = false;
   private daemonRoot = '';
+  private daemonAppRoot = '';
   private daemonPort = 17322;
 
   constructor(url = 'ws://127.0.0.1:17322') {
@@ -81,6 +89,15 @@ export class BridgeClient {
     return this.daemonPort;
   }
 
+  get currentAppRoot(): string {
+    return this.daemonAppRoot;
+  }
+
+  /** Daemon cwd if it is a valid project folder; empty when it is the install. */
+  get validWorkspaceRoot(): string {
+    return workspaceGate(this.daemonRoot, this.daemonAppRoot).ok ? this.daemonRoot : '';
+  }
+
   onStatusChange(cb: (status: BridgeStatus) => void): () => void {
     this.listeners.add(cb);
     cb(this.status);
@@ -97,6 +114,14 @@ export class BridgeClient {
     };
   }
 
+  onAppRootChange(cb: (appRoot: string) => void): () => void {
+    this.appRootListeners.add(cb);
+    cb(this.daemonAppRoot);
+    return () => {
+      this.appRootListeners.delete(cb);
+    };
+  }
+
   private setStatus(next: BridgeStatus) {
     this.status = next;
     this.listeners.forEach((cb) => cb(next));
@@ -107,6 +132,24 @@ export class BridgeClient {
     if (root === this.daemonRoot) return;
     this.daemonRoot = root;
     this.rootListeners.forEach((cb) => cb(root));
+  }
+
+  private setDaemonAppRoot(appRoot: string) {
+    if (!appRoot || appRoot === this.daemonAppRoot) return;
+    this.daemonAppRoot = appRoot;
+    this.appRootListeners.forEach((cb) => cb(appRoot));
+  }
+
+  private workspaceGateFor(root = this.daemonRoot) {
+    return workspaceGate(root, this.daemonAppRoot);
+  }
+
+  private assertWritableWorkspace(file?: string): void {
+    const gate = this.workspaceGateFor();
+    if (!gate.ok) throw new Error(gate.message);
+    if (file && isPathInsideAppRoot(file, this.daemonRoot, this.daemonAppRoot)) {
+      throw new Error(APP_ROOT_REFUSED);
+    }
   }
 
   connect(): void {
@@ -196,6 +239,8 @@ export class BridgeClient {
     if ('type' in msg && msg.type === 'hello') {
       const root = typeof msg.root === 'string' ? msg.root : '';
       const port = typeof msg.port === 'number' ? msg.port : undefined;
+      const appRoot = typeof msg.appRoot === 'string' ? msg.appRoot : '';
+      if (appRoot) this.setDaemonAppRoot(appRoot);
       if (root) this.setDaemonRoot(root, port);
       const helloRunId = typeof msg.runId === 'string' ? msg.runId : '';
       if (helloRunId) {
@@ -224,6 +269,8 @@ export class BridgeClient {
     if ('status' in msg) {
       this.pending.delete(runId);
       if (msg.status === 'ok') {
+        const okMsg = msg as { root?: string; appRoot?: string };
+        if (typeof okMsg.appRoot === 'string' && okMsg.appRoot) this.setDaemonAppRoot(okMsg.appRoot);
         if (typeof msg.root === 'string' && msg.root) this.setDaemonRoot(msg.root);
         pending.resolve(msg);
       } else {
@@ -257,16 +304,31 @@ export class BridgeClient {
     if (!this.connected) {
       return Promise.resolve(126);
     }
+    const gate = this.workspaceGateFor();
+    if (!gate.ok) {
+      onStdout?.(`${gate.message}\n`, 'stderr');
+      return Promise.resolve(126);
+    }
     return this.request({ type: 'exec', command }, (chunk, stream) => onStdout?.(chunk, stream)).then((v) => Number(v));
   }
 
   applyPatch(file: string, patch: string): Promise<boolean> {
     if (!this.connected) return Promise.resolve(false);
+    try {
+      this.assertWritableWorkspace(file);
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
     return this.request({ type: 'apply_patch', file, patch }).then((v) => Boolean(v));
   }
 
   writeFile(file: string, content: string, opts?: { encoding?: string; eol?: string }): Promise<boolean> {
     if (!this.connected) return Promise.resolve(false);
+    try {
+      this.assertWritableWorkspace(file);
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
     return this.request({ type: 'write_file', file, content, encoding: opts?.encoding, eol: opts?.eol }).then((v) =>
       Boolean(v),
     );
@@ -274,9 +336,14 @@ export class BridgeClient {
 
   setRoot(path: string): Promise<string> {
     if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    const gate = this.workspaceGateFor(path);
+    if (!gate.ok) return Promise.reject(new Error(gate.message));
     return this.request({ type: 'set_root', path }).then((v) => {
-      const msg = v as { root?: string };
+      const msg = v as { root?: string; appRoot?: string };
+      if (typeof msg.appRoot === 'string' && msg.appRoot) this.setDaemonAppRoot(msg.appRoot);
       const root = String(msg.root || path);
+      const after = this.workspaceGateFor(root);
+      if (!after.ok) return Promise.reject(new Error(after.message));
       this.setDaemonRoot(root);
       return root;
     });
@@ -300,6 +367,11 @@ export class BridgeClient {
 
   deleteFile(file: string): Promise<boolean> {
     if (!this.connected) return Promise.resolve(false);
+    try {
+      this.assertWritableWorkspace(file);
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
     return this.request({ type: 'delete_file', file }).then((v) => Boolean(v));
   }
 
@@ -443,14 +515,17 @@ export class BridgeClient {
     });
   }
 
-  hello(): Promise<{ root: string; port: number }> {
+  hello(): Promise<{ root: string; port: number; appRoot: string; workspaceOk: boolean }> {
     if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
     return this.request({ type: 'hello' }).then((v) => {
-      const msg = v as { root?: string; port?: number };
+      const msg = v as { root?: string; port?: number; appRoot?: string; workspaceOk?: boolean };
+      const appRoot = String(msg.appRoot ?? this.daemonAppRoot);
+      if (appRoot) this.setDaemonAppRoot(appRoot);
       const root = String(msg.root ?? this.daemonRoot);
       const port = Number(msg.port ?? this.daemonPort);
       if (root) this.setDaemonRoot(root, port);
-      return { root, port };
+      const workspaceOk = msg.workspaceOk !== false && this.workspaceGateFor(root).ok;
+      return { root, port, appRoot, workspaceOk };
     });
   }
 }

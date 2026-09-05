@@ -41,6 +41,32 @@ npm run build
 npm run preview
 ```
 
+
+## Desktop app
+
+Electron shell packages the Vite dist/ UI and can spawn the local bridge on port 17322.
+
+```bash
+npm install
+npm run build
+npm run desktop
+```
+
+Dev (Vite on :5173):
+
+```bash
+npm run dev
+npm run desktop:dev
+```
+
+macOS package:
+
+```bash
+npm run dist:mac
+```
+
+License keys in Settings. DEV auto-unlocks **Admin** (`admin` / `abliterated`, or key `ABLIT-ADMIN`). Stub: `ABLIT-FREE` Free; `ABLIT-PRO-TEST-0001` Pro; `ABLIT-TEAM-TEST-0001` Team; `ABLIT-DEV-UNLOCK` Admin. See docs/PRODUCT.md and docs/pricing.md.
+
 ## Architecture
 
 - **Chat:** `src/lib/sse.ts` streams `POST {baseUrl}/chat/completions` with tools. If `baseUrl` is empty or `remoteHostEnabled` is false, the client streams a character-by-character `[Local Dummy] Echo: {prompt}` fallback (no tool calls). ChatScreen runs a real **agent loop** (configurable max turns, default 24): collect tool calls from the stream, persist the assistant message with OpenAI `tool_calls`, execute tools, persist `role: tool` results, then call completions again until there are no tool calls, abort, error, or the cap.

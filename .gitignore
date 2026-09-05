@@ -1,5 +1,17 @@
 node_modules
 dist
+dist-test-build
+dist-test-*
+release
 .DS_Store
 *.local
+.env
+.env.*
+!.env.example
 node_modules/.tmp
+featherless-oauth/tokens.json
+featherless-oauth/.env
+package.desktop.json
+workspace/
+synovatech/
+.ide-qa-evidence/

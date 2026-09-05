@@ -20,6 +20,8 @@ import {
   uid,
   upsertThread,
 } from './lib/storage';
+import { getLicenseState } from './lib/license';
+import { workspaceGate } from './lib/workspaceGuard';
 import { ApiScreen } from './screens/ApiScreen';
 import { ChatScreen, type ChatScreenHandle } from './screens/ChatScreen';
 import { HomeScreen } from './screens/HomeScreen';
@@ -65,7 +67,9 @@ export default function App() {
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>(bridge.currentStatus);
   const [agentLabel, setAgentLabel] = useState('');
   const [composerSeed, setComposerSeed] = useState<string | null>(null);
+  const license = getLicenseState(settings);
   const planMode = settings.planModeEnabled === true;
+  const buildMode = settings.buildModeEnabled !== false && !planMode;
 
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
@@ -74,9 +78,46 @@ export default function App() {
   settingsRef.current = settings;
 
   useEffect(() => {
+    const desktop = window.ablitDesktop;
+    if (!desktop?.getLicense) return;
+    void desktop.getLicense().then((stored) => {
+      const desk = (stored || '').trim();
+      const cur = settingsRef.current;
+      const local = (cur.licenseKey || '').trim();
+      if (desk && desk !== local) {
+        const localFree = getLicenseState({ licenseKey: local }).isFree;
+        const deskState = getLicenseState({ licenseKey: desk });
+        if (!local || (localFree && !deskState.isFree)) {
+          const next = { ...cur, licenseKey: desk };
+          setSettings(next);
+          setSettingsState(next);
+          return;
+        }
+      }
+      if (local && !desk) {
+        try {
+          void desktop.setLicense?.(local);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+  }, []);
+
+  useEffect(() => {
     let handshake = 0;
+    const clearForbiddenWorkspace = (appRoot = bridge.currentAppRoot) => {
+      const prev = workspaceRef.current;
+      const gate = workspaceGate(prev.rootPath, appRoot);
+      if (gate.ok || isPlaceholderRoot(prev.rootPath)) return;
+      const next = { ...prev, rootPath: '' };
+      setWorkspace(next);
+      setWorkspaceState(next);
+    };
+
     const applyDaemonRoot = (root: string) => {
       if (!root) return;
+      if (!workspaceGate(root, bridge.currentAppRoot).ok) return;
       const prev = workspaceRef.current;
       if (!isPlaceholderRoot(prev.rootPath)) return;
       const next = { ...prev, rootPath: root };
@@ -85,6 +126,9 @@ export default function App() {
     };
 
     const unsubRoot = bridge.onRootChange(applyDaemonRoot);
+    const unsubAppRoot = bridge.onAppRootChange((appRoot) => {
+      clearForbiddenWorkspace(appRoot);
+    });
     const unsubStatus = bridge.onStatusChange((status) => {
       setBridgeStatus(status);
       if (status !== 'connected') return;
@@ -93,18 +137,28 @@ export default function App() {
         const path = workspaceRef.current.rootPath.trim();
         try {
           if (!isPlaceholderRoot(path)) {
-            const root = await bridge.setRoot(path);
-            if (id !== handshake) return;
-            const prev = workspaceRef.current;
-            if (prev.rootPath !== root) {
-              const next = { ...prev, rootPath: root };
-              setWorkspace(next);
-              setWorkspaceState(next);
+            if (!workspaceGate(path, bridge.currentAppRoot).ok) {
+              clearForbiddenWorkspace();
+            } else {
+              try {
+                const root = await bridge.setRoot(path);
+                if (id !== handshake) return;
+                const prev = workspaceRef.current;
+                if (prev.rootPath !== root) {
+                  const next = { ...prev, rootPath: root };
+                  setWorkspace(next);
+                  setWorkspaceState(next);
+                }
+              } catch {
+                if (id !== handshake) return;
+                clearForbiddenWorkspace();
+              }
             }
           }
           const hello = await bridge.hello();
           if (id !== handshake) return;
-          applyDaemonRoot(hello.root);
+          if (hello.workspaceOk) applyDaemonRoot(hello.root);
+          clearForbiddenWorkspace(hello.appRoot || bridge.currentAppRoot);
         } catch {
           /* daemon may not be listening yet; reconnect retries */
         }
@@ -115,6 +169,7 @@ export default function App() {
     return () => {
       handshake += 1;
       unsubRoot();
+      unsubAppRoot();
       unsubStatus();
       bridge.cleanup();
     };
@@ -166,7 +221,6 @@ export default function App() {
     const s = settingsRef.current;
     const active = resolveActiveSettings(s);
     const now = Date.now();
-    const root = workspaceRef.current.rootPath.trim() || undefined;
     const thread: Thread = {
       id: uid('thr'),
       title: 'New session',
@@ -174,7 +228,6 @@ export default function App() {
       pinned: false,
       systemPrompt: s.systemPrompt,
       enabledTools: [...DEFAULT_ENABLED_TOOLS],
-      workspaceRoot: root,
       createdAt: now,
       updatedAt: now,
     };
@@ -185,14 +238,37 @@ export default function App() {
   const activeThreadIdRef = useRef(activeThreadId);
   activeThreadIdRef.current = activeThreadId;
 
-  /** Keep the open session's stamped workspace in sync when the root changes (not on open). */
+  const chooseWorkspace = useCallback(async (path: string) => {
+    const trimmed = path.trim();
+    const gate = workspaceGate(trimmed, bridge.currentAppRoot);
+    if (!gate.ok) throw new Error(gate.message);
+    let root = trimmed;
+    if (bridge.connected) {
+      root = await bridge.setRoot(trimmed);
+    }
+    const prev = workspaceRef.current;
+    const next = { ...prev, rootPath: root };
+    setWorkspace(next);
+    setWorkspaceState(next);
+    const id = activeThreadIdRef.current;
+    if (id) {
+      setThreads((prevThreads) => {
+        const existing = prevThreads.find((t) => t.id === id);
+        if (!existing) return prevThreads;
+        if ((existing.workspaceRoot || undefined) === root) return prevThreads;
+        return upsertThread({ ...existing, workspaceRoot: root, updatedAt: Date.now() });
+      });
+    }
+  }, []);
+
+  /** Keep an already-stamped session in sync when the root changes. New chats stay empty until the picker confirms. */
   useEffect(() => {
     const id = activeThreadIdRef.current;
     if (!id) return;
     const root = workspace.rootPath.trim() || undefined;
     setThreads((prev) => {
       const existing = prev.find((t) => t.id === id);
-      if (!existing) return prev;
+      if (!existing?.workspaceRoot) return prev;
       if ((existing.workspaceRoot || undefined) === root) return prev;
       return upsertThread({ ...existing, workspaceRoot: root, updatedAt: Date.now() });
     });
@@ -216,7 +292,11 @@ export default function App() {
       next = { ...next, model };
       changed = true;
     }
-    if (!existing.workspaceRoot && currentRoot) {
+    if (
+      !existing.workspaceRoot &&
+      currentRoot &&
+      workspaceGate(currentRoot, bridge.currentAppRoot).ok
+    ) {
       next = { ...next, workspaceRoot: currentRoot };
       changed = true;
     }
@@ -230,7 +310,8 @@ export default function App() {
     if (
       threadRoot &&
       !isPlaceholderRoot(threadRoot) &&
-      threadRoot !== currentRoot
+      threadRoot !== currentRoot &&
+      workspaceGate(threadRoot, bridge.currentAppRoot).ok
     ) {
       const prev = workspaceRef.current;
       const wsNext = { ...prev, rootPath: threadRoot };
@@ -352,6 +433,25 @@ export default function App() {
         label: settings.autoRunShell ? 'Disable auto-run shell' : 'Enable auto-run shell',
         keywords: 'toggle shell',
         run: () => patchSettings({ autoRunShell: !settingsRef.current.autoRunShell }),
+      },
+      {
+        id: 'toggle-build-mode',
+        label: settings.buildModeEnabled !== false ? 'Disable build mode' : 'Enable build mode',
+        keywords: 'todo scaffold skeleton implement',
+        run: () => {
+          const on = settingsRef.current.buildModeEnabled === false;
+          patchSettings({ buildModeEnabled: on, planModeEnabled: on ? false : settingsRef.current.planModeEnabled });
+        },
+      },
+      {
+        id: 'toggle-plan-mode',
+        label: settings.planModeEnabled ? 'Disable plan mode' : 'Enable plan mode',
+        keywords: 'checklist readonly',
+        run: () => {
+          const cur = settingsRef.current;
+          const on = !cur.planModeEnabled;
+          patchSettings({ planModeEnabled: on, buildModeEnabled: on ? false : true });
+        },
       },
       {
         id: 'focus-workspace',
@@ -479,6 +579,8 @@ export default function App() {
     refreshGitStatus,
     settings.autoAcceptEdits,
     settings.autoRunShell,
+    settings.buildModeEnabled,
+    settings.planModeEnabled,
     settings.sparkEnabled,
     switchProvider,
     applySettings,
@@ -601,6 +703,7 @@ export default function App() {
                 autoAcceptEdits={settings.autoAcceptEdits}
                 autoRunShell={settings.autoRunShell}
                 workspaceRoot={workspace.rootPath}
+                onChooseWorkspace={chooseWorkspace}
                 onBack={() => {
                   setActiveThreadId(null);
                   setAgentLabel('');
@@ -611,16 +714,33 @@ export default function App() {
                 composerSeed={composerSeed}
                 onComposerSeedConsumed={() => setComposerSeed(null)}
                 planMode={planMode}
-                onTogglePlanMode={() =>
+                buildMode={buildMode}
+                onTogglePlanMode={() => {
+                  const cur = settingsRef.current;
+                  const next = !cur.planModeEnabled;
+                  applySettings({
+                    ...cur,
+                    planModeEnabled: next,
+                    buildModeEnabled: next ? false : true,
+                  });
+                }}
+                onToggleBuildMode={() => {
+                  const cur = settingsRef.current;
+                  const next = cur.buildModeEnabled === false;
+                  applySettings({
+                    ...cur,
+                    buildModeEnabled: next,
+                    planModeEnabled: next ? false : cur.planModeEnabled,
+                  });
+                }}
+                onApprovePlan={() => {
                   applySettings({
                     ...settingsRef.current,
-                    planModeEnabled: !settingsRef.current.planModeEnabled,
-                  })
-                }
-                onApprovePlan={() => {
-                  applySettings({ ...settingsRef.current, planModeEnabled: false });
+                    planModeEnabled: false,
+                    buildModeEnabled: true,
+                  });
                   setComposerSeed(
-                    'Plan approved. Implement the checklist step by step. Write tools are unlocked.',
+                    'Plan approved. Build mode is on. After reasoning emit ToDo: steps. If new file/folder structure is required, scaffold it first, then work the list. Write tools are unlocked.',
                   );
                 }}
               />
@@ -638,6 +758,9 @@ export default function App() {
           providerLabel={resolveActiveSettings(settings).label}
           provider={settings.inferenceProvider ?? 'abliteration'}
           onProviderChange={switchProvider}
+          showWatermark={license.features.showWatermark}
+          licenseLabel={license.isFree ? undefined : license.label}
+          onUpgradeClick={() => setTab('settings')}
         />
         <BottomNav current={tab} onChange={setTab} jobsActive={jobsActive} />
       </div>

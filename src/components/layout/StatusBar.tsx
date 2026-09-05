@@ -15,6 +15,11 @@ interface Props {
   providerLabel: string;
   provider: InferenceProvider;
   onProviderChange?: (p: InferenceProvider) => void;
+  /** Free-tier soft watermark */
+  showWatermark?: boolean;
+  /** Shown when not Free (e.g. Admin (dev)). */
+  licenseLabel?: string;
+  onUpgradeClick?: () => void;
 }
 
 function basename(path: string): string {
@@ -35,6 +40,9 @@ export function StatusBar({
   providerLabel,
   provider,
   onProviderChange,
+  showWatermark,
+  licenseLabel,
+  onUpgradeClick,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -126,6 +134,31 @@ export function StatusBar({
             </div>
           ) : null}
         </div>
+      ) : null}
+      {showWatermark ? (
+        <button
+          type="button"
+          title="Upgrade to Pro"
+          onClick={(e) => {
+            e.stopPropagation();
+            onUpgradeClick?.();
+          }}
+          className="shrink-0 rounded px-1 text-amber-400/80 hover:bg-zinc-800 hover:text-amber-300"
+        >
+          Free · Upgrade
+        </button>
+      ) : licenseLabel ? (
+        <button
+          type="button"
+          title={licenseLabel}
+          onClick={(e) => {
+            e.stopPropagation();
+            onUpgradeClick?.();
+          }}
+          className="shrink-0 rounded px-1 text-emerald-400/80 hover:bg-zinc-800 hover:text-emerald-300"
+        >
+          {licenseLabel}
+        </button>
       ) : null}
       {agentLabel ? <span className="ml-auto shrink-0 text-amber-400/90">{agentLabel}</span> : <span className="ml-auto" />}
     </footer>

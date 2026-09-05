@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { applyInferenceProvider, INFERENCE_PROVIDERS, resolveActiveSettings } from '../lib/activeEndpoint';
+import {
+  applyInferenceProvider,
+  INFERENCE_PROVIDERS,
+  missingInferenceAuthError,
+  resolveActiveSettings,
+} from '../lib/activeEndpoint';
 import { endpointUrl, formatFetchError } from '../lib/apiUrl';
 import { setSettings } from '../lib/storage';
 import type { ClientSettings, ReasoningLevel } from '../types';
@@ -328,6 +333,7 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
   const sparkInactive = provider === 'dgx-spark' && !draft.sparkEnabled;
   const featherInactive = provider === 'featherless' && draft.featherlessEnabled === false;
   const active = resolveActiveSettings(draft);
+  const authMissing = missingInferenceAuthError(active);
   const signedIn = Boolean(featherSession?.signedIn);
   // Keep helpers referenced until the dedicated Featherless provider panel is fully inlined in JSX.
 
@@ -364,6 +370,11 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
             {sparkInactive ? ' (Spark off — falling back to cloud fields until enabled)' : ''}
             {featherInactive ? ' (Featherless off — falling back to cloud fields until enabled)' : ''}
           </p>
+          {authMissing ? (
+            <div className="mt-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 font-mono text-[11px] leading-5 text-amber-200">
+              {authMissing}
+            </div>
+          ) : null}
         </div>
 
         {provider === 'dgx-spark' ? (

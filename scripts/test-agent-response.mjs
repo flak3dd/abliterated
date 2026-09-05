@@ -373,9 +373,14 @@ async function streamChatCompletion({
     const choice = json.choices?.[0];
     const delta = choice?.delta;
     if (delta?.content) onDelta(delta.content);
-    if (delta?.reasoning) {
-      if (onReasoningDelta) onReasoningDelta(delta.reasoning);
-      else onDelta(delta.reasoning);
+    const reasoningChunk =
+      (typeof delta?.reasoning_content === 'string' && delta.reasoning_content) ||
+      (typeof delta?.reasoning === 'string' && delta.reasoning) ||
+      (typeof delta?.thinking === 'string' && delta.thinking) ||
+      '';
+    if (reasoningChunk) {
+      if (onReasoningDelta) onReasoningDelta(reasoningChunk);
+      else onDelta(reasoningChunk);
     }
     if (delta?.tool_calls) {
       for (const tc of delta.tool_calls) {
@@ -714,6 +719,33 @@ await test('streamChatCompletion reasoning token streaming', async () => {
 
   assert.equal(reasoning, 'Analyzing file structure... Plan confirmed. ');
   assert.equal(content, 'Here is the result.');
+  assert.equal(result.finishReason, 'stop');
+});
+
+await test('streamChatCompletion reasoning_content alias (vLLM/OpenAI)', async () => {
+  serverResponses.push((req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+    });
+    res.write('data: {"choices":[{"delta":{"reasoning_content":"think then script "}}]}\n\n');
+    res.write('data: {"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}\n\n');
+    res.write('data: [DONE]\n\n');
+    res.end();
+  });
+
+  let reasoning = '';
+  const result = await streamChatCompletion({
+    url: `http://127.0.0.1:${mockPort}/chat/completions`,
+    model: 'test-model',
+    messages: [{ role: 'user', content: 'Write a script' }],
+    onDelta: () => {},
+    onReasoningDelta: (text) => {
+      reasoning += text;
+    },
+  });
+
+  assert.equal(reasoning, 'think then script ');
   assert.equal(result.finishReason, 'stop');
 });
 

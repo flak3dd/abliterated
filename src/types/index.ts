@@ -174,8 +174,12 @@ export interface ClientSettings {
   midRunInjectEnabled: boolean;
   /** When true (default), parse/show completion footer Continue chips; prompt still asks for the footer when on. */
   completionFooterEnabled: boolean;
+  /** When true (default), promote reasoning into content if the content channel is empty (zero-cost; no API retry). */
+  coalesceReasoningToContent: boolean;
   /** Default Plan-mode preference (UI may still toggle per session). */
   planModeEnabled: boolean;
+  /** Implementation protocol: ToDo after reasoning, skeleton first. */
+  buildModeEnabled: boolean;
   /** Optional small/fast model id for summaries/footers (empty = use active model). */
   fastModel: string;
   /** Which inference backend the UI routes chat/models through. Default abliteration. */
@@ -204,6 +208,8 @@ export interface ClientSettings {
   imageViaProxy: boolean;
   /** Optional MCP stdio servers (spawned via localhost bridge). */
   mcpServers: McpServerConfig[];
+  /** Freemium license key (localStorage). Empty = Free tier. */
+  licenseKey: string;
 }
 
 export type ChatOpenAiToolCall = {

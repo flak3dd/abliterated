@@ -61,6 +61,33 @@ export function buildSelfDeepenNudge(): string {
   );
 }
 
+/** True when the assistant left the user-visible content channel empty (whitespace counts as empty). */
+export function isMissingContentAnswer(content: string, _reasoning?: string): boolean {
+  return !(content || '').trim();
+}
+
+export const EMPTY_CONTENT_REPLY_NOTE =
+  '(No content or reasoning tokens — model returned an empty reply. Please try again.)';
+
+/**
+ * @deprecated Prefer zero-cost coalesceEmptyContentFromReasoning (agentPhase) over an API nudge retry.
+ * Nudge when the model finished with empty content (often reasoning-only).
+ * Forces a re-answer in the content channel.
+ */
+export function buildContentChannelNudge(hasReasoning: boolean): string {
+  if (hasReasoning) {
+    return (
+      '↻ Content channel empty: You put the reply only in reasoning / left content empty. ' +
+      'Re-answer now with the COMPLETE user-facing answer in the content channel only. ' +
+      'Do not use tools unless required. Do not reply with only [ANSWER_COMPLETE].'
+    );
+  }
+  return (
+    '↻ Content channel empty: Reply with the answer in the content channel now. ' +
+    'Do not use tools unless required. Do not reply with only [ANSWER_COMPLETE].'
+  );
+}
+
 /** Light heuristic: non-trivial / multi-step user asks (prompt still owns the behavior). */
 export function looksMultiStep(userText: string): boolean {
   const t = (userText || '').trim();
@@ -136,9 +163,87 @@ export function buildLargeJobNudge(): string {
   return (
     '## Large job protocol (required for this request)\n' +
     '1. First message content: a **ToDo** list as plain bullet points (- item) covering the work (3–12 items). No prose wall before the list.\n' +
-    '2. Then explore the codebase with tools (grep / glob / semantic_search / list_dir / read_file / file_outline) before writing patches — revise the ToDo if discovery changes the plan.\n' +
-    '3. Implement step by step: mark progress in content (- [x] / - [ ] or status lines), keep exploring when unsure, do not invent file contents.\n' +
-    '4. Do not stop after only the ToDo — explore and start implementation in the same run.'
+    '2. If new directories/files/skeleton are required, create that structure first, then implement.\n' +
+    '3. Then explore the codebase with tools (grep / glob / semantic_search / list_dir / read_file / file_outline) before writing feature patches — revise the ToDo if discovery changes the plan.\n' +
+    '4. Implement step by step with real diffs/fences: mark progress (- [x] / - [ ]). Do not invent file contents.\n' +
+    '5. Do not stop after only the ToDo — scaffold (if needed) and start implementation in the same run.'
+  );
+}
+
+export type TodoItem = { text: string; done: boolean };
+
+export function parseTodoItems(text: string): TodoItem[] {
+  return parseTodoBullets(text)
+    .map((raw) => {
+      const m = raw.match(/^\[([xX ])\]\s*(.*)$/);
+      if (m) return { text: (m[2] || '').trim() || raw, done: m[1].toLowerCase() === 'x' };
+      return { text: raw, done: false };
+    })
+    .filter((t) => t.text.length >= 3);
+}
+
+export function formatTodoBlock(items: TodoItem[]): string {
+  return `ToDo:\n${items.map((t) => `- [${t.done ? 'x' : ' '}] ${t.text}`).join('\n')}`;
+}
+
+export function liftTodoListToContent(content: string, reasoning: string): string {
+  if (parseTodoItems(content).length) return content;
+  const fromR = parseTodoItems(reasoning);
+  if (!fromR.length) return content;
+  const block = formatTodoBlock(fromR);
+  const body = (content || '').trim();
+  return body ? `${block}\n\n${body}` : block;
+}
+
+/** True when content contains applyable build artifacts (diffs, path fences, code fences). */
+export function looksLikeBuildOutput(text: string): boolean {
+  const t = text || '';
+  if (/```(?:diff|patch|bash|ts|tsx|js|jsx|mjs|cjs|py|go|rs|json|css|html|vue|svelte)/i.test(t)) return true;
+  if (/^diff --git |^--- (a\/|\/dev\/null)|\+\+\+ b\//m.test(t)) return true;
+  if (/^\/\/ [\w./+-]+\s*$/m.test(t) && t.length > 50) return true;
+  return false;
+}
+
+export function looksBuildIntent(userText: string): boolean {
+  const t = (userText || '').trim().toLowerCase();
+  if (!t) return false;
+  if (/\bfile structure\b|\bfolder structure\b|\bproject skeleton\b|\bscaffold\b/.test(t)) return true;
+  if (/\b(build|implement|bootstrap|wire up|set up|setup)\b/.test(t) && t.length >= 24) return true;
+  return /\b(create|add|new)\b.{0,48}\b(file|folder|dir(?:ectory)?|module|app|feature|project|structure|layout|tree|skeleton)\b/.test(
+    t,
+  );
+}
+
+export function needsBuildProtocol(userText: string): boolean {
+  const t = (userText || '').trim();
+  if (!t) return false;
+  return looksBuildIntent(t) || looksLargeJob(t) || looksMultiStep(t);
+}
+
+export function buildBuildModeNudge(): string {
+  return (
+    '## Build mode (ACTIVE — implement in this run)\n' +
+    'After reasoning, content MUST:\n' +
+    '1. Start with ToDo: as - [ ] steps (3-12). First item is scaffolding if new files/folders are required.\n' +
+    '2. If a skeleton is required, CREATE those directories/files NOW (unified diffs or // path fences) before feature code.\n' +
+    '3. Then implement remaining ToDos in the SAME run with real diffs/fences. Mark `- [x]` as each finishes.\n' +
+    '4. Do not stop after only the ToDo list. A list with no diffs is a failed build.\n' +
+    '5. Skip this only for trivial one-shots (single-line answer, typo, one-file read).'
+  );
+}
+
+export function buildBuildModeTodoNudge(): string {
+  return (
+    'Build mode: emit `ToDo:` with 3–12 `- [ ]` steps in content, then immediately scaffold (if needed) and implement with ```diff or // path fences. Do not only reason or only list tasks.'
+  );
+}
+
+export function buildBuildModeImplementNudge(): string {
+  return (
+    'Build mode: you wrote a ToDo list but did not emit any file diffs or path-headed fences. ' +
+    'That is not a build. Now: (1) if new structure is required, create the skeleton first; ' +
+    '(2) implement the next unchecked ToDo with a real ```diff or // relative/path file in content; ' +
+    '(3) mark `- [x]` on finished items. Do not reply with another list only.'
   );
 }
 

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { bridge, type BridgeDirEntry, type BridgeStatus } from '../lib/bridgeClient';
 import { isPlaceholderRoot, setWorkspace } from '../lib/storage';
+import { workspaceGate } from '../lib/workspaceGuard';
 import { cn } from '../lib/cn';
 import type { WorkspaceContext } from '../types';
 
@@ -278,7 +279,11 @@ export function WorkspaceScreen({ workspace, onChange }: Props) {
     setActionError('');
     setBusy(true);
     try {
-      if (typed) patch({ rootPath: typed });
+      if (typed && !isPlaceholderRoot(typed)) {
+        const gate = workspaceGate(typed, bridge.currentAppRoot);
+        if (!gate.ok) throw new Error(gate.message);
+        patch({ rootPath: typed });
+      }
       if (mode === 'connect') {
         await waitUntilConnected();
       } else if (!bridge.connected) {
@@ -287,14 +292,21 @@ export function WorkspaceScreen({ workspace, onChange }: Props) {
       }
       if (!bridge.connected) throw new Error('Bridge disconnected');
       if (typed && !isPlaceholderRoot(typed)) {
+        const gate = workspaceGate(typed, bridge.currentAppRoot);
+        if (!gate.ok) throw new Error(gate.message);
         const root = await bridge.setRoot(typed);
         patch({ rootPath: root });
         setPathDraft(root);
-      }
-      const hello = await bridge.hello();
-      if (!typed || isPlaceholderRoot(typed)) {
-        patch({ rootPath: hello.root });
-        setPathDraft(hello.root);
+      } else {
+        const hello = await bridge.hello();
+        if (hello.workspaceOk && workspaceGate(hello.root, hello.appRoot).ok) {
+          patch({ rootPath: hello.root });
+          setPathDraft(hello.root);
+        } else {
+          throw new Error(
+            'Choose a project folder that is not the Abliterated install. The daemon cwd is the install and cannot be used as a workspace.',
+          );
+        }
       }
       await refreshTree();
     } catch (err) {

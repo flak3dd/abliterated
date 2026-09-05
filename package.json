@@ -8,13 +8,21 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "bridge": "node daemon/bridge.js",
-    "smoke": "node scripts/smoke-agent.mjs && node daemon/search.test.js && node daemon/fsutil.test.js && node daemon/outline.test.js",
+    "smoke": "node scripts/smoke-agent.mjs && node daemon/search.test.js && node daemon/fsutil.test.js && node daemon/outline.test.js && node daemon/appRoot.test.js",
     "test:agent": "node scripts/test-agent-response.mjs",
-    "test": "npm run smoke && npm run test:agent",
+    "test:reasoning": "node scripts/test-reasoning-work.mjs",
+    "test:build": "node scripts/test-build-protocol.mjs",
+    "test:workspace": "node scripts/test-workspace-guard.mjs",
+    "test": "npm run smoke && npm run test:agent && npm run test:reasoning && npm run test:build && npm run test:workspace",
     "image:mock": "cd spark-image && ABLITERATED_IMAGE_MOCK=1 ABLITERATED_IMAGE_HOST=127.0.0.1 ABLITERATED_IMAGE_PORT=7860 python3 serve-openai-bridge.py",
     "featherless-oauth": "node featherless-oauth/server.mjs",
     "bridge:install": "cp scripts/ai.abliteration.bridge.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.abliteration.bridge.plist || launchctl load -w ~/Library/LaunchAgents/ai.abliteration.bridge.plist",
-    "bridge:status": "launchctl print gui/$(id -u)/ai.abliteration.bridge | head -30; curl -s -o /dev/null -w \"http=%{http_code}\\n\" http://127.0.0.1:17322/"
+    "bridge:status": "launchctl print gui/$(id -u)/ai.abliteration.bridge | head -30; curl -s -o /dev/null -w \"http=%{http_code}\\n\" http://127.0.0.1:17322/",
+    "desktop": "electron .",
+    "desktop:dev": "ABLITERATED_ELECTRON_DEV=1 electron .",
+    "dist:mac": "npm run build && electron-builder --mac dir dmg",
+    "dist:win": "npm run build && electron-builder --win nsis portable",
+    "dist:win:dir": "npm run build && electron-builder --win dir"
   },
   "dependencies": {
     "clsx": "^2.1.1",
@@ -33,6 +41,48 @@
     "postcss": "^8.5.2",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3",
-    "vite": "^6.1.0"
+    "vite": "^6.1.0",
+    "electron": "^35.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "main": "electron/main.mjs",
+  "build": {
+    "appId": "ai.abliteration.ide",
+    "productName": "Abliterated",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "daemon/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dir",
+        "dmg"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "publisherName": "Abliteration"
+    },
+    "asarUnpack": [
+      "daemon/**/*",
+      "node_modules/ws/**/*"
+    ],
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Abliterated"
+    }
   }
 }

@@ -102,6 +102,52 @@ code,
   animation: spin-slow 0.9s linear infinite;
 }
 
+/* Mode-tinted terminal canvas: discussion stays black; plan orange; build green. */
+.chat-terminal {
+  background-color: #09090b;
+  transition: background-color 200ms ease;
+}
+
+.chat-terminal--discuss {
+  background-color: #09090b;
+}
+
+.chat-terminal--plan {
+  background-color: #1a1208;
+}
+
+.chat-terminal--build {
+  background-color: #08140f;
+}
+
+.term-pane {
+  background-color: #09090b;
+}
+
+.term-pane--discuss {
+  background-color: #050505;
+}
+
+.term-pane--plan {
+  background-color: #1c1006;
+}
+
+.term-pane--build {
+  background-color: #06140c;
+}
+
+.term-pane-output--plan {
+  background-color: rgba(154, 52, 18, 0.22);
+}
+
+.term-pane-output--build {
+  background-color: rgba(6, 78, 59, 0.28);
+}
+
+.term-pane-output--discuss {
+  background-color: rgba(0, 0, 0, 0.4);
+}
+
 /* Agent response status monitor — phase step dots + turn bar (CSS only) */
 .agent-phase-dots {
   display: flex;

@@ -4,12 +4,15 @@ import { bridge } from '../../lib/bridgeClient';
 import { cn } from '../../lib/cn';
 import { isSpuriousReviewCommit } from '../../lib/agentHelpers';
 
+export type TerminalTone = 'plan' | 'build' | 'discuss';
+
 interface Props {
   command: string;
   onExecuted?: (result: string) => void;
+  tone?: TerminalTone;
 }
 
-export function TerminalPane({ command, onExecuted }: Props) {
+export function TerminalPane({ command, onExecuted, tone = 'discuss' }: Props) {
   const [output, setOutput] = useState('');
   const [exitCode, setExitCode] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
@@ -89,7 +92,14 @@ export function TerminalPane({ command, onExecuted }: Props) {
   };
 
   return (
-    <div className="my-2.5 overflow-hidden rounded-lg border border-border bg-zinc-950 shadow-sm font-mono text-[11px]">
+    <div
+      className={cn(
+        'term-pane my-2.5 overflow-hidden rounded-lg border shadow-sm font-mono text-[11px]',
+        tone === 'plan' && 'term-pane--plan border-orange-800/50',
+        tone === 'build' && 'term-pane--build border-emerald-800/50',
+        tone === 'discuss' && 'term-pane--discuss border-border',
+      )}
+    >
       {/* Title bar */}
       <div className="flex items-center gap-2 border-b border-border/80 bg-surface-raised/70 px-3 py-1.5">
         <Terminal size={12} className="text-emerald-400 shrink-0" />
@@ -166,7 +176,15 @@ export function TerminalPane({ command, onExecuted }: Props) {
       ) : null}
 
       {output || exitCode !== null ? (
-        <div ref={outputRef} className="max-h-60 overflow-auto p-3 text-[11px] leading-5 bg-black/40">
+        <div
+          ref={outputRef}
+          className={cn(
+            'term-pane-output max-h-60 overflow-auto p-3 text-[11px] leading-5',
+            tone === 'plan' && 'term-pane-output--plan',
+            tone === 'build' && 'term-pane-output--build',
+            tone === 'discuss' && 'term-pane-output--discuss',
+          )}
+        >
           {output ? <pre className="whitespace-pre-wrap text-zinc-300">{output}</pre> : null}
         </div>
       ) : null}

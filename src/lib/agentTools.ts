@@ -1,4 +1,5 @@
 import { bridge } from './bridgeClient';
+import { workspaceGate } from './workspaceGuard';
 import { generateImage, imageResultToMarkdown } from './imageGen';
 import { saveGeneratedImage } from './imageLibrary';
 import { isDeadlyCommand } from './grokLayer';
@@ -115,6 +116,25 @@ export async function executeAgentTool(
   const allowed = enabledTools.includes(name);
   if (!allowed) {
     return denied(tool, `tool ${tool.name} is not enabled`);
+  }
+
+  const workspaceGateHit = workspaceGate(opts.workspaceRoot || bridge.currentRoot, bridge.currentAppRoot);
+  const needsWorkspace =
+    name === 'read_file' ||
+    name === 'grep' ||
+    name === 'glob' ||
+    name === 'list_dir' ||
+    name === 'file_outline' ||
+    name === 'semantic_search' ||
+    name === 'git_status' ||
+    name === 'git_diff' ||
+    name === 'git_commit' ||
+    name === 'create_pr' ||
+    name === 'checkpoint_save' ||
+    name === 'checkpoint_restore' ||
+    name === 'shell';
+  if (needsWorkspace && !workspaceGateHit.ok) {
+    return err(tool, workspaceGateHit.message);
   }
 
   if (name === 'read_file') {

@@ -299,3 +299,9 @@ Optional OpenAI-compatible vLLM server, typically on the Spark host and reached 
 ---
 
 *End of application guide.*
+
+---
+
+## Desktop / pricing
+
+See [PRODUCT.md](PRODUCT.md) and [pricing.md](pricing.md). Free; Pro 29/mo or 249/yr; Team 99/mo seat. Activate under Settings -> License / Plan.

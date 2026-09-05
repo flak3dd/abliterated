@@ -3,6 +3,8 @@ import { Pin, Plus, Search, Trash2 } from 'lucide-react';
 import { resolveActiveSettings } from '../lib/activeEndpoint';
 import { cn } from '../lib/cn';
 import { deleteThread, getMessages, uid, upsertThread } from '../lib/storage';
+import { workspaceGate } from '../lib/workspaceGuard';
+import { bridge } from '../lib/bridgeClient';
 import { DEFAULT_ENABLED_TOOLS, type ClientSettings, type Thread } from '../types';
 
 interface Props {
@@ -54,7 +56,8 @@ export function HomeScreen({
       return;
     }
     const now = Date.now();
-    const root = (workspaceRoot || '').trim() || undefined;
+    const candidate = (workspaceRoot || '').trim();
+    const root = workspaceGate(candidate, bridge.currentAppRoot).ok ? candidate : undefined;
     const thread: Thread = {
       id: uid('thr'),
       title: 'New session',

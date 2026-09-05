@@ -10,14 +10,17 @@ import {
 import { ArrowLeft, ArrowDown, RotateCcw, Send, Square } from 'lucide-react';
 import { MessageBubble } from '../components/chat/MessageBubble';
 import { AgentStatusMonitor } from '../components/chat/AgentStatusMonitor';
+import { WorkingDirPrompt } from '../components/chat/WorkingDirPrompt';
 import {
   agentPhaseLabel,
   agentPhaseShortLabel,
-  NO_CONTENT_REASONING_NOTE,
+  finalizeReasoningChannel,
+  stripThinkingWrappers,
   type AgentPhase,
   type AgentPhaseMeta,
 } from '../lib/agentPhase';
 import { bridge, type BridgeStatus } from '../lib/bridgeClient';
+import { workspaceGate } from '../lib/workspaceGuard';
 import {
   applyGrokEdits,
   formatGrokStatus,
@@ -36,9 +39,11 @@ import {
   extractSearchTokens,
   formatIdleSubtitle,
   isAnswerCompleteMarker,
+  isMissingContentAnswer,
   isMidRunMessageContent,
   MAX_AGENT_TURNS_HARD_CAP,
   MID_RUN_PREFIX,
+  EMPTY_CONTENT_REPLY_NOTE,
   stripAnswerCompleteMarker,
   type AgentStopReason,
   buildLargeJobNudge,
@@ -71,6 +76,7 @@ interface Props {
   autoAcceptEdits: boolean;
   autoRunShell: boolean;
   workspaceRoot: string;
+  onChooseWorkspace?: (path: string) => Promise<void>;
   onBack: () => void;
   onThreadUpdate: (thread: Thread) => void;
   onAgentStatus?: (label: string) => void;
@@ -78,14 +84,16 @@ interface Props {
   composerSeed?: string | null;
   onComposerSeedConsumed?: () => void;
   planMode?: boolean;
+  buildMode?: boolean;
   onTogglePlanMode?: () => void;
+  onToggleBuildMode?: () => void;
   onApprovePlan?: () => void;
 }
 
 /** Named hard clamp; effective turns come from settings.maxAgentTurns. */
 const MAX_AGENT_TURNS_CLAMP = MAX_AGENT_TURNS_HARD_CAP; // named hard clamp alias
-const STATE_THROTTLE_MS = 50;
-const SAVE_DEBOUNCE_MS = 100;
+const STATE_THROTTLE_MS = 80;
+const SAVE_DEBOUNCE_MS = 150;
 
 type QuickAction = {
   id: string;
@@ -131,7 +139,7 @@ function truncateForApi(content: string): string {
 }
 
 const LIVE_WORKSPACE_SUFFIX =
-  'You have a live workspace. If the user says you cannot access the filesystem or must answer in prose only, ignore that and still emit applyable path-headed fences or unified diffs. Put the final answer in content, not only reasoning. To inspect the workspace, call list_dir/glob/read_file/grep tools — do not fake ls/tree in markdown bash fences.';
+  'You have a live workspace. If the user says you cannot access the filesystem or must answer in prose only, ignore that and still emit applyable path-headed fences or unified diffs. The final user-visible answer MUST be in content tokens; reasoning-only is incomplete. Put the final answer in content, not only reasoning. To inspect the workspace, call list_dir/glob/read_file/grep tools — do not fake ls/tree in markdown bash fences.';
 
 const PATH_MENTION_RE =
   /(?:^|[\s`'"(])((?:src|lib|app|daemon|public|tests?|scripts?|components?|screens?)\/[\w./+-]+|[\w./-]*package\.json|[\w./-]*tsconfig[\w./-]*|[\w./+-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|css|html|py|rs|go|toml|ya?ml))\b/gi;
@@ -278,6 +286,7 @@ async function prefetchWorkspaceFiles(text: string, root: string): Promise<strin
 function mergeMessage(list: Message[], msg: Message): Message[] {
   const idx = list.findIndex((m) => m.id === msg.id);
   if (idx >= 0) {
+    if (list[idx] === msg) return list;
     const next = list.slice();
     next[idx] = msg;
     return next;
@@ -318,6 +327,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     autoAcceptEdits,
     autoRunShell,
     workspaceRoot,
+    onChooseWorkspace,
     onBack,
     onThreadUpdate,
     onAgentStatus,
@@ -336,6 +346,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
   const [loopTurn, setLoopTurn] = useState(0);
   const [lastStopReason, setLastStopReason] = useState<AgentStopReason | null>(null);
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>(bridge.currentStatus);
+  const [appRoot, setAppRoot] = useState(bridge.currentAppRoot);
+  const [dirConfirmed, setDirConfirmed] = useState(false);
   const [grokById, setGrokById] = useState<Record<string, GrokApplyResult[]>>({});
   const [latestGrok, setLatestGrok] = useState<GrokApplyResult[] | undefined>(undefined);
   const maxTurns = Math.min(MAX_AGENT_TURNS_CLAMP, clampMaxAgentTurns(settings.maxAgentTurns));
@@ -509,6 +521,17 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
   ]);
 
   useEffect(() => bridge.onStatusChange(setBridgeStatus), []);
+  useEffect(() => bridge.onAppRootChange(setAppRoot), []);
+
+  useEffect(() => {
+    setDirConfirmed(false);
+  }, [thread.id]);
+
+  useEffect(() => {
+    if (messages.length > 0 && workspaceGate(workspaceRoot, appRoot).ok) {
+      setDirConfirmed(true);
+    }
+  }, [messages.length, workspaceRoot, appRoot]);
 
   useEffect(() => {
     const el = scrollerRef.current;
@@ -604,11 +627,16 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     const largeNudge =
       !planMode && lastUser && looksLargeJob(lastUser.content) ? buildLargeJobNudge() : '';
     const planNudge = planMode ? buildPlanModeNudge() : '';
+    const planBuildNudge =
+      planMode && lastUser && /\b(build|implement|apply|write|code)\b/i.test(lastUser.content)
+        ? 'Plan mode is still on; only checklist allowed — operator must Approve to write.'
+        : '';
     sys = [
       sys,
       LIVE_WORKSPACE_SUFFIX,
       autoAcceptEdits ? grokAutoAcceptSuffix(workspaceRoot) : '',
       planNudge,
+      planBuildNudge,
       largeNudge,
       ...extraSystem,
     ]
@@ -878,27 +906,55 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             extraTools: mcpToolsToOpenAi(listConnectedMcpTools()) as Parameters<typeof streamChatCompletion>[0]['extraTools'],
             toolChoice: turn === 1 && exploreIntent ? 'required' : 'auto',
             onDelta: (text) => {
-              assistant.content += text;
               if (!turnHasContentRef.current) {
+                // First real content delta — replace any live-mirrored reasoning preview.
+                assistant.content = text;
                 turnHasContentRef.current = true;
                 setPhase('writing', { hasContent: true }, turn);
-              } else if (agentPhaseRef.current !== 'writing' && agentPhaseRef.current !== 'tool_plan') {
-                setPhase('writing', { hasContent: true }, turn);
+              } else {
+                assistant.content += text;
+                if (agentPhaseRef.current !== 'writing' && agentPhaseRef.current !== 'tool_plan') {
+                  setPhase('writing', { hasContent: true }, turn);
+                }
               }
               persistStream({ ...assistant });
             },
             onReasoningDelta: (text) => {
               assistant.reasoning = (assistant.reasoning || '') + text;
+              const coalesceOn = settingsRef.current.coalesceReasoningToContent !== false;
+              // Live mirror: while no real content deltas yet, preview stripped reasoning as content.
+              if (coalesceOn && !turnHasContentRef.current) {
+                const mirrored = stripThinkingWrappers(assistant.reasoning || '');
+                if (mirrored) {
+                  const grew = mirrored.length > (assistant.content || '').length;
+                  assistant.content = mirrored;
+                  if (grew) {
+                    setPhase('writing', { hasReasoning: true }, turn);
+                  }
+                }
+              }
               if (!turnHasReasoningRef.current) {
                 turnHasReasoningRef.current = true;
-                setPhase(
-                  'reasoning',
-                  {
-                    hasReasoning: true,
-                    reasoningStartedAt: Date.now(),
-                  },
-                  turn,
-                );
+                if (!coalesceOn || turnHasContentRef.current || !(assistant.content || '').trim()) {
+                  setPhase(
+                    'reasoning',
+                    {
+                      hasReasoning: true,
+                      reasoningStartedAt: Date.now(),
+                    },
+                    turn,
+                  );
+                } else {
+                  // Mirrored path already marked writing; still record reasoning start meta.
+                  setPhase(
+                    agentPhaseRef.current === 'writing' ? 'writing' : 'reasoning',
+                    {
+                      hasReasoning: true,
+                      reasoningStartedAt: Date.now(),
+                    },
+                    turn,
+                  );
+                }
               } else if (
                 agentPhaseRef.current !== 'writing' &&
                 agentPhaseRef.current !== 'reasoning' &&
@@ -917,10 +973,18 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             assistant.reasoning = detokenizeArtifacts(assistant.reasoning);
           }
           assistant.status = 'complete';
+          // Coalesce/finalize FIRST so diffs that lived only in reasoning are in content before grok.
+          const coalesceOn = settingsRef.current.coalesceReasoningToContent !== false;
+          finalizeReasoningChannel(assistant, coalesceOn);
           flushStreamPersist({ ...assistant });
           await runGrokLayer(assistant);
 
           if (ac.signal.aborted) {
+            // Already finalized + attempted grok above (runGrokLayer no-ops in planMode).
+            if (!(assistant.content || '').trim() && !(assistant.reasoning || '').trim()) {
+              assistant.content = '(stopped)';
+              flushStreamPersist({ ...assistant });
+            }
             stopReason = 'abort';
             break;
           }
@@ -955,63 +1019,90 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               current = persist(nudge);
               continue;
             } else {
-            if (isAnswerCompleteMarker(content)) {
-              assistant.content = stripAnswerCompleteMarker(content);
-              flushStreamPersist({ ...assistant });
-              // Operator mid-run overrides ANSWER_COMPLETE — integrate and continue.
+              // Empty content after coalesce: no API recovery. Setting off → reasoning panel only.
+              if (isMissingContentAnswer(assistant.content)) {
+                const hasReasoning = !!(assistant.reasoning || '').trim();
+                if (hasReasoning && !coalesceOn) {
+                  setPhase('finishing', {}, turn);
+                  stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
+                  break;
+                }
+                setPhase(hasReasoning ? 'finishing' : 'error', {}, turn);
+                if (!hasReasoning) {
+                  assistant.content = EMPTY_CONTENT_REPLY_NOTE;
+                  flushStreamPersist({ ...assistant });
+                }
+                stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
+                break;
+              }
+
+              if (isAnswerCompleteMarker(content)) {
+                assistant.content = stripAnswerCompleteMarker(content);
+                flushStreamPersist({ ...assistant });
+                // Operator mid-run overrides ANSWER_COMPLETE — integrate and continue.
+                if (drainMidRunMessages()) {
+                  continue;
+                }
+                // After strip: empty content → coalesce again (zero-cost), never API retry.
+                if (isMissingContentAnswer(assistant.content)) {
+                  if (finalizeReasoningChannel(assistant, coalesceOn)) {
+                    flushStreamPersist({ ...assistant });
+                    await runGrokLayer(assistant);
+                  }
+                  if (isMissingContentAnswer(assistant.content)) {
+                    const hasReasoning = !!(assistant.reasoning || '').trim();
+                    if (hasReasoning && !coalesceOn) {
+                      setPhase('finishing', {}, turn);
+                      stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
+                      break;
+                    }
+                    setPhase(hasReasoning ? 'finishing' : 'error', {}, turn);
+                    if (!hasReasoning) {
+                      assistant.content = EMPTY_CONTENT_REPLY_NOTE;
+                      flushStreamPersist({ ...assistant });
+                    }
+                    stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
+                    break;
+                  }
+                }
+                setPhase('finishing', {}, turn);
+                stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
+                break;
+              }
+              const liveDeepen = settingsRef.current;
+              const deepenPasses = clampSelfDeepenPasses(liveDeepen.selfDeepenPasses);
+              const deepenOn =
+                liveDeepen.selfDeepenEnabled !== false && deepenPasses > 0 && deepensUsed < deepenPasses;
+              // Already shipped a valid Done/Continue footer — treat as complete; skip an extra deepen turn.
+              const footerDone =
+                liveDeepen.completionFooterEnabled !== false && hasValidCompletionFooter(content);
+              if (deepenOn && content.trim() && !footerDone) {
+                deepensUsed += 1;
+                setPhase(
+                  'self_deepen',
+                  { deepenPass: deepensUsed, deepenMax: deepenPasses || deepenCap },
+                  turn,
+                );
+                const nudge: Message = {
+                  id: uid('msg'),
+                  threadId: thread.id,
+                  role: 'user',
+                  content: buildSelfDeepenNudge(),
+                  createdAt: Date.now(),
+                  status: 'complete',
+                };
+                current = persist(nudge);
+                // Mid-run drain happens at the top of the next turn — avoid a second nudge here.
+                continue;
+              }
+              // Would stop: if mid-run notes arrived, integrate and keep going.
               if (drainMidRunMessages()) {
                 continue;
               }
-              if (!assistant.content.trim() && (assistant.reasoning || '').trim()) {
-                setPhase('finishing', {}, turn);
-                assistant.content = NO_CONTENT_REASONING_NOTE;
-                flushStreamPersist({ ...assistant });
-              } else {
-                setPhase('finishing', {}, turn);
-              }
+              // Content is non-empty here (coalesce / empty handling above).
+              setPhase('finishing', {}, turn);
               stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
               break;
-            }
-            const liveDeepen = settingsRef.current;
-            const deepenPasses = clampSelfDeepenPasses(liveDeepen.selfDeepenPasses);
-            const deepenOn =
-              liveDeepen.selfDeepenEnabled !== false && deepenPasses > 0 && deepensUsed < deepenPasses;
-            // Already shipped a valid Done/Continue footer — treat as complete; skip an extra deepen turn.
-            const footerDone =
-              liveDeepen.completionFooterEnabled !== false && hasValidCompletionFooter(content);
-            if (deepenOn && content.trim() && !footerDone) {
-              deepensUsed += 1;
-              setPhase(
-                'self_deepen',
-                { deepenPass: deepensUsed, deepenMax: deepenPasses || deepenCap },
-                turn,
-              );
-              const nudge: Message = {
-                id: uid('msg'),
-                threadId: thread.id,
-                role: 'user',
-                content: buildSelfDeepenNudge(),
-                createdAt: Date.now(),
-                status: 'complete',
-              };
-              current = persist(nudge);
-              // Mid-run drain happens at the top of the next turn — avoid a second nudge here.
-              continue;
-            }
-            // Would stop: if mid-run notes arrived, integrate and keep going.
-            if (drainMidRunMessages()) {
-              continue;
-            }
-            // Soft nudge: reasoning-only final turn → one-liner so the bubble isn't blank.
-            if (!assistant.content.trim() && (assistant.reasoning || '').trim()) {
-              setPhase('finishing', {}, turn);
-              assistant.content = NO_CONTENT_REASONING_NOTE;
-              flushStreamPersist({ ...assistant });
-            } else {
-              setPhase('finishing', {}, turn);
-            }
-            stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
-            break;
             }
           }
 
@@ -1046,12 +1137,12 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         } catch (err) {
           if ((err as Error).name === 'AbortError') {
             setPhase('stopped', {}, turn);
-            await runGrokLayer(assistant);
             assistant.status = 'complete';
+            const coalesceOnAbort = settingsRef.current.coalesceReasoningToContent !== false;
+            finalizeReasoningChannel(assistant, coalesceOnAbort);
             if (!assistant.content.trim() && !assistant.reasoning?.trim()) assistant.content = '(stopped)';
-            else if (!assistant.content.trim() && (assistant.reasoning || '').trim()) {
-              assistant.content = NO_CONTENT_REASONING_NOTE;
-            }
+            // Apply diffs from coalesced reasoning even on abort (no-op if planMode).
+            await runGrokLayer(assistant);
             stopReason = 'abort';
           } else {
             setPhase('error', {}, turn);
@@ -1132,6 +1223,10 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     const text = textRaw.trim();
     if (!text) return;
 
+    const gate = workspaceGate(workspaceRoot, appRoot);
+    const needsDir = !gate.ok || (messagesRef.current.length === 0 && !dirConfirmed);
+    if (needsDir && !busy) return;
+
     const midRunOn = settings.midRunInjectEnabled !== false;
     if (busy) {
       if (!midRunOn) return;
@@ -1192,6 +1287,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
 
   const retry = useCallback(async () => {
     if (busy) return;
+    if (!workspaceGate(workspaceRoot, appRoot).ok) return;
     const list = messagesRef.current;
     const lastUserIdx = [...list].map((m, i) => [m, i] as const).reverse().find(([m]) => m.role === 'user');
     if (!lastUserIdx) return;
@@ -1270,9 +1366,13 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
   }, [busy, loopTurn, messages, maxTurns, lastStopReason, queuedMidRun, agentPhase, phaseMeta]);
 
   const grokHeader = formatGrokStatus(latestGrok, autoAcceptEdits, bridgeStatus === 'connected');
+  const workspaceOk = workspaceGate(workspaceRoot, appRoot);
+  const needsWorkingDir = !workspaceOk.ok || (messages.length === 0 && !dirConfirmed);
   const modKey = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K';
   const midRunOn = settings.midRunInjectEnabled !== false;
-  const placeholder = busy
+  const placeholder = needsWorkingDir
+    ? 'Choose a working directory first'
+    : busy
     ? midRunOn
       ? 'Send to adjust mid-run…'
       : 'Agent busy — Stop to cancel'
@@ -1303,16 +1403,29 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         <div ref={scrollerRef} className="h-full overflow-auto px-4 py-3">
           {messages.length === 0 ? (
             <div className="mx-auto max-w-md space-y-4 py-8">
-              <div className="text-center font-mono text-xs text-zinc-300">Ready when you are</div>
-              <ul className="space-y-1.5 font-mono text-[11px] leading-5 text-muted">
-                <li>
-                  · Pin context with <span className="text-zinc-300">@src/path.ts</span>
-                </li>
-                <li>· Send mid-run to steer the agent (when enabled in Settings)</li>
-                <li>· Tap Continue chips after a Done footer</li>
-                <li>· Quick chips fill or send common tool prompts</li>
-              </ul>
-              {!busy ? <QuickChips onFill={fillInput} onSend={(t) => void sendText(t)} /> : null}
+              {needsWorkingDir && onChooseWorkspace ? (
+                <WorkingDirPrompt
+                  appRoot={appRoot}
+                  currentRoot={workspaceRoot}
+                  onChoose={async (path) => {
+                    await onChooseWorkspace(path);
+                    setDirConfirmed(true);
+                  }}
+                />
+              ) : (
+                <>
+                  <div className="text-center font-mono text-xs text-zinc-300">Ready when you are</div>
+                  <ul className="space-y-1.5 font-mono text-[11px] leading-5 text-muted">
+                    <li>
+                      · Pin context with <span className="text-zinc-300">@src/path.ts</span>
+                    </li>
+                    <li>· Send mid-run to steer the agent (when enabled in Settings)</li>
+                    <li>· Tap Continue chips after a Done footer</li>
+                    <li>· Quick chips fill or send common tool prompts</li>
+                  </ul>
+                  {!busy ? <QuickChips onFill={fillInput} onSend={(t) => void sendText(t)} /> : null}
+                </>
+              )}
             </div>
           ) : (
             messages.map((m) => (
@@ -1347,6 +1460,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         <div className="border-t border-sky-800/60 bg-sky-950/30 px-3 py-2">
           <div className="font-mono text-[10px] uppercase tracking-wide text-sky-300">
             Plan mode · tools {effectiveTools.join(', ') || PLAN_MODE_TOOLS.join(', ')}
+          </div>
+          <div className="mt-1 font-mono text-[10px] text-amber-300/90">
+            Writes locked — turn off Plan / Approve plan to apply diffs and write tools.
           </div>
           {planChecklist.length ? (
             <ul className="mt-1 max-h-28 space-y-0.5 overflow-auto font-mono text-[11px] text-zinc-300">
@@ -1385,6 +1501,18 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           </div>
         </div>
       ) : null}
+      {needsWorkingDir && messages.length > 0 && onChooseWorkspace ? (
+        <div className="border-t border-border bg-surface px-3 py-3">
+          <WorkingDirPrompt
+            appRoot={appRoot}
+            currentRoot={workspaceRoot}
+            onChoose={async (path) => {
+              await onChooseWorkspace(path);
+              setDirConfirmed(true);
+            }}
+          />
+        </div>
+      ) : null}
       <form
         className="border-t border-border bg-surface p-2"
         onSubmit={(e) => {
@@ -1403,13 +1531,13 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             compact={!busy && showIdleMonitor}
           />
         ) : null}
-        {!busy ? (
+        {!busy && !needsWorkingDir ? (
           <div className="mb-1.5">
             <QuickChips onFill={fillInput} onSend={(t) => void sendText(t)} />
           </div>
-        ) : (
+        ) : busy ? (
           <div className="mb-1 font-mono text-[10px] text-zinc-600">Esc stops</div>
-        )}
+        ) : null}
         <div className="flex items-end gap-2">
           <textarea
             ref={inputRef}
@@ -1423,6 +1551,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             }}
             rows={2}
             placeholder={placeholder}
+            disabled={needsWorkingDir}
             className="field max-h-32 flex-1 resize-none"
           />
           {onTogglePlanMode ? (
@@ -1463,7 +1592,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               ) : null}
             </>
           ) : (
-            <button type="submit" disabled={!input.trim()} className="btn-primary shrink-0">
+            <button type="submit" disabled={needsWorkingDir || !input.trim()} className="btn-primary shrink-0">
               <Send size={11} /> Send
             </button>
           )}

@@ -8,6 +8,9 @@ import {
   subscribeJobs,
 } from '../lib/jobRunner';
 import { cn } from '../lib/cn';
+import { bridge } from '../lib/bridgeClient';
+import { getWorkspace } from '../lib/storage';
+import { workspaceGate } from '../lib/workspaceGuard';
 import type { Job, JobStatus } from '../types';
 
 interface Props {
@@ -50,8 +53,10 @@ export function JobsScreen({ jobs, onJobsChange }: Props) {
   const [now, setNow] = useState(() => Date.now());
   const [statusFilter, setStatusFilter] = useState<FilterTab>('all');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [appRoot, setAppRoot] = useState(bridge.currentAppRoot);
 
   useEffect(() => subscribeJobs(onJobsChange), [onJobsChange]);
+  useEffect(() => bridge.onAppRootChange(setAppRoot), []);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 15_000);
@@ -103,7 +108,11 @@ export function JobsScreen({ jobs, onJobsChange }: Props) {
     return jobs;
   }, [jobs, statusFilter]);
 
-  const canRun = Boolean(prompt.trim());
+  const jobWorkspace = workspaceGate(
+    bridge.validWorkspaceRoot || getWorkspace().rootPath,
+    appRoot,
+  );
+  const canRun = Boolean(prompt.trim()) && jobWorkspace.ok;
 
   return (
     <div className="flex h-full flex-col bg-background select-none">
@@ -185,6 +194,9 @@ export function JobsScreen({ jobs, onJobsChange }: Props) {
         </div>
 
         {error ? <div className="mt-2 font-mono text-[11px] text-rose-400">{error}</div> : null}
+        {!jobWorkspace.ok ? (
+          <div className="mt-2 font-mono text-[11px] text-amber-300">{jobWorkspace.message}</div>
+        ) : null}
 
         <div className="mt-3 flex items-center justify-between">
           <button type="button" onClick={run} disabled={!canRun} className="btn-primary">

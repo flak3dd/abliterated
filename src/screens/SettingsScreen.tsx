@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { bridge } from '../lib/bridgeClient';
 import {
   EXAMPLE_FILESYSTEM_MCP,
@@ -7,6 +7,16 @@ import {
   getMcpServerStatuses,
   syncMcpServers,
 } from '../lib/mcpClient';
+import {
+  ADMIN_LICENSE_KEY,
+  LICENSE_TEST_KEYS,
+  PRICING_HINT,
+  adminCredentials,
+  countEnabledMcp,
+  getLicenseState,
+  normalizeLicenseKey,
+  verifyAdminLogin,
+} from '../lib/license';
 import { generatePairingCode, setSettings, uid, wipeAll } from '../lib/storage';
 import type { ClientSettings, McpServerConfig } from '../types';
 
@@ -91,11 +101,56 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   const [mcpTick, setMcpTick] = useState(0);
   const [mcpBusyId, setMcpBusyId] = useState<string | null>(null);
   const [mcpHint, setMcpHint] = useState('');
+  const [licenseDraft, setLicenseDraft] = useState(settings.licenseKey || '');
+  const [licenseMsg, setLicenseMsg] = useState('');
+  const creds = adminCredentials();
+  const [adminUser, setAdminUser] = useState(creds.username);
+  const [adminPass, setAdminPass] = useState('');
+  const [adminMsg, setAdminMsg] = useState('');
+  const [adminErr, setAdminErr] = useState('');
+
+  useEffect(() => {
+    setLicenseDraft(settings.licenseKey || '');
+  }, [settings.licenseKey]);
 
   const patch = (partial: Partial<ClientSettings>) => {
     const next = { ...settings, ...partial };
     setSettings(next);
     onSettingsChange(next);
+  };
+
+  const persistLicense = (rawKey: string) => {
+    const key = normalizeLicenseKey(rawKey);
+    setLicenseDraft(key);
+    const nextLicense = getLicenseState({ licenseKey: key });
+    patch({
+      licenseKey: key,
+      maxConcurrentJobs: nextLicense.tier === 'admin' ? 16 : nextLicense.tier === 'free' ? 1 : 4,
+      selfDeepenPasses: nextLicense.features.maxSelfDeepenPasses,
+    });
+    try {
+      void window.ablitDesktop?.setLicense?.(key);
+    } catch {
+      /* browser / no preload */
+    }
+    return nextLicense;
+  };
+
+  const signInAdmin = () => {
+    setAdminErr('');
+    setAdminMsg('');
+    if (!verifyAdminLogin(adminUser, adminPass)) {
+      setAdminErr(
+        `Invalid username or password. Use ${creds.username} / ${creds.password}, or paste ABLIT-ADMIN in the password field.`,
+      );
+      return;
+    }
+    const next = persistLicense(ADMIN_LICENSE_KEY);
+    setAdminPass('');
+    setAdminMsg(
+      `Signed in as admin — ${next.label}. This unlocks local IDE gates only. Cloud chat still needs an API key on the API tab (Abliteration token or Featherless key).`,
+    );
+    setLicenseMsg(`Activated ${next.label}.`);
   };
 
   const updateMcp = (id: string, partial: Partial<McpServerConfig>) => {
@@ -179,6 +234,8 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   const statuses = getMcpServerStatuses();
   const statusById = new Map(statuses.map((s) => [s.id, s]));
   const servers = settings.mcpServers || [];
+  const license = getLicenseState(settings);
+  const enabledMcp = countEnabledMcp(servers);
 
   return (
     <div className="h-full overflow-auto p-4">
@@ -216,9 +273,46 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
           <SwitchRow
             label="Plan mode active"
             checked={settings.planModeEnabled === true}
-            onChange={(v) => patch({ planModeEnabled: v })}
-            help="When on, chat is read-only explore → checklist until you Approve plan. Write/shell/MCP stay locked."
+            onChange={(v) =>
+              patch({ planModeEnabled: v, buildModeEnabled: v ? false : settings.buildModeEnabled !== false })
+            }
+            help="When on, chat is read-only explore → checklist until you Approve plan. Write/shell/MCP stay locked. Turns Build mode off."
           />
+
+          <SwitchRow
+            label="Build mode active"
+            checked={settings.buildModeEnabled !== false && settings.planModeEnabled !== true}
+            onChange={(v) => patch({ buildModeEnabled: v, planModeEnabled: v ? false : settings.planModeEnabled })}
+            help="After reasoning, emit a ToDo list in content. If new file/folder structure is needed, scaffold it first, then work the ToDos."
+          />
+
+          <FieldLabel
+            label={`Max concurrent Jobs (1–${Number.isFinite(license.features.maxConcurrentJobs) ? license.features.maxConcurrentJobs : 4})`}
+            hint={
+              license.isFree
+                ? 'Free tier: single-flight Jobs. Pro unlocks up to 4 parallel.'
+                : 'How many background Jobs may run at once.'
+            }
+          >
+            <input
+              type="number"
+              min={1}
+              max={Number.isFinite(license.features.maxConcurrentJobs) ? license.features.maxConcurrentJobs : 16}
+              value={Math.min(
+                settings.maxConcurrentJobs ?? 1,
+                Number.isFinite(license.features.maxConcurrentJobs) ? license.features.maxConcurrentJobs : 16,
+              )}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                const max = Number.isFinite(license.features.maxConcurrentJobs)
+                  ? license.features.maxConcurrentJobs
+                  : 4;
+                const clamped = Number.isFinite(n) ? Math.min(max, Math.max(1, Math.floor(n))) : 1;
+                patch({ maxConcurrentJobs: clamped });
+              }}
+              className="field field-num"
+            />
+          </FieldLabel>
 
           <SwitchRow
             label="Self-deepen answers"
@@ -254,6 +348,13 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             checked={settings.completionFooterEnabled !== false}
             onChange={(v) => patch({ completionFooterEnabled: v })}
             help="Finished answers with a Done/Continue footer show three one-click continue prompts."
+          />
+
+          <SwitchRow
+            label="Use reasoning as answer when content is empty"
+            checked={settings.coalesceReasoningToContent !== false}
+            onChange={(v) => patch({ coalesceReasoningToContent: v })}
+            help="R1-style models sometimes fill reasoning only. Promote that text into the main answer locally — no extra API call. Off = show reasoning panel only."
           />
         </Section>
 
@@ -340,7 +441,18 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
                         <input
                           type="checkbox"
                           checked={s.enabled}
-                          onChange={(e) => updateMcp(s.id, { enabled: e.target.checked })}
+                          onChange={(e) => {
+                            const want = e.target.checked;
+                            if (want && !s.enabled) {
+                              const nextCount = enabledMcp + 1;
+                              if (nextCount > license.features.maxMcpServers) {
+                                setMcpHint(
+                                  `Free tier allows ${license.features.maxMcpServers} MCP server — enabling anyway (soft). Upgrade for unlimited.`,
+                                );
+                              }
+                            }
+                            updateMcp(s.id, { enabled: want });
+                          }}
                         />
                       </label>
                       {connected ? (
@@ -458,6 +570,147 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
                   .map((s) => `${s.name}: ${s.connected ? `${s.toolCount} tools` : s.error || 'offline'}`)
                   .join(' · ')}
           </div>
+        </Section>
+
+        <Section
+          title="License / Plan"
+          hint={`Freemium stub — Pro $${PRICING_HINT.proMonthly}/mo or $${PRICING_HINT.proYearly}/yr · Team $${PRICING_HINT.teamMonthlySeat}/mo seat (suggested).`}
+        >
+          <div className="rounded border border-border bg-background px-3 py-2">
+            <div className="font-mono text-[10px] uppercase text-muted">Current plan</div>
+            <div className="mt-1 font-mono text-lg text-zinc-100">{license.label}</div>
+            {license.features.showWatermark ? (
+              <p className="mt-1 font-mono text-[11px] text-amber-400/90">Free watermark on — upgrade to remove.</p>
+            ) : (
+              <p className="mt-1 font-mono text-[11px] text-emerald-400/90">No watermark · priority features unlocked.</p>
+            )}
+          </div>
+
+          <ul className="mt-2 list-inside list-disc font-mono text-[11px] text-muted">
+            <li>
+              MCP servers:{" "}
+              {Number.isFinite(license.features.maxMcpServers) ? license.features.maxMcpServers : "unlimited"} (enabled
+              now: {enabledMcp})
+            </li>
+            <li>
+              Jobs concurrency: up to{' '}
+              {Number.isFinite(license.features.maxConcurrentJobs)
+                ? license.features.maxConcurrentJobs
+                : 'unlimited'}
+            </li>
+            <li>Plan mode: allowed</li>
+            <li>Shared seats: {license.features.sharedSeats ? 'Team placeholder' : '—'}</li>
+          </ul>
+
+          <div className="rounded border border-emerald-900/50 bg-emerald-950/20 px-3 py-2">
+            <div className="font-mono text-[10px] uppercase text-emerald-400/90">Development admin</div>
+            <p className="mt-1 font-mono text-[11px] text-muted">
+              Full usage while developing. User <span className="text-zinc-200">{creds.username}</span> / password{' '}
+              <span className="text-zinc-200">{creds.password}</span>
+              {import.meta.env.DEV ? ' · Vite DEV auto-unlocks Admin when no key is set.' : ''}.
+            </p>
+            <form
+              className="mt-2 space-y-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                signInAdmin();
+              }}
+            >
+              <div className="grid gap-2 sm:grid-cols-2">
+                <input
+                  value={adminUser}
+                  onChange={(e) => setAdminUser(e.target.value)}
+                  placeholder="username"
+                  autoComplete="off"
+                  name="ablit-admin-user"
+                  className="field font-mono text-[12px]"
+                />
+                <input
+                  type="password"
+                  value={adminPass}
+                  onChange={(e) => setAdminPass(e.target.value)}
+                  placeholder="password"
+                  autoComplete="off"
+                  name="ablit-admin-pass"
+                  className="field font-mono text-[12px]"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="submit" className="btn-primary h-7 px-3 text-[10px]">
+                  Sign in as admin
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost h-7 px-2 text-[10px]"
+                  onClick={() => {
+                    setAdminErr('');
+                    const next = persistLicense(ADMIN_LICENSE_KEY);
+                    setAdminMsg(`Applied ${ADMIN_LICENSE_KEY} — ${next.label}.`);
+                    setLicenseMsg(`Activated ${next.label}.`);
+                  }}
+                >
+                  Unlock admin key
+                </button>
+              </div>
+            </form>
+            {adminErr ? <p className="mt-1 font-mono text-[11px] text-rose-400">{adminErr}</p> : null}
+            {adminMsg ? <p className="mt-1 font-mono text-[11px] text-emerald-300">{adminMsg}</p> : null}
+          </div>
+
+          <FieldLabel label="License key" hint="ABLIT-ADMIN · ABLIT-DEV-UNLOCK · ABLIT-PRO-XXXX-XXXX · ABLIT-FREE to test gates">
+            <input
+              value={licenseDraft}
+              onChange={(e) => setLicenseDraft(e.target.value)}
+              placeholder="ABLIT-PRO-XXXX-XXXX"
+              className="field font-mono text-[12px]"
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </FieldLabel>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-primary h-7 px-3 text-[10px]"
+              onClick={() => {
+                const key = normalizeLicenseKey(licenseDraft);
+                const next = persistLicense(key);
+                setLicenseMsg(
+                  key
+                    ? `Activated ${next.label}${next.isFree && key ? " (unrecognized key → Free)" : ""}.`
+                    : "Cleared — Free tier.",
+                );
+              }}
+            >
+              Activate
+            </button>
+            <button
+              type="button"
+              className="btn-ghost h-7 px-2 text-[10px]"
+              onClick={() => {
+                const next = persistLicense(LICENSE_TEST_KEYS.admin);
+                setAdminErr('');
+                setAdminMsg(`Applied ${LICENSE_TEST_KEYS.admin} — ${next.label}.`);
+                setLicenseMsg(`Activated ${next.label}.`);
+              }}
+            >
+              Apply admin key
+            </button>
+            <button
+              type="button"
+              className="btn-ghost h-7 px-2 text-[10px]"
+              onClick={() => {
+                persistLicense(LICENSE_TEST_KEYS.free);
+                setAdminMsg('');
+                setLicenseMsg('Forced Free (ABLIT-FREE) to test gates. Sign in as admin to restore.');
+              }}
+            >
+              Test Free gates
+            </button>
+          </div>
+          {licenseMsg ? <p className="font-mono text-[11px] text-sky-300">{licenseMsg}</p> : null}
+          <p className="font-mono text-[10px] text-muted">
+            Offline stub only — real verification will be server-signed after checkout. See docs/PRODUCT.md.
+          </p>
         </Section>
 
         <Section title="Documentation" hint="In-app guide served by Vite from public/docs while the DEV server runs.">

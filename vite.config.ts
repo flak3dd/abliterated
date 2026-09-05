@@ -112,6 +112,7 @@ const abliterationProxy = {
 };
 
 export default defineConfig({
+  base: "./",
   plugins: [react(), docsStaticIndex()],
   server: { host: '127.0.0.1', port: 5173, proxy: abliterationProxy },
   preview: { host: '127.0.0.1', port: 4173, proxy: abliterationProxy },

@@ -8,6 +8,8 @@ const sessions = new Map();
 
 const INIT_TIMEOUT_MS = 20000;
 const STDERR_CAP = 4096;
+/** Hard cap concurrent MCP stdio sessions. */
+export const MAX_MCP_SESSIONS = 8;
 
 function writeMessage(proc, msg) {
   // Modern MCP SDK (stdio) uses newline-delimited JSON.
@@ -270,6 +272,11 @@ export async function connect(cfg, cwd) {
   if (sessions.has(id)) {
     await disconnect(id);
   }
+  if (sessions.size >= MAX_MCP_SESSIONS) {
+    throw new Error(
+      'MCP session limit (' + MAX_MCP_SESSIONS + ') reached — disconnect one first',
+    );
+  }
   const rawCommand = String(cfg.command || '').trim();
   if (!rawCommand) throw new Error('mcp command required');
   const rawArgs = Array.isArray(cfg.args) ? cfg.args.map(String) : [];
@@ -375,6 +382,10 @@ export async function disconnect(id) {
     } catch (e) { /* ignore */ }
   }
   session.waiters.clear();
+}
+
+export function sessionCount() {
+  return sessions.size;
 }
 
 export async function disconnectAll() {
