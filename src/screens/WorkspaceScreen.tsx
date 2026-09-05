@@ -5,6 +5,7 @@ import {
   FileCode,
   FileText,
   Folder,
+  FolderPlus,
   ImageIcon,
   Plus,
   Plug,
@@ -316,6 +317,44 @@ export function WorkspaceScreen({ workspace, onChange }: Props) {
     }
   };
 
+
+  const createDirectory = async () => {
+    const typed = pathDraft.trim();
+    setActionError('');
+    if (!typed || isPlaceholderRoot(typed)) {
+      setActionError('Enter an absolute path');
+      return;
+    }
+    const absOk = typed.startsWith('/') || /^[A-Za-z]:[\\/]/.test(typed) || typed.startsWith('\\\\');
+    if (!absOk) {
+      setActionError('Path must be absolute');
+      return;
+    }
+    const gate = workspaceGate(typed, bridge.currentAppRoot);
+    if (!gate.ok) {
+      setActionError(gate.message);
+      return;
+    }
+    if (!bridge.connected) {
+      setActionError('Connect the bridge first');
+      return;
+    }
+    setBusy(true);
+    try {
+      const created = await bridge.createDirectory(typed);
+      setPathDraft(created);
+      patch({ rootPath: created });
+      const root = await bridge.setRoot(created);
+      patch({ rootPath: root });
+      setPathDraft(root);
+      await refreshTree();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const openFile = async (node: TreeNode) => {
     setSelectedPath(node.path);
     setPreview('');
@@ -449,6 +488,15 @@ export function WorkspaceScreen({ workspace, onChange }: Props) {
           className="btn-ghost h-7 px-2 text-[10px]"
         >
           Use folder
+        </button>
+        <button
+          type="button"
+          disabled={busy || !pathDraft.trim()}
+          onClick={() => void createDirectory()}
+          className="btn-ghost h-7 px-2 text-[10px]"
+          title="Create directory then use as workspace root"
+        >
+          <FolderPlus size={11} /> Create directory
         </button>
         <button
           type="button"

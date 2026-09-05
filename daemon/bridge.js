@@ -292,6 +292,31 @@ async function handleSetRoot(ws, msg) {
   }
 }
 
+
+async function handleCreateDir(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const raw = String(msg.path || '').trim();
+    if (!raw) throw new Error('missing path');
+    const resolved = path.resolve(raw);
+    assertNotAppInstall(resolved, 'workspace');
+    let st;
+    try {
+      st = await stat(resolved);
+    } catch {
+      st = null;
+    }
+    if (st) {
+      if (!st.isDirectory()) throw new Error('path exists and is a file');
+    } else {
+      await mkdir(resolved, { recursive: true });
+    }
+    send(ws, { runId, status: 'ok', path: resolved });
+  } catch (err) {
+    send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 async function handleLs(ws, msg) {
   const runId = msg.runId;
   try {
@@ -855,6 +880,10 @@ wss.on('connection', (ws, req) => {
     }
     if (type === 'set_root') {
       void handleSetRoot(ws, msg);
+      return;
+    }
+    if (type === 'create_dir') {
+      void handleCreateDir(ws, msg);
       return;
     }
     const needsWorkspace = type === 'ls' || type === 'read_file' || type === 'grep' || type === 'glob'

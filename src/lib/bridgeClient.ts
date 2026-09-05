@@ -15,7 +15,7 @@ export type BridgeDirEntry = {
 type Incoming =
   | { runId: string; type: 'stdout' | 'stderr'; data: string }
   | { runId: string; type: 'exit'; code: number }
-  | { runId: string; status: 'ok' | 'error'; error?: string; root?: string; content?: string; encoding?: string; eol?: string; entries?: BridgeDirEntry[]; branch?: string; dirty?: boolean; porcelain?: string; text?: string; hash?: string }
+  | { runId: string; status: 'ok' | 'error'; error?: string; root?: string; path?: string; content?: string; encoding?: string; eol?: string; entries?: BridgeDirEntry[]; branch?: string; dirty?: boolean; porcelain?: string; text?: string; hash?: string }
   | { type: 'pong' }
   | { type: 'hello'; root?: string; port?: number; appRoot?: string; workspaceOk?: boolean; runId?: string }
   | Record<string, unknown>;
@@ -332,6 +332,17 @@ export class BridgeClient {
     return this.request({ type: 'write_file', file, content, encoding: opts?.encoding, eol: opts?.eol }).then((v) =>
       Boolean(v),
     );
+  }
+
+
+  createDirectory(dirPath: string): Promise<string> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    const gate = this.workspaceGateFor(dirPath);
+    if (!gate.ok) return Promise.reject(new Error(gate.message));
+    return this.request({ type: 'create_dir', path: dirPath }).then((v) => {
+      const msg = v as { path?: string };
+      return String(msg.path || dirPath);
+    });
   }
 
   setRoot(path: string): Promise<string> {

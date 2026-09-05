@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Folder } from 'lucide-react';
+import { Folder, FolderPlus } from 'lucide-react';
+import { bridge } from '../../lib/bridgeClient';
 import { workspaceGate } from '../../lib/workspaceGuard';
 
 type Props = {
@@ -7,6 +8,10 @@ type Props = {
   currentRoot: string;
   onChoose: (path: string) => Promise<void>;
 };
+
+function isAbsolutePath(p: string): boolean {
+  return p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\');
+}
 
 export function WorkingDirPrompt({ appRoot, currentRoot, onChoose }: Props) {
   const prefill = workspaceGate(currentRoot, appRoot);
@@ -31,6 +36,37 @@ export function WorkingDirPrompt({ appRoot, currentRoot, onChoose }: Props) {
     setError('');
     try {
       await onChoose(path);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createDirectory = async () => {
+    const path = draft.trim();
+    if (!path) {
+      setError('Enter an absolute path');
+      return;
+    }
+    if (!isAbsolutePath(path)) {
+      setError('Path must be absolute');
+      return;
+    }
+    const gate = workspaceGate(path, appRoot);
+    if (!gate.ok) {
+      setError(gate.message);
+      return;
+    }
+    if (!bridge.connected) {
+      setError('Connect the bridge first');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const created = await bridge.createDirectory(path);
+      await onChoose(created);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -64,9 +100,20 @@ export function WorkingDirPrompt({ appRoot, currentRoot, onChoose }: Props) {
         autoFocus
       />
       {error ? <div className="font-mono text-[11px] text-rose-400">{error}</div> : null}
-      <button type="button" disabled={busy || !draft.trim()} className="btn-primary" onClick={() => void submit()}>
-        Use this folder
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" disabled={busy || !draft.trim()} className="btn-primary" onClick={() => void submit()}>
+          Use this folder
+        </button>
+        <button
+          type="button"
+          disabled={busy || !draft.trim()}
+          className="btn-ghost inline-flex items-center gap-1.5"
+          onClick={() => void createDirectory()}
+        >
+          <FolderPlus size={14} />
+          Create directory
+        </button>
+      </div>
     </div>
   );
 }
