@@ -228,7 +228,7 @@ export const LICENSE_TEST_KEYS = {
 } as const;
 
 export const PRICING_HINT = {
-  starterMonthly: 19.95,
+  starterMonthly: 19,
   proMonthly: 29,
   proYearly: 249,
   teamMonthlySeat: 99,
