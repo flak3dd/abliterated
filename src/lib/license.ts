@@ -6,7 +6,7 @@
  * This stub accepts prefix-based tiers for local testing only.
  */
 
-export type LicenseTier = 'free' | 'pro' | 'team' | 'admin';
+export type LicenseTier = 'free' | 'starter' | 'pro' | 'team' | 'admin';
 
 export type LicenseFeatures = {
   /** Free: 1; Pro/Team: unlimited (Number.POSITIVE_INFINITY). */
@@ -49,6 +49,16 @@ const TIER_FEATURES: Record<LicenseTier, LicenseFeatures> = {
     priorityFeatures: false,
     sharedSeats: false,
   },
+  starter: {
+    maxWorkspaces: 1,
+    maxMcpServers: 1,
+    maxConcurrentJobs: 1,
+    maxSelfDeepenPasses: 1,
+    planModeAllowed: false,
+    showWatermark: true,
+    priorityFeatures: false,
+    sharedSeats: false,
+  },
   pro: {
     maxWorkspaces: UNLIMITED,
     maxMcpServers: UNLIMITED,
@@ -83,6 +93,7 @@ const TIER_FEATURES: Record<LicenseTier, LicenseFeatures> = {
 
 const TIER_LABEL: Record<LicenseTier, string> = {
   free: 'Free',
+  starter: 'Starter',
   pro: 'Pro',
   team: 'Team',
   admin: 'Admin (dev)',
@@ -109,7 +120,7 @@ export function normalizeLicenseKey(key: string): string {
   if (!k) return '';
   const upper = k.toUpperCase();
   if (upper === ADMIN_LICENSE_KEY || upper === 'ABLIT-DEV-UNLOCK' || upper === 'ABLIT-FREE') return upper;
-  const m = k.match(/^ABLIT-(PRO|TEAM)-([A-Za-z0-9]{4})-([A-Za-z0-9]{4})$/i);
+  const m = k.match(/^ABLIT-(PRO|TEAM|STARTER)-([A-Za-z0-9]{4})-([A-Za-z0-9]{4})$/i);
   if (m) return `ABLIT-${m[1].toUpperCase()}-${m[2].toUpperCase()}-${m[3].toUpperCase()}`;
   return k;
 }
@@ -148,7 +159,7 @@ export function isRecognizedLicenseFormat(key: string): boolean {
   const k = normalizeLicenseKey(key);
   if (!k) return false;
   if (k === 'ABLIT-DEV-UNLOCK' || k === ADMIN_LICENSE_KEY || k === 'ABLIT-FREE') return true;
-  return /^ABLIT-(PRO|TEAM)-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(k);
+  return /^ABLIT-(PRO|TEAM|STARTER)-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(k);
 }
 
 /**
@@ -161,6 +172,7 @@ export function resolveLicenseTier(key: string): LicenseTier {
   if (k === ADMIN_LICENSE_KEY || k === 'ABLIT-DEV-UNLOCK') return 'admin';
   if (/^ABLIT-TEAM-/.test(k)) return 'team';
   if (/^ABLIT-PRO-/.test(k)) return 'pro';
+  if (/^ABLIT-STARTER-/.test(k)) return 'starter';
   if (!k && isDevRuntime()) return 'admin';
   if (!k) return 'free';
   return 'free';
@@ -201,6 +213,7 @@ export function countEnabledMcp(servers: { enabled?: boolean }[] | undefined): n
 
 export const LICENSE_TEST_KEYS = {
   free: 'ABLIT-FREE',
+  starter: 'ABLIT-STARTER-TEST-0001',
   pro: 'ABLIT-PRO-TEST-0001',
   team: 'ABLIT-TEAM-TEST-0001',
   dev: 'ABLIT-DEV-UNLOCK',

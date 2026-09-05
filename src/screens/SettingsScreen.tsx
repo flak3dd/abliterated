@@ -567,7 +567,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             <input
               value={licenseDraft}
               onChange={(e) => setLicenseDraft(e.target.value)}
-              placeholder="ABLIT-PRO-XXXX-XXXX"
+              placeholder="ABLIT-STARTER-XXXX-XXXX / ABLIT-PRO-XXXX-XXXX"
               className="field font-mono text-[12px]"
               spellCheck={false}
               autoComplete="off"
