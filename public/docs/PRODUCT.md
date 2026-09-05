@@ -14,11 +14,11 @@ Abliterated is the **local-first agent workbench** for developers who want Curso
 | Promise | How we deliver |
 | --- | --- |
 | Your machine, your files | Localhost bridge (ws://127.0.0.1:17322) - never public |
-| Your models | Abliteration, Spark, Featherless, or any OpenAI-compatible /v1 |
+| Your models | Built-in unrestricted model + Featherless.ai frontier abliterated uncensored catalog |
 | Real agent work | Multi-turn tools, Plan mode, Jobs, MCP stdio |
 | No telemetry | localStorage only; no product analytics |
 
-**One-liner:** Local agent IDE for abliterated models - freemium desktop, BYO inference.
+**One-liner:** Local agent IDE for abliterated models - freemium desktop, Featherless.ai frontier uncensored models.
 
 ---
 
@@ -85,7 +85,7 @@ No payment provider secrets in this repo.
 
 | Player | Angle |
 | --- | --- |
-| Cursor | Hosted agents; we win on BYO / abliterated / Spark |
+| Cursor | Hosted agents; we win on Featherless.ai abliterated catalog / local desktop |
 | Continue / Cline | OSS extensions; we ship full workbench + desktop SKU |
 | Claude Code / Codex CLI | CLI-first; we are GUI + MCP + Jobs |
 | Windsurf / others | Similar agents; local bridge + freemium desktop |

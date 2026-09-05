@@ -1,6 +1,6 @@
 /**
  * Monthly token pool for the IDE's built-in unrestricted model
- * (Abliteration / api.abliteration.ai). BYO endpoints do not count.
+ * (Abliteration / api.abliteration.ai). Featherless.ai catalog models do not count.
  */
 import type { ClientSettings } from '../types';
 import { resolveActiveSettings, type ActiveEndpoint } from './activeEndpoint';
@@ -86,13 +86,13 @@ export function assertBuiltinQuota(settings: ClientSettings): void {
   const cap = license.features.maxIncludedTokens;
   if (cap === 0) {
     throw new Error(
-      'The built-in unrestricted model is included with Starter, Pro, and Team. Activate a license, or switch to a BYO endpoint (Custom / Featherless / Spark).',
+      'The built-in unrestricted model is included with Starter, Pro, and Team. Activate a license, or switch to Featherless.ai for frontier abliterated uncensored models.',
     );
   }
   const left = remainingBuiltinTokens(license);
   if (left <= 0) {
     throw new Error(
-      `Built-in unrestricted model monthly token limit reached (${formatTokenCount(cap)} on ${license.label}). Wait for next month, upgrade, or switch to a BYO endpoint.`,
+      `Built-in unrestricted model monthly token limit reached (${formatTokenCount(cap)} on ${license.label}). Wait for next month, upgrade, or switch to Featherless.ai.`,
     );
   }
 }

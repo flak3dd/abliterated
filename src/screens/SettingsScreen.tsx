@@ -48,7 +48,7 @@ function BuiltinTokenMeter({ license }: { license: LicenseState }) {
         />
       </div>
       <p className="mt-1 font-mono text-[10px] text-muted">
-        Abliteration built-in unrestricted model only. BYO endpoints do not count.
+        Abliteration built-in unrestricted model only. Featherless.ai catalog models do not count.
       </p>
     </div>
   );
@@ -595,7 +595,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             <li>
               Built-in unrestricted model:{' '}
               {license.features.maxIncludedTokens === 0
-                ? 'not included (BYO endpoint)'
+                ? 'not included — use Featherless.ai'
                 : `${formatTokenCount(license.features.maxIncludedTokens)} tokens/mo`}
             </li>
           </ul>

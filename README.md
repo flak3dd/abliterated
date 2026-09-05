@@ -1,6 +1,6 @@
 # Abliterated IDE
 
-High-density dark-mode developer workbench and chat client for OpenAI-compatible inference endpoints.
+High-density dark-mode developer workbench and chat client for Featherless.ai frontier abliterated uncensored models and the built-in unrestricted model.
 
 Inference talks to `{baseUrl}/chat/completions` over HTTP POST + SSE. There are no local model weights, no GGUF loader, and no telemetry.
 
@@ -32,7 +32,7 @@ npm run dev
 npm run bridge
 ```
 
-Open the printed Vite URL. In the Workspace tab, type a real absolute folder path and click Connect. Set the OpenAI-compatible API URL and optional token in the **API** tab.
+Open the printed Vite URL. In the Workspace tab, type a real absolute folder path and click Connect. On the **API** tab, choose Featherless.ai (frontier abliterated uncensored models) or the built-in unrestricted model.
 
 Production build:
 
