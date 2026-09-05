@@ -134,7 +134,7 @@ Stop: `no_tools`, `cap`, `abort`, `error`, `pending_gate`, `deepened`. Max turns
 Auto (bridge): `read_file`, `grep`, `glob`, `list_dir`, `file_outline`, `semantic_search`, `git_status`, `git_diff`, `checkpoint_save`.  
 Auto-accept edits: `git_commit`, `create_pr`, `checkpoint_restore`.  
 Auto-run shell: `shell` (deadly commands refused).  
-`web_fetch` http(s) only. `generate_image` when Images on. MCP as `mcp__server__tool`.
+`web_fetch` http(s) only. `web_search` keyless (Brave HTML → Bing → Wikipedia; optional Brave API / SearxNG). `generate_image` when Images on. MCP as `mcp__server__tool`.
 
 ### Self-deepen / mid-run / footer / status / copy
 - Self-deepen default on (passes 0–5, default 2); `[ANSWER_COMPLETE]` early stop.

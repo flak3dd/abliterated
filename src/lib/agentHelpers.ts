@@ -190,10 +190,14 @@ const TODO_TOOL_ALIASES = new Set([
   'create_todo',
 ]);
 
+const WEB_SEARCH_ALIASES = new Set(['web_search', 'websearch', 'web_search_tool', 'search_web']);
+
 export function canonicalizeToolName(name: string): string {
   const raw = (name || '').trim();
   if (!raw) return raw;
-  if (TODO_TOOL_ALIASES.has(raw.toLowerCase())) return 'todo';
+  const lower = raw.toLowerCase();
+  if (TODO_TOOL_ALIASES.has(lower)) return 'todo';
+  if (WEB_SEARCH_ALIASES.has(lower)) return 'web_search';
   return raw;
 }
 
@@ -279,7 +283,7 @@ export function needsBuildProtocol(userText: string): boolean {
 /** Short reminder; full Work rules live in SYSTEM_PROMPT. */
 export const BUILD_PROCESS_SECTION =
   '## Work — ACTIVE\n' +
-  'Reason (goal / inspect / step # why success). Call `todo` (3–12). Explore with tools. Scaffold then implement with ```diff in this run. Tick todos via merge=true. One verify bash fence. Do not stop at a list. Do not spawn other coding CLIs.';
+  'Reason (goal / inspect / step # why success) — no code, diffs, bash fences, or // path files in reasoning. Call `todo` (3–12). Explore with tools. Scaffold then implement with ```diff in content. Tick todos via merge=true. One verify bash fence. Do not stop at a list. Do not spawn other coding CLIs.';
 
 /** True for an actual build request (not every multi-step chat). Plan mode never builds. */
 export function shouldApplyBuildProcess(
@@ -463,9 +467,10 @@ export function filterPlanModeTools(enabled: readonly ToolType[]): ToolType[] {
 export function buildPlanModeNudge(): string {
   return (
     '## Plan mode — ACTIVE (read-only)\n' +
-    'Tools: read_file, grep, glob, list_dir, file_outline, semantic_search, git_status, git_diff, web_fetch, todo, list_skills, read_skill, suggest_skill. ' +
+    'Tools: read_file, grep, glob, list_dir, file_outline, semantic_search, git_status, git_diff, web_fetch, web_search, todo, list_skills, read_skill, suggest_skill. ' +
     'No shell/write/git_commit/create_pr/checkpoint_restore/generate_image/write_skill and no diffs.\n' +
-    'Explore with tools, emit a Plan checklist (todo tool or bullets), then stop. Skip the completion footer until Plan is approved.'
+    'Reasoning: outline only (goal, inspect, step # / why / success). Never write code, diffs, bash fences, or // path files in reasoning.\n' +
+    'Content: Plan checklist (todo tool or bullets) only, then stop. Skip the completion footer until Plan is approved.'
   );
 }
 

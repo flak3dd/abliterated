@@ -13,6 +13,7 @@ import {
   PREV2_DEFAULT_TOOLS,
   PREV3_DEFAULT_TOOLS,
   PREV4_DEFAULT_TOOLS,
+  PREV5_DEFAULT_TOOLS,
 } from '../types';
 import {
   AGENT_RUNS_KEEP,
@@ -93,6 +94,8 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   mcpServers: [],
   skillsEnabled: true,
   licenseKey: import.meta.env.DEV ? 'ABLIT-ADMIN' : '',
+  webSearchBraveKey: '',
+  webSearchSearxUrl: '',
 };
 
 export function isPlaceholderRoot(path: string): boolean {
@@ -223,6 +226,10 @@ export function getSettings(): ClientSettings {
     skillsEnabled: stored.skillsEnabled !== false,
     licenseKey:
       typeof stored.licenseKey === 'string' ? stored.licenseKey.trim() : DEFAULT_SETTINGS.licenseKey,
+    webSearchBraveKey:
+      typeof stored.webSearchBraveKey === 'string' ? stored.webSearchBraveKey.trim() : '',
+    webSearchSearxUrl:
+      typeof stored.webSearchSearxUrl === 'string' ? stored.webSearchSearxUrl.trim() : '',
     systemPrompt,
   };
 }
@@ -244,10 +251,12 @@ function upgradeEnabledTools(tools: ToolType[] | undefined): ToolType[] {
   if (sameToolSet(tools, PREV2_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
   if (sameToolSet(tools, PREV3_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
   if (sameToolSet(tools, PREV4_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
+  if (sameToolSet(tools, PREV5_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
   if (!tools.includes('todo')) return [...tools, 'todo'];
   if (!tools.includes('list_skills')) {
     return [...tools, 'list_skills', 'read_skill', 'suggest_skill', 'write_skill'];
   }
+  if (!tools.includes('web_search')) return [...tools, 'web_search'];
   return tools;
 }
 

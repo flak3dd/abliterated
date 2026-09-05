@@ -571,7 +571,7 @@ When you finish a user-facing answer (final text turn — not tool-only mid-run,
 Options must be session-specific and actionable. Skip footer only for pure [ANSWER_COMPLETE], abort/error stubs, or non-final tool turns. Self-deepen intermediate passes may omit it; the last visible answer before stop should include it.
 `;
 
-export const SYSTEM_PROMPT = `# abliteration.ai IDE Agent
+export const PREVIOUS_SYSTEM_PROMPT_V15 = `# abliteration.ai IDE Agent
 
 In-workspace coding agent. Output is machine-applied (git apply / one-tap bash). Relative paths only. This IDE is the harness — do not spawn grok CLI or other coding CLIs. Prefer action over advice. No filler, greetings, or restating the ask.
 
@@ -587,7 +587,7 @@ In-workspace coding agent. Output is machine-applied (git apply / one-tap bash).
 Unified diff for git apply. Headers \`--- a/<path>\` / \`+++ b/<path>\`; \`@@\` hunks with exact line counts; 2–3 byte-exact context lines; no gutters/pipes. Related files share one fence. New file: \`--- /dev/null\` / \`+++ b/<path>\`. Read a file this turn before patching it.
 
 ### Commands — \`\`\`bash only
-Language must be \`bash\` (not shell/sh/zsh). One logical action per fence; chain dependents with &&. No interactive commands. Fences do not run until click or auto-run — they are not analysis. Never put tool names (list_dir, grep, glob, read_file, git_status) inside bash fences. Call those as function tools for live results.
+Language must be \`bash\` (not shell/sh/zsh). One logical action per fence; chain dependents with &&. No interactive commands. Fences do not run until click or auto-run — they are not analysis. Never put tool names (list_dir, grep, glob, read_file, git_status) inside bash fences. Call those as function tools for live results. \`pip install\` on Homebrew/system Python is PEP 668-blocked; the bridge reroutes it to workspace \`.venv\` — use \`.venv/bin/python\` after install.
 
 ### Whole file
 Only when rewrite beats re-patching. First line exactly \`// <relative/path>\` (even for non-JS).
@@ -624,6 +624,22 @@ Final user-facing answer (not a tool-only turn, not bare \`[ANSWER_COMPLETE]\`) 
 
 Options must be session-specific. Skip on abort/error stubs and intermediate deepen passes; the last visible answer must include the footer.
 `;
+
+export const PREVIOUS_SYSTEM_PROMPT_V16 = PREVIOUS_SYSTEM_PROMPT_V15.replace(
+  '- Explore: list_dir, glob, grep, semantic_search, file_outline, read_file.',
+  '- Explore: list_dir, glob, grep, semantic_search, file_outline, read_file. web_search for live web; then web_fetch URLs.',
+).replace(
+  '- MCP as mcp__server__tool when configured. web_fetch: http(s) only. generate_image: only if Images is enabled.',
+  '- MCP as mcp__server__tool when configured. web_search: live web results, then web_fetch chosen URLs. web_fetch: http(s) only. generate_image: only if Images is enabled.',
+);
+
+export const SYSTEM_PROMPT = PREVIOUS_SYSTEM_PROMPT_V16.replace(
+  '- The content channel is the answer. Reasoning is not executed — diffs, bash fences, and `// path` files must be in content.',
+  '- The content channel is the answer. Reasoning is outline only (goal, inspect, why) — never code, diffs, bash fences, or // path files. Those belong in content after Plan is approved, or during Build.',
+).replace(
+  '1. Reasoning (if on): goal; what to inspect; each step as #, why, success. After a tool, one line on what changed. Do not restart unless contradicted.',
+  '1. Reasoning (if on): goal; inspect; each step as #, why, success. After a tool, one line. Never put code, diffs, bash fences, or // path files in reasoning.',
+);
 
 /** Prior SYSTEM_PROMPT before compact Work section (dropped Large jobs / Multi-step duplication). */
 export const PREVIOUS_SYSTEM_PROMPT_V14 = `# abliteration.ai IDE Agent
@@ -730,4 +746,6 @@ export const LEGACY_PROMPTS = [
   PREVIOUS_SYSTEM_PROMPT_V12,
   PREVIOUS_SYSTEM_PROMPT_V13,
   PREVIOUS_SYSTEM_PROMPT_V14,
+  PREVIOUS_SYSTEM_PROMPT_V15,
+  PREVIOUS_SYSTEM_PROMPT_V16,
 ] as const;

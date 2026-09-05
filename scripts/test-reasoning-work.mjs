@@ -29,7 +29,7 @@ execFileSync(
   { cwd: root, stdio: 'inherit' },
 );
 const mod = await import(pathToFileURL(path.join(outDir, 'reasoningWork.js')).href);
-const { liftReasoningWork, reasoningLooksLikeStalledWork, buildReasoningOnlyNudge } = mod;
+const { liftReasoningWork, reasoningLooksLikeStalledWork, buildReasoningOnlyNudge, stripImplementationFromText } = mod;
 
 const fence = String.fromCharCode(96, 96, 96);
 const script = [fence + 'bash', 'npm test', fence].join('\n');
@@ -46,6 +46,26 @@ assert.equal(reasoningLooksLikeStalledWork('just thinking about the problem'), f
 
 assert.ok(reasoningLooksLikeStalledWork("I'll call list_dir on the root to show the workspace."));
 assert.ok(typeof buildReasoningOnlyNudge() === 'string' && buildReasoningOnlyNudge().includes('tools channel'));
+
+const planWithCode = [
+  'Goal: add web_search.',
+  '1. Inspect sse.ts',
+  fence + 'diff',
+  '--- a/src/lib/sse.ts',
+  '+++ b/src/lib/sse.ts',
+  '@@ -1,1 +1,2 @@',
+  ' keep',
+  '+added',
+  fence,
+  'Then stop.',
+].join('\n');
+const stripped = stripImplementationFromText(planWithCode);
+assert.ok(stripped.includes('Goal: add web_search.'));
+assert.ok(stripped.includes('1. Inspect sse.ts'));
+assert.ok(!stripped.includes('+++ b/src/lib/sse.ts'));
+assert.ok(!stripped.includes('```'));
+assert.equal(stripImplementationFromText(diff), '');
+assert.equal(stripImplementationFromText('just a plan bullet'), 'just a plan bullet');
 
 console.log('reasoningWork ok');
 fs.rmSync(outDir, { recursive: true, force: true });

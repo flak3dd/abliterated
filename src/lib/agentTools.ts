@@ -11,6 +11,7 @@ import {
   type TodoItem,
 } from './agentHelpers';
 import { formatSkillFile, similarSkillExists, slugifySkillId, toCatalogEntries } from './skills';
+import { runWebSearch } from './webSearch';
 import type { ClientSettings, ToolCallPayload, ToolCallStatus, ToolType } from '../types';
 
 export function toolArgString(args: Record<string, unknown>, keys: string[]): string {
@@ -455,6 +456,24 @@ export async function executeAgentTool(
     try {
       const saved = await bridge.writeSkill({ name: nameArg, description: desc, body, scope });
       return ok(tool, JSON.stringify({ ok: true, id: saved.id, path: saved.path, source: saved.source }, null, 2));
+    } catch (e) {
+      return err(tool, e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  if (name === 'web_search') {
+    const query = toolArgString(tool.arguments, ['query', 'q', 'search']);
+    if (!query) return err(tool, 'missing query');
+    const countRaw = tool.arguments.count ?? tool.arguments.limit ?? tool.arguments.n;
+    const count = typeof countRaw === 'number' || typeof countRaw === 'string' ? Number(countRaw) : undefined;
+    try {
+      const text = await runWebSearch({
+        query,
+        count: Number.isFinite(count) ? count : undefined,
+        braveKey: settings.webSearchBraveKey,
+        searxUrl: settings.webSearchSearxUrl,
+      });
+      return ok(tool, text);
     } catch (e) {
       return err(tool, e instanceof Error ? e.message : String(e));
     }

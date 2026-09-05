@@ -3,7 +3,21 @@
 const FENCE_RE = /```[^\n]*\n[\s\S]*?```/g;
 
 const TOOL_NAME_RE =
-  /\b(list_dir|read_file|grep|glob|file_outline|semantic_search|git_status|git_diff|git_commit|create_pr|web_fetch|write_file|apply_patch|apply_diff|delete_file|shell|list_skills|read_skill|suggest_skill|write_skill)\b/;
+  /\b(list_dir|read_file|grep|glob|file_outline|semantic_search|git_status|git_diff|git_commit|create_pr|web_fetch|web_search|write_file|apply_patch|apply_diff|delete_file|shell|list_skills|read_skill|suggest_skill|write_skill)\b/;
+
+/** Drop fenced code, unified diffs, and //path dumps so plan/reasoning stays prose. */
+export function stripImplementationFromText(text: string): string {
+  let t = String(text || '');
+  if (!t.trim()) return '';
+  t = t.replace(FENCE_RE, '');
+  t = t.replace(/^diff --git .+\n/gm, '');
+  t = t.replace(/^--- (?:a\/|\/dev\/null).*\n\+\+\+ b\/.*\n(?:@@.*\n(?:[-+ ].*\n)*)*/gm, '');
+  t = t.replace(/^\/\/ [\w./+-]+\s*\n(?:(?:import |export |const |let |var |function |class |type |interface |from |def |fn |pub |#include ).*\n)+/gm, '');
+  return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+export const PLAN_CODE_OMITTED_NOTE =
+  'Plan mode is read-only. Checklist only — Approve to write code.';
 
 /** Fenced blocks, unified diffs, or whole-file path dumps sitting in reasoning. */
 export function liftReasoningWork(reasoning: string): string {

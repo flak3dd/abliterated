@@ -14,7 +14,7 @@ Abliterated is the **local-first agent workbench** for developers who want Curso
 | Promise | How we deliver |
 | --- | --- |
 | Your machine, your files | Localhost bridge (ws://127.0.0.1:17322) - never public |
-| Your models | Built-in unrestricted model + Featherless.ai frontier abliterated uncensored catalog |
+| Your models | Built-in `abliteration-model` / `abliteration-model-large` (100% unrestricted) + Featherless.ai abliterated catalog (e.g. huihui/zetasepic Qwen2.5-72B, Llama-3.3-70B, R1-Distill-70B, Qwen2.5-Coder-32B) |
 | Real agent work | Multi-turn tools, Plan mode, Jobs, MCP stdio |
 | No telemetry | localStorage only; no product analytics |
 

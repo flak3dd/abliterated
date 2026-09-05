@@ -15,6 +15,13 @@ import { isInsideRoot as isInsideRootPath, matchGlob, skipDirentName, skipSearch
 import { appRootRefuseMessage, isInsideAppRoot, resolveAppRoot } from './appRoot.js';
 import * as mcp from './mcp.js';
 import * as skills from './skills.js';
+import {
+  isExternallyManagedError,
+  pep668Hint,
+  shouldUseWorkspaceVenv,
+  wrapWithWorkspaceVenv,
+} from './pyManaged.js';
+import { searchWeb } from './webSearch.js';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.ABLIT_PORT || 17322);
@@ -115,18 +122,31 @@ function handleExec(ws, msg) {
     send(ws, { runId, type: 'exit', code: 126 });
     return;
   }
-  const child = spawn(command, {
+  const pep668 = shouldUseWorkspaceVenv(command);
+  const toRun = pep668 ? wrapWithWorkspaceVenv(command) : command;
+  const child = spawn(toRun, {
     cwd: ROOT,
     shell: true,
     env: { ...process.env, ABLIT_ROOT: ROOT },
   });
+  let errBuf = '';
   child.stdout.on('data', (buf) => send(ws, { runId, type: 'stdout', data: buf.toString() }));
-  child.stderr.on('data', (buf) => send(ws, { runId, type: 'stderr', data: buf.toString() }));
+  child.stderr.on('data', (buf) => {
+    const text = buf.toString();
+    errBuf += text;
+    send(ws, { runId, type: 'stderr', data: text });
+  });
   child.on('error', (err) => {
     send(ws, { runId, type: 'stderr', data: String(err.message) + '\n' });
     send(ws, { runId, type: 'exit', code: 1 });
   });
-  child.on('close', (code) => send(ws, { runId, type: 'exit', code: code ?? 1 }));
+  child.on('close', (code) => {
+    const exit = code ?? 1;
+    if (exit !== 0 && !pep668 && isExternallyManagedError(errBuf)) {
+      send(ws, { runId, type: 'stderr', data: pep668Hint(command) });
+    }
+    send(ws, { runId, type: 'exit', code: exit });
+  });
 }
 
 function gitEnv() {
@@ -511,6 +531,21 @@ async function handleSemanticSearch(ws, msg) {
       maxSnippets: msg.maxSnippets ?? msg.maxMatches,
     });
     send(ws, { runId, status: 'ok', content });
+  } catch (err) {
+    send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function handleWebSearch(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const content = await searchWeb({
+      query: msg.query || msg.q || msg.search || '',
+      count: msg.count ?? msg.limit ?? msg.n,
+      braveKey: msg.braveKey || '',
+      searxUrl: msg.searxUrl || '',
+    });
+    send(ws, { runId, status: 'ok', content, text: content });
   } catch (err) {
     send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
   }
@@ -967,6 +1002,10 @@ wss.on('connection', (ws, req) => {
     }
     if (type === 'write_skill') {
       void handleWriteSkill(ws, msg);
+      return;
+    }
+    if (type === 'web_search') {
+      void handleWebSearch(ws, msg);
       return;
     }
     if (type === 'mcp_connect') {

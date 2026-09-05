@@ -61,6 +61,63 @@ function featherlessLocalProxyConfigure(proxy: {
   );
 }
 
+/** DEV/preview: Node-side web_search so the renderer is not CORS-bound. */
+function webSearchDevPlugin(): Plugin {
+  const handler: Connect.NextHandleFunction = (req, res, next) => {
+    const raw = (req.url || "").split("?")[0];
+    if (raw !== "/web-search") return next();
+    const method = (req.method || "GET").toUpperCase();
+    if (method !== "GET" && method !== "POST") return next();
+
+    const send = (code: number, body: string, type = "text/plain; charset=utf-8") => {
+      res.statusCode = code;
+      res.setHeader("Content-Type", type);
+      res.end(body);
+    };
+
+    const run = async (opts: { query?: string; count?: number; braveKey?: string; searxUrl?: string }) => {
+      try {
+        const mod = await import("./daemon/webSearch.js");
+        const text = await mod.searchWeb(opts);
+        send(200, text);
+      } catch (err) {
+        send(502, err instanceof Error ? err.message : String(err));
+      }
+    };
+
+    if (method === "GET") {
+      const u = new URL(req.url || "", "http://127.0.0.1");
+      const query = u.searchParams.get("q") || u.searchParams.get("query") || "";
+      const countRaw = u.searchParams.get("count");
+      void run({ query, count: countRaw ? Number(countRaw) : undefined });
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    req.on("data", (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+    req.on("end", () => {
+      let opts: { query?: string; count?: number; braveKey?: string; searxUrl?: string } = {};
+      try {
+        const rawBody = Buffer.concat(chunks).toString("utf8");
+        if (rawBody.trim()) opts = JSON.parse(rawBody) as typeof opts;
+      } catch {
+        send(400, "invalid json");
+        return;
+      }
+      void run(opts);
+    });
+  };
+  return {
+    name: "web-search-dev",
+    configureServer(server) {
+      server.middlewares.use(handler);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(handler);
+    },
+  };
+}
+
 const abliterationProxy = {
   '/v1': {
     target: 'https://api.abliteration.ai',
@@ -113,7 +170,7 @@ const abliterationProxy = {
 
 export default defineConfig({
   base: "./",
-  plugins: [react(), docsStaticIndex()],
+  plugins: [react(), docsStaticIndex(), webSearchDevPlugin()],
   server: { host: '127.0.0.1', port: 5173, proxy: abliterationProxy },
   preview: { host: '127.0.0.1', port: 4173, proxy: abliterationProxy },
 });

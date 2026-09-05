@@ -556,6 +556,20 @@ export class BridgeClient {
     return this.request({ type: 'mcp_disconnect', id }).then(() => undefined);
   }
 
+  webSearch(opts: { query: string; count?: number; braveKey?: string; searxUrl?: string }): Promise<string> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({
+      type: 'web_search',
+      query: opts.query,
+      count: opts.count,
+      braveKey: opts.braveKey || '',
+      searxUrl: opts.searxUrl || '',
+    }).then((v) => {
+      const msg = v as { content?: string; text?: string };
+      return String(msg.text ?? msg.content ?? '');
+    });
+  }
+
   mcpCallTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<string> {
     if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
     return this.request({ type: 'mcp_call_tool', id: serverId, toolName, arguments: args }).then((v) => {

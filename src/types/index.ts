@@ -2,6 +2,7 @@ export type Tab = 'home' | 'workspace' | 'models' | 'jobs' | 'api' | 'settings' 
 export type ReasoningLevel = 'off' | 'low' | 'high' | 'max';
 export const ALL_TOOL_TYPES = [
   'web_fetch',
+  'web_search',
   'read_file',
   'shell',
   'grep',
@@ -89,6 +90,30 @@ export const PREV4_DEFAULT_TOOLS: ToolType[] = [
   'todo',
 ];
 
+/** Prior full tool list before web_search. */
+export const PREV5_DEFAULT_TOOLS: ToolType[] = [
+  'web_fetch',
+  'read_file',
+  'shell',
+  'grep',
+  'glob',
+  'git_status',
+  'git_commit',
+  'git_diff',
+  'create_pr',
+  'checkpoint_save',
+  'checkpoint_restore',
+  'list_dir',
+  'file_outline',
+  'semantic_search',
+  'generate_image',
+  'todo',
+  'list_skills',
+  'read_skill',
+  'suggest_skill',
+  'write_skill',
+];
+
 export const DEFAULT_ENABLED_TOOLS: ToolType[] = [...ALL_TOOL_TYPES];
 
 /** Read-only tools allowed while Plan mode is on (writes unlock after approve). */
@@ -102,6 +127,7 @@ export const PLAN_MODE_TOOLS: ToolType[] = [
   'git_status',
   'git_diff',
   'web_fetch',
+  'web_search',
   'todo',
   'list_skills',
   'read_skill',
@@ -260,6 +286,10 @@ export interface ClientSettings {
   licenseKey: string;
   /** Discover/follow SKILL.md recipes (default true). */
   skillsEnabled: boolean;
+  /** Optional Brave Search API key (X-Subscription-Token). Empty = keyless HTML search. */
+  webSearchBraveKey: string;
+  /** Optional SearxNG base URL (JSON format). Empty = unused. */
+  webSearchSearxUrl: string;
 }
 
 export type ChatOpenAiToolCall = {

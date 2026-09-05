@@ -11,6 +11,7 @@ const SAFE_ALLOWLIST = new Set([
   'git_status',
   'git_diff',
   'web_fetch',
+  'web_search',
   'list_skills',
   'read_skill',
   'suggest_skill',
@@ -142,6 +143,11 @@ function mapTool(name: string, args: string[]): ParsedFakeTool | null {
       const url = args[0];
       if (!url || !/^https?:\/\//i.test(url)) return null;
       return { name: 'web_fetch', arguments: { url } };
+    }
+    case 'web_search': {
+      const query = args.join(' ').trim();
+      if (!query) return null;
+      return { name: 'web_search', arguments: { query } };
     }
     default:
       return null;

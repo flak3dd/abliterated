@@ -8,6 +8,7 @@ import {
   GitBranch,
   GitCommit,
   GitPullRequest,
+  Globe,
   ImageIcon,
   Search,
   Terminal,
@@ -20,6 +21,11 @@ import { cn } from '../../lib/cn';
 import { isMidRunMessageContent, stripMidRunPrefix } from '../../lib/agentHelpers';
 import { NO_CONTENT_REASONING_NOTE } from '../../lib/agentPhase';
 import { parseCompletionFooter } from '../../lib/completionFooter';
+import {
+  PLAN_CODE_OMITTED_NOTE,
+  liftReasoningWork,
+  stripImplementationFromText,
+} from '../../lib/reasoningWork';
 import type { Message, ToolCallPayload } from '../../types';
 
 type ContentBlock =
@@ -127,6 +133,7 @@ function CollapsibleToolOutput({ content }: { content: string }) {
 
 function getToolIcon(name: string) {
   if (name === 'read_file' || name === 'file_outline' || name === 'list_dir' || name === 'list_skills' || name === 'read_skill' || name === 'suggest_skill' || name === 'write_skill') return FileText;
+  if (name === 'web_fetch' || name === 'web_search') return Globe;
   if (name === 'grep' || name === 'glob' || name === 'semantic_search') return Search;
   if (name === 'git_status' || name === 'git_diff') return GitBranch;
   if (name === 'git_commit') return GitCommit;
@@ -150,6 +157,7 @@ function toolSummary(tool: ToolCallPayload): string {
   if (tool.name === 'checkpoint_save') return toolArgString(tool.arguments, ['label', 'name']) || 'save';
   if (tool.name === 'checkpoint_restore') return toolArgString(tool.arguments, ['id', 'checkpoint']);
   if (tool.name === 'web_fetch') return toolArgString(tool.arguments, ['url']);
+  if (tool.name === 'web_search') return toolArgString(tool.arguments, ['query', 'q', 'search']);
   if (tool.name === 'list_skills') return 'catalog';
   if (tool.name === 'read_skill') return toolArgString(tool.arguments, ['skill_id', 'id', 'slug', 'name']);
   if (tool.name === 'suggest_skill' || tool.name === 'write_skill') return toolArgString(tool.arguments, ['name', 'title']);
@@ -304,23 +312,34 @@ function MessageBubbleInner({
 }: MessageBubbleProps) {
   const [copied, setCopied] = useState(false);
 
+  const reasoningForUi = useMemo(() => {
+    const raw = m.reasoning || '';
+    if (!raw.trim()) return '';
+    return writesLocked ? stripImplementationFromText(raw) : raw;
+  }, [m.reasoning, writesLocked]);
+
   const promoteReasoning =
     m.role === 'assistant' &&
     m.status === 'complete' &&
     (!(m.content || '').trim() || (m.content || '').trim() === NO_CONTENT_REASONING_NOTE) &&
-    !!(m.reasoning || '').trim();
+    !!reasoningForUi.trim();
 
   const displayContent = useMemo(() => {
     if (m.role === 'user' && isMidRunMessageContent(m.content)) return stripMidRunPrefix(m.content);
-    if (promoteReasoning) return m.reasoning || '';
+    if (promoteReasoning) return reasoningForUi;
+    if (writesLocked) {
+      const stripped = stripImplementationFromText(m.content || '');
+      if (stripped) return stripped;
+      if (liftReasoningWork(m.content || '')) return PLAN_CODE_OMITTED_NOTE;
+    }
     return m.content;
-  }, [m.role, m.content, m.reasoning, m.status, promoteReasoning]);
+  }, [m.role, m.content, reasoningForUi, m.status, promoteReasoning, writesLocked]);
 
   const textToCopy = useMemo(() => {
     if (m.toolCall) return m.toolCall.result || m.content;
     if (displayContent.trim()) return displayContent;
-    return m.reasoning || '';
-  }, [m.toolCall, m.content, m.reasoning, displayContent]);
+    return reasoningForUi;
+  }, [m.toolCall, m.content, reasoningForUi, displayContent]);
 
   const copy = async () => {
     try {
@@ -448,13 +467,13 @@ function MessageBubbleInner({
           </>
         ) : (
           <>
-            {m.status === 'streaming' && !!m.reasoning?.trim() && !m.content.trim() ? (
+            {m.status === 'streaming' && !!reasoningForUi.trim() && !m.content.trim() ? (
               <div className="agent-status-chip" role="status">
                 <Brain size={11} className="animate-pulse text-amber-400" />
                 <span>reasoning (synthesizing plan)…</span>
               </div>
             ) : null}
-            {m.reasoning && !promoteReasoning ? (
+            {reasoningForUi && !promoteReasoning ? (
               <details
                 className="mb-2.5 rounded-md border border-zinc-800/80 bg-zinc-950/80 px-2.5 py-1.5 transition-all"
                 open={m.status === 'streaming' && !m.content.trim()}
@@ -464,7 +483,7 @@ function MessageBubbleInner({
                   <span>reasoning{m.status === 'streaming' && !m.content.trim() ? ' · active' : ''}</span>
                 </summary>
                 <div className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-zinc-400 border-t border-zinc-800/60 pt-2">
-                  {m.reasoning}
+                  {reasoningForUi}
                 </div>
               </details>
             ) : null}

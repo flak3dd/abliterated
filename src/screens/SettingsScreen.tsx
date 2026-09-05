@@ -404,6 +404,36 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
           </div>
         </Section>
 
+        <Section
+          title="Web search"
+          hint="Built-in web_search is keyless (Brave HTML, then Bing, then Wikipedia). Optional backends override when set."
+        >
+          <FieldLabel
+            label="Brave Search API key"
+            hint="Optional. If set, web_search uses api.search.brave.com first. Leave empty for keyless search."
+          >
+            <input
+              type="password"
+              autoComplete="off"
+              value={settings.webSearchBraveKey}
+              onChange={(e) => patch({ webSearchBraveKey: e.target.value })}
+              placeholder="BSA..."
+              className="field"
+            />
+          </FieldLabel>
+          <FieldLabel
+            label="SearxNG URL"
+            hint="Optional. Example: http://127.0.0.1:8080 — must allow format=json."
+          >
+            <input
+              value={settings.webSearchSearxUrl}
+              onChange={(e) => patch({ webSearchSearxUrl: e.target.value })}
+              placeholder="https://searx.example/search"
+              className="field"
+            />
+          </FieldLabel>
+        </Section>
+
         <Section title="Safety" hint="What the agent may write or execute on your machine.">
           <SwitchRow
             label="Remote host enabled"

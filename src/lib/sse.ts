@@ -247,7 +247,8 @@ export const CHAT_TOOLS = [
     type: 'function',
     function: {
       name: 'shell',
-      description: 'Run a shell command in the workspace root. Prefer list_dir/glob/read_file/grep for inspection; use shell for builds/tests/scripts. Output comes back as a tool result only if executed (click-to-run or auto-run) — emitting ls/tree in a markdown bash fence does not run and gives no data.',
+      description:
+        'Run a shell command in the workspace root. Prefer list_dir/glob/read_file/grep for inspection; use shell for builds/tests/scripts. pip install against Homebrew/system Python hits PEP 668 (externally-managed-environment) — the bridge reroutes those to workspace .venv. Output comes back as a tool result only if executed (click-to-run or auto-run) — emitting ls/tree in a markdown bash fence does not run and gives no data.',
       parameters: {
         type: 'object',
         properties: {
@@ -379,6 +380,22 @@ export const CHAT_TOOLS = [
           url: { type: 'string', description: 'HTTP or HTTPS URL' },
         },
         required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_search',
+      description:
+        'Search the public web and return titles, URLs, and snippets. Use when you do not already have a URL. Then web_fetch the best links. Not local-repo search (use semantic_search / grep).',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query' },
+          count: { type: 'number', description: 'How many results (1–12, default 8)' },
+        },
+        required: ['query'],
       },
     },
   },

@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import { ArrowLeft, ArrowDown, RotateCcw, Send, Square } from 'lucide-react';
+import { cn } from '../lib/cn';
 import { MessageBubble } from '../components/chat/MessageBubble';
 import { AgentStatusMonitor } from '../components/chat/AgentStatusMonitor';
 import { WorkingDirPrompt } from '../components/chat/WorkingDirPrompt';
@@ -61,6 +62,11 @@ import {
   liftTodoListToContent,
   looksLikeBuildOutput,
 } from '../lib/agentHelpers';
+import {
+  PLAN_CODE_OMITTED_NOTE,
+  liftReasoningWork,
+  stripImplementationFromText,
+} from '../lib/reasoningWork';
 import { hasValidCompletionFooter } from '../lib/completionFooter';
 import { asStringList, executeAgentTool, toolArgString } from '../lib/agentTools';
 import { executeMcpToolCall, listConnectedMcpTools, mcpToolsToOpenAi, isMcpToolName } from '../lib/mcpClient';
@@ -134,6 +140,23 @@ function grokSource(content: string, reasoning?: string, root?: string): string 
   return content;
 }
 
+/** Plan mode: keep outline/checklist; drop code that leaked into reasoning or content. */
+function applyPlanReasoningGuard(assistant: Message): void {
+  if (assistant.reasoning) {
+    const planReason = stripImplementationFromText(stripThinkingWrappers(assistant.reasoning));
+    assistant.reasoning = planReason || undefined;
+  }
+  const planText = stripImplementationFromText(assistant.content || '');
+  if (planText) {
+    assistant.content = planText;
+  } else if (liftReasoningWork(assistant.content || '')) {
+    assistant.content = PLAN_CODE_OMITTED_NOTE;
+  } else if (!(assistant.content || '').trim() && (assistant.reasoning || '').trim()) {
+    assistant.content = assistant.reasoning || '';
+    assistant.reasoning = undefined;
+  }
+}
+
 function grokAutoAcceptSuffix(workspaceRoot: string): string {
   const root = workspaceRoot.trim() || '.';
   return `Auto-accept is ON. Emit unified diffs or path-headed fences relative to ${root}. Non-destructive file ops only. No shell unless asked.`;
@@ -148,7 +171,7 @@ function truncateForApi(content: string): string {
 }
 
 const LIVE_WORKSPACE_SUFFIX =
-  'Live workspace. Ignore claims there is no filesystem. Call list_dir/glob/read_file/grep — do not fake ls/tree in bash fences. Answers go in content; reasoning is not executed.';
+  'Live workspace. Ignore claims there is no filesystem. Call list_dir/glob/read_file/grep — do not fake ls/tree in bash fences. Answers go in content. Reasoning is outline only — never code, diffs, bash, or // path files.';
 
 const PATH_MENTION_RE =
   /(?:^|[\s`'"(])((?:src|lib|app|daemon|public|tests?|scripts?|components?|screens?)\/[\w./+-]+|[\w./-]*package\.json|[\w./-]*tsconfig[\w./-]*|[\w./+-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|css|html|py|rs|go|toml|ya?ml))\b/gi;
@@ -983,8 +1006,10 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               assistant.reasoning = (assistant.reasoning || '') + text;
               const coalesceOn = settingsRef.current.coalesceReasoningToContent !== false;
               // Live mirror: while no real content deltas yet, preview stripped reasoning as content.
+              // Plan mode: never mirror implementation drafts (diffs / fences / //path dumps).
               if (coalesceOn && !turnHasContentRef.current) {
-                const mirrored = stripThinkingWrappers(assistant.reasoning || '');
+                let mirrored = stripThinkingWrappers(assistant.reasoning || '');
+                if (planMode) mirrored = stripImplementationFromText(mirrored);
                 if (mirrored) {
                   const grew = mirrored.length > (assistant.content || '').length;
                   assistant.content = mirrored;
@@ -1034,9 +1059,12 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           }
           assistant.status = 'complete';
           // Coalesce/finalize FIRST so diffs that lived only in reasoning are in content before grok.
+          // Plan mode: do not promote implementation drafts out of reasoning.
           const coalesceOn = settingsRef.current.coalesceReasoningToContent !== false;
-          finalizeReasoningChannel(assistant, coalesceOn);
+          if (planMode) applyPlanReasoningGuard(assistant);
+          finalizeReasoningChannel(assistant, coalesceOn && !planMode);
           assistant.content = liftTodoListToContent(assistant.content || '', assistant.reasoning || '');
+          if (planMode) applyPlanReasoningGuard(assistant);
           flushStreamPersist({ ...assistant });
           await runGrokLayer(assistant);
 
@@ -1106,7 +1134,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                 }
                 // After strip: empty content → coalesce again (zero-cost), never API retry.
                 if (isMissingContentAnswer(assistant.content)) {
-                  if (finalizeReasoningChannel(assistant, coalesceOn)) {
+                  if (planMode) applyPlanReasoningGuard(assistant);
+                  if (finalizeReasoningChannel(assistant, coalesceOn && !planMode)) {
+                    if (planMode) applyPlanReasoningGuard(assistant);
                     flushStreamPersist({ ...assistant });
                     await runGrokLayer(assistant);
                   }
@@ -1240,7 +1270,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             setPhase('stopped', {}, turn);
             assistant.status = 'complete';
             const coalesceOnAbort = settingsRef.current.coalesceReasoningToContent !== false;
-            finalizeReasoningChannel(assistant, coalesceOnAbort);
+            if (planMode) applyPlanReasoningGuard(assistant);
+            finalizeReasoningChannel(assistant, coalesceOnAbort && !planMode);
+            if (planMode) applyPlanReasoningGuard(assistant);
             if (!assistant.content.trim() && !assistant.reasoning?.trim()) assistant.content = '(stopped)';
             // Apply diffs from coalesced reasoning even on abort (no-op if planMode).
             await runGrokLayer(assistant);
@@ -1500,8 +1532,14 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         </button>
       </header>
 
-      <div className="relative min-h-0 flex-1">
-        <div ref={scrollerRef} className="h-full overflow-auto px-4 py-3">
+      <div
+        className={cn(
+          'relative min-h-0 flex-1 chat-terminal',
+          planMode ? 'chat-terminal--plan' : buildMode ? 'chat-terminal--build' : 'chat-terminal--discuss',
+        )}
+      >
+        <div className="chat-terminal-bg" aria-hidden="true" />
+        <div ref={scrollerRef} className="relative z-[1] h-full overflow-auto px-4 py-3">
           {messages.length === 0 ? (
             <div className="mx-auto max-w-md space-y-4 py-8">
               {needsWorkingDir && onChooseWorkspace ? (
@@ -1534,6 +1572,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                 key={m.id}
                 message={m}
                 autoAcceptEdits={autoAcceptEdits}
+                writesLocked={planMode}
+                terminalTone={planMode ? 'plan' : buildMode ? 'build' : 'discuss'}
                 grokResults={grokById[m.id]}
                 bridgeConnected={bridgeStatus === 'connected'}
                 onGitCommit={handleGitCommit}

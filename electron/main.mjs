@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.join(__dirname, '..');
@@ -207,6 +207,11 @@ function registerIpc() {
     return true;
   });
   ipcMain.handle('ablit:getVersion', () => app.getVersion());
+  ipcMain.handle('ablit:webSearch', async (_e, opts) => {
+    const modPath = path.join(APP_ROOT_FS, 'daemon', 'webSearch.js');
+    const mod = await import(pathToFileURL(modPath).href);
+    return mod.searchWeb(opts && typeof opts === 'object' ? opts : {});
+  });
 }
 
 if (gotLock) {

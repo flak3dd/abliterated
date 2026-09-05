@@ -20,13 +20,16 @@ const sample = [
   "list_dir .",
   "git_status .",
   "git_commit -m msg",
+  "web_search qwen abliterated",
   fence,
 ].join('\n');
 const parsed = parseFakeToolCalls(sample);
 const names = parsed.map((p) => p.name);
 assert.ok(names.includes('list_dir'), 'expected list_dir');
 assert.ok(names.includes('git_status'), 'expected git_status');
+assert.ok(names.includes('web_search'), 'expected web_search');
 assert.ok(!names.includes('git_commit'), 'must not parse git_commit');
+assert.equal(parsed.find((p) => p.name === "web_search")?.arguments?.query, "qwen abliterated");
 assert.equal(parsed.find((p) => p.name === "list_dir")?.arguments?.path, ".");
 assert.ok(looksLikeFakeToolTheater(sample));
 assert.ok(typeof buildFakeToolNudge() === "string" && buildFakeToolNudge().length > 20);

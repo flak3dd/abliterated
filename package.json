@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "bridge": "node daemon/bridge.js",
-    "smoke": "node scripts/smoke-agent.mjs && node daemon/search.test.js && node daemon/fsutil.test.js && node daemon/outline.test.js && node daemon/appRoot.test.js",
+    "smoke": "node scripts/smoke-agent.mjs && node daemon/search.test.js && node daemon/fsutil.test.js && node daemon/outline.test.js && node daemon/appRoot.test.js && node daemon/pyManaged.test.js && node daemon/webSearch.test.js",
     "test:agent": "node scripts/test-agent-response.mjs",
     "test:reasoning": "node scripts/test-reasoning-work.mjs",
     "test:build": "node scripts/test-build-protocol.mjs",

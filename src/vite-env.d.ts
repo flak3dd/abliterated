@@ -16,6 +16,12 @@ interface AblitDesktopApi {
   getLicense: () => Promise<string>;
   setLicense: (key: string) => Promise<boolean>;
   getVersion: () => Promise<string>;
+  webSearch: (opts: {
+    query: string;
+    count?: number;
+    braveKey?: string;
+    searxUrl?: string;
+  }) => Promise<string>;
   platform: string;
 }
 
