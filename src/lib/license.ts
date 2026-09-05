@@ -22,6 +22,8 @@ export type LicenseFeatures = {
   priorityFeatures: boolean;
   /** Team placeholder — shared seat pool not enforced yet. */
   sharedSeats: boolean;
+  /** Monthly included tokens for the built-in unrestricted model. 0 = not included; Infinity = unlimited. */
+  maxIncludedTokens: number;
 };
 
 export type LicenseState = {
@@ -48,6 +50,7 @@ const TIER_FEATURES: Record<LicenseTier, LicenseFeatures> = {
     showWatermark: true,
     priorityFeatures: false,
     sharedSeats: false,
+    maxIncludedTokens: 0,
   },
   starter: {
     maxWorkspaces: 1,
@@ -58,6 +61,7 @@ const TIER_FEATURES: Record<LicenseTier, LicenseFeatures> = {
     showWatermark: true,
     priorityFeatures: false,
     sharedSeats: false,
+    maxIncludedTokens: 1_000_000,
   },
   pro: {
     maxWorkspaces: UNLIMITED,
@@ -68,6 +72,7 @@ const TIER_FEATURES: Record<LicenseTier, LicenseFeatures> = {
     showWatermark: false,
     priorityFeatures: true,
     sharedSeats: false,
+    maxIncludedTokens: 3_000_000,
   },
   team: {
     maxWorkspaces: UNLIMITED,
@@ -78,6 +83,7 @@ const TIER_FEATURES: Record<LicenseTier, LicenseFeatures> = {
     showWatermark: false,
     priorityFeatures: true,
     sharedSeats: true,
+    maxIncludedTokens: 10_000_000,
   },
   admin: {
     maxWorkspaces: UNLIMITED,
@@ -88,6 +94,7 @@ const TIER_FEATURES: Record<LicenseTier, LicenseFeatures> = {
     showWatermark: false,
     priorityFeatures: true,
     sharedSeats: true,
+    maxIncludedTokens: UNLIMITED,
   },
 };
 
@@ -221,6 +228,7 @@ export const LICENSE_TEST_KEYS = {
 } as const;
 
 export const PRICING_HINT = {
+  starterMonthly: 19.95,
   proMonthly: 29,
   proYearly: 249,
   teamMonthlySeat: 99,

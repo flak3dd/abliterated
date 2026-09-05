@@ -13,7 +13,13 @@ import {
   countEnabledMcp,
   getLicenseState,
   normalizeLicenseKey,
+  type LicenseState,
 } from '../lib/license';
+import {
+  formatTokenCount,
+  loadBuiltinUsage,
+  remainingBuiltinTokens,
+} from '../lib/builtinTokens';
 import { generatePairingCode, setSettings, uid, wipeAll } from '../lib/storage';
 import type { ClientSettings, McpServerConfig } from '../types';
 
@@ -21,6 +27,31 @@ interface Props {
   settings: ClientSettings;
   onSettingsChange: (s: ClientSettings) => void;
   onWiped: () => void;
+}
+
+function BuiltinTokenMeter({ license }: { license: LicenseState }) {
+  const usage = loadBuiltinUsage();
+  const cap = license.features.maxIncludedTokens;
+  const used = usage.used;
+  const left = remainingBuiltinTokens(license, usage);
+  const pct = !Number.isFinite(cap) || cap <= 0 ? 0 : Math.min(100, Math.round((used / cap) * 100));
+  return (
+    <div className="mt-2 rounded border border-border bg-background px-3 py-2">
+      <div className="font-mono text-[10px] uppercase text-muted">Built-in model tokens this month</div>
+      <div className="mt-1 font-mono text-[12px] text-zinc-200">
+        {formatTokenCount(used)} used · {formatTokenCount(left)} left of {formatTokenCount(cap)}
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded bg-zinc-800">
+        <div
+          className={`h-full ${pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-400' : 'bg-sky-500'}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <p className="mt-1 font-mono text-[10px] text-muted">
+        Abliteration built-in unrestricted model only. BYO endpoints do not count.
+      </p>
+    </div>
+  );
 }
 
 function Section({
@@ -535,7 +566,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
 
         <Section
           title="License / Plan"
-          hint={`Freemium stub — Pro $${PRICING_HINT.proMonthly}/mo or $${PRICING_HINT.proYearly}/yr · Team $${PRICING_HINT.teamMonthlySeat}/mo seat (suggested).`}
+          hint={`Starter $${PRICING_HINT.starterMonthly}/mo · Pro $${PRICING_HINT.proMonthly}/mo or $${PRICING_HINT.proYearly}/yr · Team $${PRICING_HINT.teamMonthlySeat}/mo seat.`}
         >
           <div className="rounded border border-border bg-background px-3 py-2">
             <div className="font-mono text-[10px] uppercase text-muted">Current plan</div>
@@ -559,9 +590,18 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
                 ? license.features.maxConcurrentJobs
                 : 'unlimited'}
             </li>
-            <li>Plan mode: allowed</li>
+            <li>Plan mode: {license.features.planModeAllowed ? 'allowed' : '—'}</li>
             <li>Shared seats: {license.features.sharedSeats ? 'Team placeholder' : '—'}</li>
+            <li>
+              Built-in unrestricted model:{' '}
+              {license.features.maxIncludedTokens === 0
+                ? 'not included (BYO endpoint)'
+                : `${formatTokenCount(license.features.maxIncludedTokens)} tokens/mo`}
+            </li>
           </ul>
+          {license.features.maxIncludedTokens > 0 ? (
+            <BuiltinTokenMeter license={license} />
+          ) : null}
 
           <FieldLabel label="License key" hint="Paste your ABLIT-* license key from checkout or redeem. IDE activates via license key (loginId support later).">
             <input

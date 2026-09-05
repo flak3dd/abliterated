@@ -2,6 +2,12 @@ import { ALL_TOOL_TYPES, type ChatOpenAiMessage, type ClientSettings, type ToolC
 import { missingInferenceAuthError, rejectedInferenceAuthError, resolveActiveSettings } from './activeEndpoint';
 import { endpointUrl } from './apiUrl';
 import { detokenizeArtifacts } from './detokenizeArtifacts';
+import {
+  assertBuiltinQuota,
+  estimateTokensFromText,
+  isBuiltinEndpoint,
+  recordBuiltinUsage,
+} from './builtinTokens';
 
 export interface StreamChatArgs {
   settings: ClientSettings;
@@ -370,6 +376,11 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     throw new Error(missingAuth);
   }
 
+  const usingBuiltin = isBuiltinEndpoint(active);
+  if (usingBuiltin) {
+    assertBuiltinQuota(settings);
+  }
+
   const url = endpointUrl(
     {
       baseUrl: active.baseUrl,
@@ -405,6 +416,9 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     body.tool_choice = toolChoice || 'auto';
   }
   body.max_tokens = settings.contextLength && settings.contextLength > 0 ? settings.contextLength : 4096;
+  if (usingBuiltin) {
+    body.stream_options = { include_usage: true };
+  }
 
   let res: Response;
   try {
@@ -476,6 +490,8 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
   const toolAcc = new Map<number, ToolAcc>();
   let finishReason = 'stop';
   let sawDone = false;
+  let usageTokens = 0;
+  let completionChars = 0;
 
   const handleData = (payload: string) => {
     const trimmed = payload.trim();
@@ -498,6 +514,11 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
         };
         finish_reason?: string | null;
       }>;
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+      };
     };
     try {
       json = JSON.parse(trimmed) as typeof json;
@@ -528,6 +549,13 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
       }
     }
     if (choice?.finish_reason) finishReason = choice.finish_reason;
+    if (json.usage) {
+      const total =
+        Number(json.usage.total_tokens) ||
+        (Number(json.usage.prompt_tokens) || 0) + (Number(json.usage.completion_tokens) || 0);
+      if (total > 0) usageTokens = total;
+    }
+    if (delta?.content) completionChars += delta.content.length;
     return false;
   };
 
@@ -550,6 +578,14 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
       handleData(buffer.trim().slice(5).trimStart());
     }
     const toolCalls = materializeTools(toolAcc, onToolCallComplete);
+    if (usingBuiltin) {
+      let tokens = usageTokens;
+      if (tokens <= 0) {
+        const promptText = messages.map((m) => m.content || '').join('\n');
+        tokens = estimateTokensFromText(promptText) + Math.max(0, Math.ceil(completionChars / 4));
+      }
+      recordBuiltinUsage(tokens);
+    }
     return { finishReason, toolCalls };
   } finally {
     try {

@@ -6,9 +6,10 @@ Suggested list prices for the desktop product. Subject to change when Stripe goe
 
 | Plan | Price | Highlights |
 | --- | ---: | --- |
-| **Free** | $0 | 1 workspace, basic chat, bridge, **1 MCP**, Jobs concurrency **1**, providers OK, **Free · Upgrade** watermark |
-| **Pro** | **$29/mo** or **$249/yr** | Unlimited MCP, Jobs concurrency **up to 4**, **Plan mode**, priority features, no watermark |
-| **Team** | **$99/mo per seat** | Everything in Pro + shared license seats (placeholder until Stripe seat sync) |
+| **Free** | $0 | 1 workspace, basic chat, bridge, **1 MCP**, Jobs concurrency **1**, BYO inference only (no built-in token pool), **Free · Upgrade** watermark |
+| **Starter** | **$19.95/mo** | 1 workspace, 1 MCP, Jobs concurrency **1**, built-in unrestricted model **1M tokens/mo**, watermark |
+| **Pro** | **$29/mo** or **$249/yr** | Unlimited MCP, Jobs concurrency **up to 4**, **Plan mode**, built-in unrestricted model **3M tokens/mo**, no watermark |
+| **Team** | **$99/mo per seat** | Everything in Pro + shared seats + built-in unrestricted model **10M tokens/mo per seat** |
 
 Yearly Pro is about two months free vs monthly.
 

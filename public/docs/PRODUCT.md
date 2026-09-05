@@ -34,13 +34,15 @@ Abliterated is the **local-first agent workbench** for developers who want Curso
 
 See pricing.md. Free $0; Pro $29/mo or $249/yr; Team $99/mo seat.
 
-| | Free | Pro | Team |
+| | Free | Starter | Pro | Team |
 | --- | --- | --- | --- |
-| Workspaces | 1 | Unlimited | Unlimited |
-| MCP | 1 | Unlimited | Unlimited |
-| Jobs concurrency | 1 | Up to 4 | Up to 4 |
-| Plan mode | no | yes | yes |
-| Watermark | yes | no | no |
+| Workspaces | 1 | 1 | Unlimited | Unlimited |
+| MCP | 1 | 1 | Unlimited | Unlimited |
+| Jobs concurrency | 1 | 1 | Up to 4 | Up to 4 |
+| Plan mode | no | no | yes | yes |
+| Built-in unrestricted model | — | Included | Included | Included |
+| Included tokens / month | 0 | 1M | 3M | 10M / seat |
+| Watermark | yes | yes | no | no |
 
 Test keys: empty Free; ABLIT-PRO-XXXX-XXXX Pro; ABLIT-TEAM-XXXX-XXXX Team; ABLIT-DEV-UNLOCK Team.
 
