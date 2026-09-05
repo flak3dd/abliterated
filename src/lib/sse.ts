@@ -1,4 +1,5 @@
 import { ALL_TOOL_TYPES, type ChatOpenAiMessage, type ClientSettings, type ToolCallPayload, type ToolType } from '../types';
+import { canonicalizeToolName } from './agentHelpers';
 import { missingInferenceAuthError, rejectedInferenceAuthError, resolveActiveSettings } from './activeEndpoint';
 import { endpointUrl } from './apiUrl';
 import { detokenizeArtifacts } from './detokenizeArtifacts';
@@ -275,6 +276,101 @@ export const CHAT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'todo',
+      description:
+        'Create or update the session ToDo checklist (build/plan steps). Prefer this over a markdown-only ToDo list. Aliases: ToDo, todo_write. merge=true updates matching items; omit merge to replace the list.',
+      parameters: {
+        type: 'object',
+        properties: {
+          items: {
+            type: 'array',
+            description: 'Checklist items as strings or {text, done} / {content, status} objects',
+            items: {
+              anyOf: [
+                { type: 'string' },
+                {
+                  type: 'object',
+                  properties: {
+                    text: { type: 'string' },
+                    content: { type: 'string' },
+                    done: { type: 'boolean' },
+                    status: { type: 'string', description: 'pending | completed | in_progress' },
+                  },
+                },
+              ],
+            },
+          },
+          todos: { type: 'array', description: 'Alias for items' },
+          merge: { type: 'boolean', description: 'If true, merge/update by item text instead of replacing' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_skills',
+      description:
+        'List available SKILL.md recipes (bundled, user global, workspace). Returns JSON catalog of id/name/description/source.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_skill',
+      description:
+        'Read the full markdown body of a skill by skill_id (slug). Call before following a matching recipe.',
+      parameters: {
+        type: 'object',
+        properties: {
+          skill_id: { type: 'string', description: 'Skill id/slug from list_skills' },
+          id: { type: 'string', description: 'Alias for skill_id' },
+        },
+        required: ['skill_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'suggest_skill',
+      description:
+        'Propose a new reusable build-quality skill without writing. Use only when a clear multi-step process is not already covered. Wait for user confirm before write_skill.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Skill display name' },
+          description: { type: 'string', description: 'When to use this skill' },
+          body: { type: 'string', description: 'Markdown steps outline' },
+          reason: { type: 'string', description: 'Why this skill would help' },
+        },
+        required: ['name', 'description'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'write_skill',
+      description:
+        'Save a SKILL.md recipe. Default scope=workspace (.ablit/skills/<slug>/). scope=user writes ~/.abliterated/skills/. Not available in Plan mode. Prefer suggest_skill then confirm first.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          description: { type: 'string' },
+          body: { type: 'string', description: 'Markdown body/steps' },
+          scope: { type: 'string', description: 'workspace (default) or user' },
+        },
+        required: ['name', 'description', 'body'],
+      },
+    },
+  },
+
+  {
+    type: 'function',
+    function: {
       name: 'web_fetch',
       description: 'Fetch a URL and return its text content. http(s) only.',
       parameters: {
@@ -290,15 +386,19 @@ export const CHAT_TOOLS = [
 
 export function filterChatTools(
   enabled?: ToolType[],
-  opts?: { imageGenEnabled?: boolean; extraTools?: typeof CHAT_TOOLS },
+  opts?: { imageGenEnabled?: boolean; skillsEnabled?: boolean; extraTools?: typeof CHAT_TOOLS },
 ) {
   let tools = CHAT_TOOLS;
   if (enabled) {
     const set = new Set(enabled);
-    tools = CHAT_TOOLS.filter((t) => set.has(t.function.name as ToolType));
+    tools = CHAT_TOOLS.filter((t) => set.has(t.function.name as ToolType) || t.function.name === 'todo');
   }
   if (!opts?.imageGenEnabled) {
     tools = tools.filter((t) => t.function.name !== 'generate_image');
+  }
+  if (opts?.skillsEnabled === false) {
+    const skillNames = new Set(['list_skills', 'read_skill', 'suggest_skill', 'write_skill']);
+    tools = tools.filter((t) => !skillNames.has(t.function.name));
   }
   if (opts?.extraTools?.length) {
     tools = [...tools, ...opts.extraTools];
@@ -319,7 +419,8 @@ function materializeTools(acc: Map<number, ToolAcc>, onToolCallComplete?: (tool:
     } catch {
       parsed = { raw: tool.arguments };
     }
-    const name = isToolType(tool.name) || tool.name.startsWith('mcp__') ? tool.name : tool.name || 'shell';
+    const rawName = canonicalizeToolName(tool.name || '');
+    const name = isToolType(rawName) || rawName.startsWith('mcp__') ? rawName : rawName || 'shell';
     const payload: ToolCallPayload = {
       id: tool.id || `tool_${Math.random().toString(36).slice(2, 8)}`,
       name,
@@ -405,7 +506,7 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     headers['X-Reasoning'] = settings.reasoning;
   }
 
-  const tools = filterChatTools(enabledTools, { imageGenEnabled: settings.imageGenEnabled === true, extraTools });
+  const tools = filterChatTools(enabledTools, { imageGenEnabled: settings.imageGenEnabled === true, skillsEnabled: settings.skillsEnabled !== false, extraTools });
   const body: Record<string, unknown> = {
     model,
     stream: true,

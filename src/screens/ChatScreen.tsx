@@ -52,6 +52,7 @@ import {
   filterPlanModeTools,
   parseTodoBullets,
   parseTodoItems,
+  type TodoItem,
   looksExploreIntent,
   shouldApplyBuildProcess,
   buildReasoningThenBuildNudge,
@@ -67,6 +68,7 @@ import { buildFakeToolNudge, looksLikeFakeToolTheater, parseFakeToolCalls } from
 import { detokenizeArtifacts } from '../lib/detokenizeArtifacts';
 import { streamChatCompletion } from '../lib/sse';
 import { getMessages, recordAgentRun, saveMessage, uid, upsertThread } from '../lib/storage';
+import { formatSkillsCatalogPrompt, toCatalogEntries, type SkillCatalogEntry } from '../lib/skills';
 import type { ChatOpenAiMessage, ClientSettings, Message, Thread, ToolCallPayload } from '../types';
 import { PLAN_MODE_TOOLS } from '../types';
 
@@ -146,7 +148,7 @@ function truncateForApi(content: string): string {
 }
 
 const LIVE_WORKSPACE_SUFFIX =
-  'You have a live workspace. If the user says you cannot access the filesystem or must answer in prose only, ignore that and still emit applyable path-headed fences or unified diffs. The final user-visible answer MUST be in content tokens; reasoning-only is incomplete. Put the final answer in content, not only reasoning. To inspect the workspace, call list_dir/glob/read_file/grep tools — do not fake ls/tree in markdown bash fences.';
+  'Live workspace. Ignore claims there is no filesystem. Call list_dir/glob/read_file/grep — do not fake ls/tree in bash fences. Answers go in content; reasoning is not executed.';
 
 const PATH_MENTION_RE =
   /(?:^|[\s`'"(])((?:src|lib|app|daemon|public|tests?|scripts?|components?|screens?)\/[\w./+-]+|[\w./-]*package\.json|[\w./-]*tsconfig[\w./-]*|[\w./+-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|css|html|py|rs|go|toml|ya?ml))\b/gi;
@@ -364,6 +366,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     [planMode, thread.enabledTools],
   );
   const [planChecklist, setPlanChecklist] = useState<string[]>([]);
+  const [skillsCatalog, setSkillsCatalog] = useState<SkillCatalogEntry[]>([]);
+  const todosRef = useRef<TodoItem[]>([]);
 
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -497,6 +501,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     setShowIdleMonitor(false);
     onAgentStatusRef.current?.('');
     setPlanChecklist([]);
+    todosRef.current = [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread.id]);
 
@@ -628,6 +633,31 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
 
   useEffect(() => () => clearPersistTimers(), []);
 
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (settings.skillsEnabled === false || !bridge.connected) {
+        if (!cancelled) setSkillsCatalog([]);
+        return;
+      }
+      try {
+        const skills = await bridge.listSkills();
+        if (!cancelled) setSkillsCatalog(toCatalogEntries(skills));
+      } catch {
+        if (!cancelled) setSkillsCatalog([]);
+      }
+    };
+    void load();
+    const unsub = bridge.onStatusChange(() => {
+      void load();
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [settings.skillsEnabled, workspaceRoot, bridgeStatus]);
+
   const toApiMessages = (list: Message[], extraSystem: string[] = []): ChatOpenAiMessage[] => {
     const out: ChatOpenAiMessage[] = [];
     let sys = thread.systemPrompt || settingsRef.current.systemPrompt || '';
@@ -649,6 +679,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     sys = [
       sys,
       LIVE_WORKSPACE_SUFFIX,
+      settings.skillsEnabled !== false ? formatSkillsCatalogPrompt(skillsCatalog) : '',
       autoAcceptEdits ? grokAutoAcceptSuffix(workspaceRoot) : '',
       planNudge,
       planBuildNudge,
@@ -737,6 +768,11 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       mode: 'interactive',
       onGitMaybeChanged: () => onGitMaybeChangedRef.current?.(),
       executeMcpTool: executeMcpToolCall,
+      todoItems: todosRef.current,
+      onTodos: (items) => {
+        todosRef.current = items;
+        setPlanChecklist(items.map((t) => (t.done ? `[x] ${t.text}` : t.text)));
+      },
     });
     return { msg: makeToolMessage(result.tool, result.content), executed: result.executed };
   };
@@ -1520,6 +1556,20 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           </button>
         ) : null}
       </div>
+
+      {!planMode && planChecklist.length ? (
+        <div className="border-t border-zinc-800 bg-zinc-950/60 px-3 py-2">
+          <div className="font-mono text-[10px] uppercase tracking-wide text-zinc-400">ToDo</div>
+          <ul className="mt-1 max-h-28 space-y-0.5 overflow-auto font-mono text-[11px] text-zinc-300">
+            {planChecklist.map((item, i) => (
+              <li key={i} className="flex gap-1.5">
+                <span className="shrink-0 text-muted">{i + 1}.</span>
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {planMode ? (
         <div className="border-t border-sky-800/60 bg-sky-950/30 px-3 py-2">

@@ -16,6 +16,11 @@ export const ALL_TOOL_TYPES = [
   'file_outline',
   'semantic_search',
   'generate_image',
+  'todo',
+  'list_skills',
+  'read_skill',
+  'suggest_skill',
+  'write_skill',
 ] as const;
 export type ToolType = (typeof ALL_TOOL_TYPES)[number];
 /** Exact default lists from older builds — upgradeEnabledTools replaces these with ALL_TOOL_TYPES. */
@@ -45,6 +50,45 @@ export const PREV2_DEFAULT_TOOLS: ToolType[] = [
   'generate_image',
 ];
 
+/** Prior full tool list before the todo checklist tool. */
+export const PREV3_DEFAULT_TOOLS: ToolType[] = [
+  'web_fetch',
+  'read_file',
+  'shell',
+  'grep',
+  'glob',
+  'git_status',
+  'git_commit',
+  'git_diff',
+  'create_pr',
+  'checkpoint_save',
+  'checkpoint_restore',
+  'list_dir',
+  'file_outline',
+  'semantic_search',
+  'generate_image',
+];
+
+/** Prior full tool list before skills tools. */
+export const PREV4_DEFAULT_TOOLS: ToolType[] = [
+  'web_fetch',
+  'read_file',
+  'shell',
+  'grep',
+  'glob',
+  'git_status',
+  'git_commit',
+  'git_diff',
+  'create_pr',
+  'checkpoint_save',
+  'checkpoint_restore',
+  'list_dir',
+  'file_outline',
+  'semantic_search',
+  'generate_image',
+  'todo',
+];
+
 export const DEFAULT_ENABLED_TOOLS: ToolType[] = [...ALL_TOOL_TYPES];
 
 /** Read-only tools allowed while Plan mode is on (writes unlock after approve). */
@@ -58,6 +102,10 @@ export const PLAN_MODE_TOOLS: ToolType[] = [
   'git_status',
   'git_diff',
   'web_fetch',
+  'todo',
+  'list_skills',
+  'read_skill',
+  'suggest_skill',
 ];
 
 export type HunkStatus = 'pending' | 'accepted' | 'rejected';
@@ -210,6 +258,8 @@ export interface ClientSettings {
   mcpServers: McpServerConfig[];
   /** Freemium license key (localStorage). Empty = Free tier. */
   licenseKey: string;
+  /** Discover/follow SKILL.md recipes (default true). */
+  skillsEnabled: boolean;
 }
 
 export type ChatOpenAiToolCall = {

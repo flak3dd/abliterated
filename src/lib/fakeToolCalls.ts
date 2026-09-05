@@ -11,6 +11,9 @@ const SAFE_ALLOWLIST = new Set([
   'git_status',
   'git_diff',
   'web_fetch',
+  'list_skills',
+  'read_skill',
+  'suggest_skill',
 ]);
 
 /** Write / gated / MCP — never auto-parse into executable tool calls. */
@@ -25,6 +28,7 @@ const NEVER_PARSE = new Set([
   'apply_diff',
   'delete_file',
   'edit_file',
+  'write_skill',
 ]);
 
 const DISCOVERY_SHELL = /\b(ls|tree|cat|find|dir|ll)\b/;

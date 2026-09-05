@@ -365,6 +365,44 @@ export class BridgeClient {
     });
   }
 
+
+  listSkills(): Promise<Array<{ id: string; name: string; description: string; path: string; body: string; source?: string }>> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({ type: 'list_skills' }).then((v) => {
+      const msg = v as { skills?: Array<{ id: string; name: string; description: string; path: string; body: string; source?: string }> };
+      return Array.isArray(msg.skills) ? msg.skills : [];
+    });
+  }
+
+  readSkill(skillId: string): Promise<{ id: string; name: string; description: string; path: string; body: string; source?: string }> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({ type: 'read_skill', skill_id: skillId }).then((v) => {
+      const msg = v as { skill?: { id: string; name: string; description: string; path: string; body: string; source?: string } };
+      if (!msg.skill) throw new Error('skill not found');
+      return msg.skill;
+    });
+  }
+
+  writeSkill(input: {
+    name: string;
+    description: string;
+    body: string;
+    scope?: 'workspace' | 'user';
+  }): Promise<{ id: string; name: string; description: string; path: string; body: string; source?: string }> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({
+      type: 'write_skill',
+      name: input.name,
+      description: input.description,
+      body: input.body,
+      scope: input.scope || 'workspace',
+    }).then((v) => {
+      const msg = v as { skill?: { id: string; name: string; description: string; path: string; body: string; source?: string } };
+      if (!msg.skill) throw new Error('write_skill failed');
+      return msg.skill;
+    });
+  }
+
   deleteFile(file: string): Promise<boolean> {
     if (!this.connected) return Promise.resolve(false);
     try {

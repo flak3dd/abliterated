@@ -160,14 +160,7 @@ export function parseTodoBullets(text: string): string[] {
 }
 
 export function buildLargeJobNudge(): string {
-  return (
-    '## Large job protocol (required for this request)\n' +
-    '1. First message content: a **ToDo** list as plain bullet points (- item) covering the work (3–12 items). No prose wall before the list.\n' +
-    '2. If new directories/files/skeleton are required, create that structure first, then implement.\n' +
-    '3. Then explore the codebase with tools (grep / glob / semantic_search / list_dir / read_file / file_outline) before writing feature patches — revise the ToDo if discovery changes the plan.\n' +
-    '4. Implement step by step with real diffs/fences: mark progress (- [x] / - [ ]). Do not invent file contents.\n' +
-    '5. Do not stop after only the ToDo — scaffold (if needed) and start implementation in the same run.'
-  );
+  return BUILD_PROCESS_SECTION;
 }
 
 export type TodoItem = { text: string; done: boolean };
@@ -184,6 +177,69 @@ export function parseTodoItems(text: string): TodoItem[] {
 
 export function formatTodoBlock(items: TodoItem[]): string {
   return `ToDo:\n${items.map((t) => `- [${t.done ? 'x' : ' '}] ${t.text}`).join('\n')}`;
+}
+
+/** Models (Grok CLI process, Cursor, etc.) call ToDo / todo_write — canonicalize to `todo`. */
+const TODO_TOOL_ALIASES = new Set([
+  'todo',
+  'todos',
+  'todo_write',
+  'todowrite',
+  'todo_update',
+  'update_todo',
+  'create_todo',
+]);
+
+export function canonicalizeToolName(name: string): string {
+  const raw = (name || '').trim();
+  if (!raw) return raw;
+  if (TODO_TOOL_ALIASES.has(raw.toLowerCase())) return 'todo';
+  return raw;
+}
+
+function todoItemFromUnknown(v: unknown): TodoItem | null {
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if (t.length < 3) return null;
+    const m = t.match(/^\[([xX ])\]\s*(.*)$/);
+    if (m) return { text: (m[2] || '').trim() || t, done: m[1].toLowerCase() === 'x' };
+    return { text: t, done: false };
+  }
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  const text = [o.text, o.content, o.item, o.task, o.title]
+    .find((x): x is string => typeof x === 'string' && x.trim().length >= 3);
+  if (!text) return null;
+  const status = typeof o.status === 'string' ? o.status.toLowerCase() : '';
+  const done =
+    o.done === true ||
+    o.completed === true ||
+    status === 'completed' ||
+    status === 'done' ||
+    status === 'complete' ||
+    status === 'x';
+  return { text: text.trim(), done };
+}
+
+/** Merge or replace the in-session checklist from a `todo` tool call. */
+export function applyTodoToolArgs(prev: TodoItem[], args: Record<string, unknown>): TodoItem[] {
+  const merge = args.merge === true || args.merge === 'true';
+  const raw = args.items ?? args.todos ?? args.tasks ?? args.list ?? args.todo;
+  let incoming: TodoItem[] = [];
+  if (Array.isArray(raw)) {
+    incoming = raw.map(todoItemFromUnknown).filter((x): x is TodoItem => x != null);
+  } else if (typeof raw === 'string') {
+    incoming = parseTodoItems(raw);
+  } else {
+    const one = todoItemFromUnknown(args.text ?? args.content ?? args.item ?? args);
+    if (one) incoming = [one];
+  }
+  if (!incoming.length) return prev;
+  if (!merge && incoming.length) return incoming.slice(0, 16);
+  const map = new Map<string, TodoItem>();
+  for (const it of prev) map.set(it.text.toLowerCase(), it);
+  for (const it of incoming) map.set(it.text.toLowerCase(), it);
+  return [...map.values()].slice(0, 16);
 }
 
 export function liftTodoListToContent(content: string, reasoning: string): string {
@@ -220,37 +276,10 @@ export function needsBuildProtocol(userText: string): boolean {
   return looksBuildIntent(t) || looksLargeJob(t) || looksMultiStep(t);
 }
 
-/**
- * Reasoning-then-build process (same loop Grok CLI uses; this harness does not spawn grok CLI).
- * Reasoning is not executed; applyable work must still land in content.
- */
-export const BUILD_REASONING_PROCESS =
-  '### Reasoning (when reasoning is enabled)\n' +
-  'Before tools or diffs, in the reasoning channel:\n' +
-  '1. Goal — one line restating the build request.\n' +
-  '2. Inspect — which paths/tools you will call first. Do not invent listings or file contents.\n' +
-  '3. Steps — for each step you start: step #, why this approach, what success looks like.\n' +
-  '4. After each tool result: one line on what changed in the plan. Do not restart unless contradicted.\n' +
-  '5. Reasoning is not executed. Diffs, bash fences, and // path files MUST appear in content.\n' +
-  '6. Do not invoke an external grok CLI (or any other coding CLI) as a tool. This IDE is the harness.';
-
-/** Content-channel build steps after (or alongside) reasoning. */
-export const BUILD_IMPLEMENT_PROCESS =
-  '### Build (content)\n' +
-  '1. Emit `ToDo:` with 3–12 `- [ ]` items. First item is scaffolding if new files/folders are required. No essay before the list.\n' +
-  '2. Explore with tools (list_dir, glob, grep, semantic_search, read_file, file_outline) before writing feature patches. Revise the ToDo if discovery changes scope.\n' +
-  '3. If a skeleton is required, CREATE those directories/files NOW with unified diffs or // path fences — before feature code.\n' +
-  '4. Implement remaining ToDos in the SAME run with real ```diff or // relative/path fences. Mark `- [x]` as each finishes.\n' +
-  '5. After a meaningful change, emit a scoped verify ```bash fence (typecheck, lint, or focused test).\n' +
-  '6. Do not stop after only the ToDo. A list with no diffs is a failed build.\n' +
-  '7. Skip this protocol only for trivial one-shots (single-line answer, typo, one-file read).';
-
+/** Short reminder; full Work rules live in SYSTEM_PROMPT. */
 export const BUILD_PROCESS_SECTION =
-  '## Reasoning then build\n' +
-  'When the operator sends a build/implement/scaffold request, or Build mode is on:\n\n' +
-  BUILD_REASONING_PROCESS +
-  '\n\n' +
-  BUILD_IMPLEMENT_PROCESS;
+  '## Work — ACTIVE\n' +
+  'Reason (goal / inspect / step # why success). Call `todo` (3–12). Explore with tools. Scaffold then implement with ```diff in this run. Tick todos via merge=true. One verify bash fence. Do not stop at a list. Do not spawn other coding CLIs.';
 
 /** True for an actual build request (not every multi-step chat). Plan mode never builds. */
 export function shouldApplyBuildProcess(
@@ -267,12 +296,7 @@ export function shouldApplyBuildProcess(
 }
 
 export function buildReasoningThenBuildNudge(): string {
-  return (
-    '## Reasoning then build (ACTIVE for this request)\n' +
-    BUILD_REASONING_PROCESS +
-    '\n\n' +
-    BUILD_IMPLEMENT_PROCESS
-  );
+  return BUILD_PROCESS_SECTION;
 }
 
 export function buildBuildModeNudge(): string {
@@ -281,7 +305,7 @@ export function buildBuildModeNudge(): string {
 
 export function buildBuildModeTodoNudge(): string {
   return (
-    'Build process: emit `ToDo:` with 3–12 `- [ ]` steps in content, then immediately scaffold (if needed) and implement with ```diff or // path fences. Do not only reason or only list tasks. Do not shell out to grok CLI.'
+    'Build process: call `todo` with 3–12 items, then scaffold (if needed) and implement with ```diff or // path fences. Do not only reason or only list tasks.'
   );
 }
 
@@ -290,7 +314,7 @@ export function buildBuildModeImplementNudge(): string {
     'Build process: you wrote a ToDo list but did not emit any file diffs or path-headed fences. ' +
     'That is not a build. Now: (1) if new structure is required, create the skeleton first; ' +
     '(2) implement the next unchecked ToDo with a real ```diff or // relative/path file in content; ' +
-    '(3) mark `- [x]` on finished items. Do not reply with another list only. Do not invoke grok CLI.'
+    '(3) call `todo` with merge=true to tick finished items. Do not reply with another list only.'
   );
 }
 
@@ -438,13 +462,10 @@ export function filterPlanModeTools(enabled: readonly ToolType[]): ToolType[] {
 
 export function buildPlanModeNudge(): string {
   return (
-    '## Plan mode (ACTIVE — read-only)\n' +
-    'Tools unlocked now: read_file, grep, glob, list_dir, file_outline, semantic_search, git_status, git_diff, web_fetch. ' +
-    'Do not call shell/write/git_commit/create_pr/checkpoint_restore/generate_image or apply diffs.\n' +
-    '1. Explore with those tools as needed (list_dir/glob/semantic_search/file_outline/git_diff/web_fetch — never fake ls/tree in markdown bash fences).\n' +
-    '2. Emit a **Plan** checklist as numbered steps (1. … 2. …) or bullets (- …) — concrete, implementable.\n' +
-    '3. Stop after the checklist. Do not implement edits until the operator approves Plan mode exit.\n' +
-    'Skip the Completion footer while Plan mode is active.'
+    '## Plan mode — ACTIVE (read-only)\n' +
+    'Tools: read_file, grep, glob, list_dir, file_outline, semantic_search, git_status, git_diff, web_fetch, todo, list_skills, read_skill, suggest_skill. ' +
+    'No shell/write/git_commit/create_pr/checkpoint_restore/generate_image/write_skill and no diffs.\n' +
+    'Explore with tools, emit a Plan checklist (todo tool or bullets), then stop. Skip the completion footer until Plan is approved.'
   );
 }
 

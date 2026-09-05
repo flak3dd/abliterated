@@ -1,6 +1,8 @@
 import { bridge } from './bridgeClient';
 import type { McpServerConfig } from '../types';
 
+export { EXAMPLE_FILESYSTEM_MCP, MCP_ONE_CLICK_CATALOG, catalogToConfig } from './mcpCatalog';
+
 export type McpToolDef = {
   serverName: string;
   name: string;
@@ -206,11 +208,3 @@ export async function executeMcpToolCall(
   if (!bridge.connected) throw new Error("bridge disconnected");
   return bridge.mcpCallTool(serverId, toolName, args);
 }
-
-// Bridge resolves npx MCP packages to the cached node entry when possible.
-export const EXAMPLE_FILESYSTEM_MCP: Omit<McpServerConfig, "id"> = {
-  name: "filesystem",
-  command: "npx",
-  args: ["-y", "@modelcontextprotocol/server-filesystem", "."],
-  enabled: false,
-};

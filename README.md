@@ -126,7 +126,7 @@ Shared tool execution lives in `src/lib/agentTools.ts` (used by Chat and Jobs).
 
 ## MCP (Phase 3)
 
-Settings → **MCP servers**: add `{ name, command, args }` (stdio). Click **Connect / refresh** (bridge must be up). The daemon (`daemon/mcp.js`) spawns the process and speaks MCP JSON-RPC. Tools merge into chat/jobs as `mcp__<server>__<tool>`.
+Settings → **MCP servers**: one-click deploy from the catalog (`npx -y` / `uvx`) or add `{ name, command, args }` (stdio). Click **Connect / refresh** (bridge must be up). The daemon (`daemon/mcp.js`) spawns the process and speaks MCP JSON-RPC. Tools merge into chat/jobs as `mcp__<server>__<tool>`.
 
 Example (filesystem server from MCP docs):
 

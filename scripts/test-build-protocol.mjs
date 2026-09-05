@@ -127,6 +127,19 @@ assert.equal(shouldApplyBuildProcess('hi', { planMode: true }), false);
 assert.equal(shouldApplyBuildProcess('Build a file structure for the new feature module', { planMode: true }), false);
 assert.ok(shouldApplyBuildProcess('Please add the missing tests for the parser module now.', { buildMode: true }));
 
+function canonicalizeToolName(name) {
+  const raw = (name || '').trim();
+  if (!raw) return raw;
+  const aliases = new Set(['todo', 'todos', 'todo_write', 'todowrite', 'todo_update', 'update_todo', 'create_todo']);
+  if (aliases.has(raw.toLowerCase())) return 'todo';
+  return raw;
+}
+
+assert.equal(canonicalizeToolName('ToDo'), 'todo');
+assert.equal(canonicalizeToolName('todo_write'), 'todo');
+assert.equal(canonicalizeToolName('TODO'), 'todo');
+assert.equal(canonicalizeToolName('read_file'), 'read_file');
+
 assert.equal(looksLikeBuildOutput('ToDo:\n- [ ] a\n- [ ] b'), false);
 assert.ok(looksLikeBuildOutput('```diff\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n```'));
 

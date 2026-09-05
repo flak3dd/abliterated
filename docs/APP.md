@@ -168,7 +168,7 @@ Headless `executeAgentTool` (`jobRunner.ts`): single-flight; Cancel; soft-skip g
 
 ## MCP
 
-Settings → servers `{name, command, args}`. Connect via `daemon/mcp.js`. Example filesystem server via `npx` + `@modelcontextprotocol/server-filesystem`.
+Settings → **One-click deploy** catalog (`npx -y` / `uvx`, no API keys) or add `{name, command, args}`. Connect via `daemon/mcp.js`.
 
 ---
 

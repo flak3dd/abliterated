@@ -126,7 +126,7 @@ function CollapsibleToolOutput({ content }: { content: string }) {
 }
 
 function getToolIcon(name: string) {
-  if (name === 'read_file' || name === 'file_outline' || name === 'list_dir') return FileText;
+  if (name === 'read_file' || name === 'file_outline' || name === 'list_dir' || name === 'list_skills' || name === 'read_skill' || name === 'suggest_skill' || name === 'write_skill') return FileText;
   if (name === 'grep' || name === 'glob' || name === 'semantic_search') return Search;
   if (name === 'git_status' || name === 'git_diff') return GitBranch;
   if (name === 'git_commit') return GitCommit;
@@ -150,6 +150,9 @@ function toolSummary(tool: ToolCallPayload): string {
   if (tool.name === 'checkpoint_save') return toolArgString(tool.arguments, ['label', 'name']) || 'save';
   if (tool.name === 'checkpoint_restore') return toolArgString(tool.arguments, ['id', 'checkpoint']);
   if (tool.name === 'web_fetch') return toolArgString(tool.arguments, ['url']);
+  if (tool.name === 'list_skills') return 'catalog';
+  if (tool.name === 'read_skill') return toolArgString(tool.arguments, ['skill_id', 'id', 'slug', 'name']);
+  if (tool.name === 'suggest_skill' || tool.name === 'write_skill') return toolArgString(tool.arguments, ['name', 'title']);
   if (tool.name === 'shell') return toolArgString(tool.arguments, ['command', 'cmd', 'script']);
   return '';
 }

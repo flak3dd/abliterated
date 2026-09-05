@@ -3,7 +3,7 @@
 const FENCE_RE = /```[^\n]*\n[\s\S]*?```/g;
 
 const TOOL_NAME_RE =
-  /\b(list_dir|read_file|grep|glob|file_outline|semantic_search|git_status|git_diff|git_commit|create_pr|web_fetch|write_file|apply_patch|apply_diff|delete_file|shell)\b/;
+  /\b(list_dir|read_file|grep|glob|file_outline|semantic_search|git_status|git_diff|git_commit|create_pr|web_fetch|write_file|apply_patch|apply_diff|delete_file|shell|list_skills|read_skill|suggest_skill|write_skill)\b/;
 
 /** Fenced blocks, unified diffs, or whole-file path dumps sitting in reasoning. */
 export function liftReasoningWork(reasoning: string): string {

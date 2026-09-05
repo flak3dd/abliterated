@@ -6,7 +6,14 @@ import type {
   ToolType,
   WorkspaceContext,
 } from '../types';
-import { ALL_TOOL_TYPES, OLD_DEFAULT_TOOLS, PREV_DEFAULT_TOOLS, PREV2_DEFAULT_TOOLS } from '../types';
+import {
+  ALL_TOOL_TYPES,
+  OLD_DEFAULT_TOOLS,
+  PREV_DEFAULT_TOOLS,
+  PREV2_DEFAULT_TOOLS,
+  PREV3_DEFAULT_TOOLS,
+  PREV4_DEFAULT_TOOLS,
+} from '../types';
 import {
   AGENT_RUNS_KEEP,
   DEFAULT_MAX_AGENT_TURNS,
@@ -84,6 +91,7 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   imageModel: 'abliterated-flux-klein',
   imageViaProxy: true,
   mcpServers: [],
+  skillsEnabled: true,
   licenseKey: import.meta.env.DEV ? 'ABLIT-ADMIN' : '',
 };
 
@@ -212,6 +220,7 @@ export function getSettings(): ClientSettings {
     imageModel: stored.imageModel?.trim() || DEFAULT_SETTINGS.imageModel,
     imageViaProxy: stored.imageViaProxy !== false,
     mcpServers: Array.isArray(stored.mcpServers) ? stored.mcpServers : [],
+    skillsEnabled: stored.skillsEnabled !== false,
     licenseKey:
       typeof stored.licenseKey === 'string' ? stored.licenseKey.trim() : DEFAULT_SETTINGS.licenseKey,
     systemPrompt,
@@ -233,6 +242,12 @@ function upgradeEnabledTools(tools: ToolType[] | undefined): ToolType[] {
   if (sameToolSet(tools, OLD_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
   if (sameToolSet(tools, PREV_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
   if (sameToolSet(tools, PREV2_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
+  if (sameToolSet(tools, PREV3_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
+  if (sameToolSet(tools, PREV4_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
+  if (!tools.includes('todo')) return [...tools, 'todo'];
+  if (!tools.includes('list_skills')) {
+    return [...tools, 'list_skills', 'read_skill', 'suggest_skill', 'write_skill'];
+  }
   return tools;
 }
 

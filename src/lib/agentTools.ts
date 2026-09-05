@@ -4,6 +4,13 @@ import { generateImage, imageResultToMarkdown } from './imageGen';
 import { saveGeneratedImage } from './imageLibrary';
 import { isDeadlyCommand } from './grokLayer';
 import { isMcpToolName } from './mcpClient';
+import {
+  applyTodoToolArgs,
+  canonicalizeToolName,
+  formatTodoBlock,
+  type TodoItem,
+} from './agentHelpers';
+import { formatSkillFile, similarSkillExists, slugifySkillId, toCatalogEntries } from './skills';
 import type { ClientSettings, ToolCallPayload, ToolCallStatus, ToolType } from '../types';
 
 export function toolArgString(args: Record<string, unknown>, keys: string[]): string {
@@ -34,6 +41,10 @@ export type ExecuteAgentToolOpts = {
   checkpointNamespace?: string;
   /** Execute namespaced mcp__server__tool calls. */
   executeMcpTool?: (name: string, args: Record<string, unknown>) => Promise<string>;
+  /** Current session ToDo items (for todo merge). */
+  todoItems?: TodoItem[];
+  /** Persist ToDo checklist after a successful todo tool call. */
+  onTodos?: (items: TodoItem[]) => void;
 };
 
 export type ExecuteAgentToolResult = {
@@ -112,8 +123,12 @@ export async function executeAgentTool(
     }
   }
 
-  const name = tool.name as ToolType;
-  const allowed = enabledTools.includes(name);
+  const canonical = canonicalizeToolName(tool.name);
+  const name = canonical as ToolType;
+  if (canonical !== tool.name) {
+    tool = { ...tool, name: canonical };
+  }
+  const allowed = enabledTools.includes(name) || name === 'todo';
   if (!allowed) {
     return denied(tool, `tool ${tool.name} is not enabled`);
   }
@@ -347,6 +362,99 @@ export async function executeAgentTool(
         }
       }
       return ok(tool, imageResultToMarkdown(result, prompt));
+    } catch (e) {
+      return err(tool, e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  if (name === 'todo') {
+    const next = applyTodoToolArgs(opts.todoItems || [], tool.arguments || {});
+    if (!next.length) {
+      return err(tool, 'todo: missing items (pass items/todos as strings or {text, done})');
+    }
+    opts.onTodos?.(next);
+    return ok(tool, formatTodoBlock(next));
+  }
+
+
+  if (name === 'list_skills') {
+    if (settings.skillsEnabled === false) return err(tool, 'skills disabled');
+    if (!bridge.connected) return disconnected(tool, 'list_skills', autoAcceptEdits, mode);
+    try {
+      const skills = await bridge.listSkills();
+      return ok(tool, JSON.stringify(skills.map((s) => ({ id: s.id, name: s.name, description: s.description, source: s.source })), null, 2));
+    } catch (e) {
+      return err(tool, e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  if (name === 'read_skill') {
+    if (settings.skillsEnabled === false) return err(tool, 'skills disabled');
+    const skillId = toolArgString(tool.arguments, ['skill_id', 'id', 'slug', 'name']);
+    if (!skillId) return err(tool, 'missing skill_id');
+    if (!bridge.connected) return disconnected(tool, skillId, autoAcceptEdits, mode);
+    try {
+      const skill = await bridge.readSkill(skillId);
+      const header = `# ${skill.name}\n\n_id: ${skill.id}_\n\n`;
+      return ok(tool, `${header}${skill.body || ''}`);
+    } catch (e) {
+      return err(tool, e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  if (name === 'suggest_skill') {
+    if (settings.skillsEnabled === false) return err(tool, 'skills disabled');
+    const nameArg = toolArgString(tool.arguments, ['name', 'title']);
+    const desc = toolArgString(tool.arguments, ['description', 'when']);
+    const body = toolArgString(tool.arguments, ['body', 'steps', 'content']) || '';
+    const reason = toolArgString(tool.arguments, ['reason', 'why']) || '';
+    if (!nameArg.trim()) return err(tool, 'missing name');
+    if (!desc.trim()) return err(tool, 'missing description');
+    let existingNote = '';
+    if (bridge.connected) {
+      try {
+        const skills = await bridge.listSkills();
+        const hit = similarSkillExists(toCatalogEntries(skills), nameArg, desc);
+        if (hit) {
+          existingNote = ` Similar skill already exists: ${hit.id} (${hit.name}). Do not write a duplicate.`;
+        }
+      } catch {
+        /* ignore catalog miss */
+      }
+    }
+    const proposal = {
+      action: 'suggest_skill',
+      name: nameArg.trim(),
+      description: desc.trim(),
+      body: body.trim() || '# Steps\n1. ...',
+      reason: reason.trim() || undefined,
+      id: slugifySkillId(nameArg),
+      message:
+        'Proposal only — not saved. Ask the user to confirm, then call write_skill.' + existingNote,
+    };
+    return ok(tool, JSON.stringify(proposal, null, 2));
+  }
+
+  if (name === 'write_skill') {
+    if (settings.skillsEnabled === false) return err(tool, 'skills disabled');
+    const nameArg = toolArgString(tool.arguments, ['name', 'title']);
+    const desc = toolArgString(tool.arguments, ['description', 'when']);
+    const body = toolArgString(tool.arguments, ['body', 'steps', 'content']);
+    const scopeRaw = toolArgString(tool.arguments, ['scope']).toLowerCase();
+    const scope = scopeRaw === 'user' || scopeRaw === 'global' ? 'user' : 'workspace';
+    if (!nameArg.trim()) return err(tool, 'missing name');
+    if (!desc.trim()) return err(tool, 'missing description');
+    if (!body.trim()) return err(tool, 'missing body');
+    try {
+      formatSkillFile(nameArg, desc, body);
+    } catch (e) {
+      return err(tool, e instanceof Error ? e.message : String(e));
+    }
+    // Conversational confirm happens before the model calls write_skill; execute when enabled.
+    if (!bridge.connected) return disconnected(tool, nameArg, autoAcceptEdits, mode);
+    try {
+      const saved = await bridge.writeSkill({ name: nameArg, description: desc, body, scope });
+      return ok(tool, JSON.stringify({ ok: true, id: saved.id, path: saved.path, source: saved.source }, null, 2));
     } catch (e) {
       return err(tool, e instanceof Error ? e.message : String(e));
     }

@@ -1,5 +1,6 @@
 import { resolveActiveSettings } from "./activeEndpoint";
 import { executeAgentTool } from "./agentTools";
+import { formatSkillsCatalogPrompt, toCatalogEntries } from "./skills";
 import { bridge } from "./bridgeClient";
 import { applyGrokEdits, parseGrokEdits } from "./grokLayer";
 import {
@@ -175,8 +176,19 @@ async function runJob(initial: Job, settings: ClientSettings) {
     buildMode: settings.buildModeEnabled !== false,
     planMode: settings.planModeEnabled === true,
   });
+  let skillsCatalogBlock = "";
+  if (settings.skillsEnabled !== false && bridge.connected) {
+    try {
+      const skills = await bridge.listSkills();
+      skillsCatalogBlock = formatSkillsCatalogPrompt(toCatalogEntries(skills));
+    } catch {
+      skillsCatalogBlock = "";
+    }
+  }
+
   const systemParts = [
     settings.systemPrompt || "",
+    skillsCatalogBlock,
     workspaceRoot
       ? `Workspace root: ${workspaceRoot}. Prefer relative paths. You are running as a headless background job.`
       : "No workspace root set. Connect the bridge Workspace before relying on file tools.",
@@ -184,8 +196,6 @@ async function runJob(initial: Job, settings: ClientSettings) {
       ? "Auto-accept edits is ON for this job."
       : "Auto-accept edits is OFF — gated write tools skip in headless mode.",
     settings.autoRunShell ? "Auto-run shell is ON." : "Auto-run shell is OFF — shell skips in headless mode.",
-    "The final user-visible answer MUST be in content tokens; reasoning-only is incomplete.",
-    "Do not invoke an external grok CLI. This job runner is the harness.",
     buildProcess ? buildReasoningThenBuildNudge() : large ? buildLargeJobNudge() : "",
   ].filter(Boolean);
 
@@ -312,6 +322,17 @@ async function runJob(initial: Job, settings: ClientSettings) {
           mode: "headless",
           checkpointNamespace: `job ${job.id}`,
           executeMcpTool: executeMcpToolCall,
+          todoItems: (job.todos || []).map((text) => {
+            const m = text.match(/^\[([xX ])\]\s*(.*)$/);
+            if (m) return { text: (m[2] || '').trim() || text, done: m[1].toLowerCase() === 'x' };
+            return { text, done: false };
+          }),
+          onTodos: (items) => {
+            job = persist({
+              ...job,
+              todos: items.map((t) => (t.done ? `[x] ${t.text}` : t.text)),
+            });
+          },
         });
         const clip = exec.content.slice(0, 500);
         job = appendLog(job, `${tc.name} → ${exec.status}: ${clip}${exec.content.length > 500 ? "…" : ""}`);

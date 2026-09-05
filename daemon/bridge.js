@@ -14,6 +14,7 @@ import { semanticSearch } from './semantic.js';
 import { isInsideRoot as isInsideRootPath, matchGlob, skipDirentName, skipSearchName, toRel as toRelPath, walkFiles } from './search.js';
 import { appRootRefuseMessage, isInsideAppRoot, resolveAppRoot } from './appRoot.js';
 import * as mcp from './mcp.js';
+import * as skills from './skills.js';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.ABLIT_PORT || 17322);
@@ -725,6 +726,47 @@ async function handleCheckpointList(ws, msg) {
   }
 }
 
+
+async function handleListSkills(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const list = await skills.listSkills(APP_ROOT, ROOT);
+    send(ws, { runId, status: 'ok', skills: list });
+  } catch (err) {
+    send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function handleReadSkill(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const skillId = String(msg.skill_id || msg.id || msg.skillId || '');
+    const skill = await skills.readSkill(skillId, APP_ROOT, ROOT);
+    send(ws, { runId, status: 'ok', skill });
+  } catch (err) {
+    send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function handleWriteSkill(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const skill = await skills.writeSkill(
+      {
+        name: String(msg.name || ''),
+        description: String(msg.description || ''),
+        body: String(msg.body || ''),
+        scope: String(msg.scope || 'workspace'),
+      },
+      APP_ROOT,
+      ROOT,
+    );
+    send(ws, { runId, status: 'ok', skill });
+  } catch (err) {
+    send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 async function handleMcpConnect(ws, msg) {
   const runId = msg.runId;
   try {
@@ -884,6 +926,18 @@ wss.on('connection', (ws, req) => {
     }
     if (type === 'checkpoint_list') {
       void handleCheckpointList(ws, msg);
+      return;
+    }
+    if (type === 'list_skills') {
+      void handleListSkills(ws, msg);
+      return;
+    }
+    if (type === 'read_skill') {
+      void handleReadSkill(ws, msg);
+      return;
+    }
+    if (type === 'write_skill') {
+      void handleWriteSkill(ws, msg);
       return;
     }
     if (type === 'mcp_connect') {

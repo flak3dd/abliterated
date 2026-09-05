@@ -21,6 +21,7 @@ import {
   remainingBuiltinTokens,
 } from '../lib/builtinTokens';
 import { generatePairingCode, setSettings, uid, wipeAll } from '../lib/storage';
+import { skillRootHints, toCatalogEntries, type SkillCatalogEntry } from '../lib/skills';
 import type { ClientSettings, McpServerConfig } from '../types';
 
 interface Props {
@@ -35,6 +36,7 @@ function BuiltinTokenMeter({ license }: { license: LicenseState }) {
   const used = usage.used;
   const left = remainingBuiltinTokens(license, usage);
   const pct = !Number.isFinite(cap) || cap <= 0 ? 0 : Math.min(100, Math.round((used / cap) * 100));
+
   return (
     <div className="mt-2 rounded border border-border bg-background px-3 py-2">
       <div className="font-mono text-[10px] uppercase text-muted">Built-in model tokens this month</div>
@@ -131,6 +133,8 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   const [mcpHint, setMcpHint] = useState('');
   const [licenseDraft, setLicenseDraft] = useState(settings.licenseKey || '');
   const [licenseMsg, setLicenseMsg] = useState('');
+  const [skillRows, setSkillRows] = useState<SkillCatalogEntry[]>([]);
+  const [skillsBusy, setSkillsBusy] = useState(false);
 
   useEffect(() => {
     setLicenseDraft(settings.licenseKey || '');
@@ -241,6 +245,29 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   const statuses = getMcpServerStatuses();
   const statusById = new Map(statuses.map((s) => [s.id, s]));
   const servers = settings.mcpServers || [];
+  const appRoot = bridge.currentAppRoot;
+  const wsRoot = bridge.validWorkspaceRoot || bridge.currentRoot || '';
+  const roots = skillRootHints({ appRoot, workspaceRoot: wsRoot });
+  const refreshSkills = async () => {
+    setSkillsBusy(true);
+    try {
+      if (!bridge.connected || settings.skillsEnabled === false) {
+        setSkillRows([]);
+        return;
+      }
+      const skills = await bridge.listSkills();
+      setSkillRows(toCatalogEntries(skills));
+    } catch {
+      setSkillRows([]);
+    } finally {
+      setSkillsBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshSkills();
+  }, [settings.skillsEnabled, appRoot, wsRoot]);
+
   const license = getLicenseState(settings);
   const enabledMcp = countEnabledMcp(servers);
 
@@ -348,6 +375,33 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             onChange={(v) => patch({ coalesceReasoningToContent: v })}
             help="R1-style models sometimes fill reasoning only. Promote that text into the main answer locally — no extra API call. Off = show reasoning panel only."
           />
+        </Section>
+
+
+        <Section title="Skills" hint="Reusable SKILL.md recipes the agent can discover and follow.">
+          <SwitchRow
+            label="Enable skills"
+            checked={settings.skillsEnabled !== false}
+            onChange={(v) => patch({ skillsEnabled: v })}
+            help="Inject an Available skills catalog and expose list_skills / read_skill / suggest_skill / write_skill."
+          />
+          <div className="mt-2 space-y-1 font-mono text-[11px] text-zinc-400">
+            <div>Bundled: {roots.bundled}</div>
+            <div>User: {roots.global}</div>
+            <div>Workspace: {roots.workspace}</div>
+            <div>
+              Loaded: {skillRows.length} skill{skillRows.length === 1 ? '' : 's'}
+              {skillsBusy ? ' (refreshing…)' : ''}
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button type="button" className="chip" onClick={() => void refreshSkills()} disabled={skillsBusy}>
+              Refresh
+            </button>
+            <span className="font-mono text-[10px] text-muted">
+              Add skills under ~/.abliterated/skills/&lt;slug&gt;/SKILL.md or .ablit/skills/ in the workspace. See docs/SKILLS.md.
+            </span>
+          </div>
         </Section>
 
         <Section title="Safety" hint="What the agent may write or execute on your machine.">
