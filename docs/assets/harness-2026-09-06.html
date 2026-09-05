@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Abliterated harness benchmark 2026-09-06</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: #09090b;
+    color: #e4e4e7;
+  }
+  .frame {
+    width: 1200px;
+    height: 675px;
+    padding: 36px 44px 28px;
+    background:
+      radial-gradient(ellipse at 15% 0%, rgba(14,165,233,0.18), transparent 50%),
+      radial-gradient(ellipse at 90% 100%, rgba(34,211,238,0.08), transparent 45%),
+      #09090b;
+    display: flex;
+    flex-direction: column;
+  }
+  .top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 24px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: #38bdf8;
+    border: 1px solid #27272a;
+    background: rgba(24,24,27,0.7);
+    border-radius: 999px;
+    padding: 4px 12px;
+  }
+  .badge i {
+    width: 7px; height: 7px; border-radius: 50%; background: #38bdf8;
+  }
+  h1 {
+    margin: 14px 0 6px;
+    font-size: 34px;
+    letter-spacing: -0.03em;
+    font-weight: 650;
+    color: #fff;
+  }
+  h1 span {
+    background: linear-gradient(90deg, #38bdf8, #67e8f9);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .sub {
+    margin: 0;
+    max-width: 620px;
+    color: #a1a1aa;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .scorepill {
+    text-align: right;
+    min-width: 210px;
+  }
+  .scorepill .label {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    color: #71717a;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .scorepill .num {
+    font-size: 48px;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    color: #fff;
+    line-height: 1.05;
+  }
+  .scorepill .num em {
+    font-style: normal;
+    color: #38bdf8;
+    font-size: 22px;
+    font-weight: 600;
+  }
+  .scorepill .delta {
+    margin-top: 4px;
+    font-size: 12px;
+    color: #a1a1aa;
+  }
+  .grid {
+    margin-top: 22px;
+    display: grid;
+    grid-template-columns: 1.35fr 1fr;
+    gap: 22px;
+    flex: 1;
+    min-height: 0;
+  }
+  .card {
+    background: rgba(24,24,27,0.72);
+    border: 1px solid #27272a;
+    border-radius: 16px;
+    padding: 18px 20px;
+  }
+  .card h2 {
+    margin: 0 0 14px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #a1a1aa;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .bars { display: flex; flex-direction: column; gap: 10px; }
+  .row { display: grid; grid-template-columns: 118px 1fr 52px; gap: 10px; align-items: center; }
+  .row .name { font-size: 13px; color: #d4d4d8; }
+  .row .name.abl { color: #7dd3fc; font-weight: 600; }
+  .track {
+    height: 12px;
+    background: #18181b;
+    border: 1px solid #27272a;
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #3f3f46, #52525b);
+  }
+  .fill.abl {
+    background: linear-gradient(90deg, #0284c7, #22d3ee);
+  }
+  .fill.top {
+    background: linear-gradient(90deg, #52525b, #a1a1aa);
+  }
+  .val { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #a1a1aa; text-align: right; }
+  .val.abl { color: #7dd3fc; font-weight: 600; }
+  .axes { display: flex; flex-direction: column; gap: 12px; }
+  .axis {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    align-items: center;
+  }
+  .axis .meta { font-size: 13px; color: #e4e4e7; }
+  .axis .meta small { display: block; color: #71717a; font-size: 11px; margin-top: 2px; }
+  .axis .pill {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    color: #67e8f9;
+    background: rgba(14,165,233,0.12);
+    border: 1px solid rgba(56,189,248,0.35);
+    border-radius: 8px;
+    padding: 6px 10px;
+    white-space: nowrap;
+  }
+  .caveat {
+    margin-top: 16px;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.08);
+    color: #fbbf24;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .caveat strong { color: #fde68a; }
+  .foot {
+    margin-top: 10px;
+    display: flex;
+    justify-content: space-between;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    color: #52525b;
+  }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <div class="top">
+      <div>
+        <div class="badge"><i></i> Harness matrix · not SWE-bench · 2026-09-06</div>
+        <h1>Abliterated vs <span>flagship harnesses</span></h1>
+        <p class="sub">Capability density checklist (/75): local tools, Jobs, Plan mode, BYO/uncensored, MCP — scored from product reality + public flagship claims.</p>
+      </div>
+      <div class="scorepill">
+        <div class="label">Abliterated total</div>
+        <div class="num">56.5<em>/75</em></div>
+        <div class="delta">vs prior estimate ~58.5 · cell-accurate was ~55.5<br/>honest +1.0 (MCP client + checkpoints)</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Totals /75</h2>
+        <div class="bars">
+          <div class="row"><div class="name">Cursor</div><div class="track"><div class="fill top" style="width:88.7%"></div></div><div class="val">66.5</div></div>
+          <div class="row"><div class="name">Codex</div><div class="track"><div class="fill" style="width:82.7%"></div></div><div class="val">62.0</div></div>
+          <div class="row"><div class="name">Claude Code</div><div class="track"><div class="fill" style="width:80.7%"></div></div><div class="val">60.5</div></div>
+          <div class="row"><div class="name">Copilot</div><div class="track"><div class="fill" style="width:78.0%"></div></div><div class="val">58.5</div></div>
+          <div class="row"><div class="name abl">Abliterated</div><div class="track"><div class="fill abl" style="width:75.3%"></div></div><div class="val abl">56.5</div></div>
+          <div class="row"><div class="name">Grok Build</div><div class="track"><div class="fill" style="width:71.3%"></div></div><div class="val">53.5</div></div>
+          <div class="row"><div class="name">Gemini CLI</div><div class="track"><div class="fill" style="width:66.7%"></div></div><div class="val">50.0</div></div>
+          <div class="row"><div class="name">Windsurf</div><div class="track"><div class="fill" style="width:66.0%"></div></div><div class="val">49.5</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Key Abliterated axes</h2>
+        <div class="axes">
+          <div class="axis">
+            <div class="meta">Local tools + bridge gates<small>read/search/shell · localhost daemon</small></div>
+            <div class="pill">Strong</div>
+          </div>
+          <div class="axis">
+            <div class="meta">Jobs<small>real local queue · license concurrency</small></div>
+            <div class="pill">Yes</div>
+          </div>
+          <div class="axis">
+            <div class="meta">Plan / Build mode<small>read-only plan → Approve unlock</small></div>
+            <div class="pill">Yes</div>
+          </div>
+          <div class="axis">
+            <div class="meta">BYO / uncensored posture<small>section H · 8.0 / 8 among listed</small></div>
+            <div class="pill">8.0/8</div>
+          </div>
+          <div class="axis">
+            <div class="meta">MCP<small>stdio client Yes · HTTP servers Partial</small></div>
+            <div class="pill">Y / P</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="caveat">
+      <strong>Unrestricted benchmarking caveat:</strong> Harness/capability matrix only — not coding-arena Elo. Abliterated is optimized for refusal-stripped / local BYO workflows; comparing unrestricted local agents to hosted safety-tuned products mixes <em>policy</em> with <em>capability</em>. Do not read this as “smarter model.”
+    </div>
+    <div class="foot">
+      <span>abliterated.app/benchmark · BENCHMARK.md</span>
+      <span>Yes=1 · Partial=0.5 · No=0 · sources date-stamped</span>
+    </div>
+  </div>
+</body>
+</html>

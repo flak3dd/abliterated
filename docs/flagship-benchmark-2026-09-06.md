@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-06 (Australia/Melbourne)  
 **Source of truth for Abliterated:** Mac checkout `/Users/adminuser/abliterated` (code + docs inventory)  
-**Prior report:** [`docs/flagship-benchmark-2026-09-04.md`](docs/flagship-benchmark-2026-09-04.md) · dated copy: [`docs/flagship-benchmark-2026-09-06.md`](docs/flagship-benchmark-2026-09-06.md)
+**Prior report:** [`flagship-benchmark-2026-09-04.md`](./flagship-benchmark-2026-09-04.md) · summary also in root [`BENCHMARK.md`](../BENCHMARK.md)
 
 ## Honest notes (read first)
 
@@ -298,7 +298,7 @@ Flagship **numeric cells unchanged** from 2026-09-04 except where this file alre
 | MCP | `mcpClient.ts`, `daemon/mcp.js` |
 | License / tokens | `license.ts`, `builtinTokens.ts` |
 | Electron | `electron/`, `package.json` desktop scripts |
-| Promo chart | [docs/assets/harness-2026-09-06.png](docs/assets/harness-2026-09-06.png) · site `public/benchmark/harness-2026-09-06.png` |
+| Promo chart | `docs/assets/harness-2026-09-06.png` · site `public/benchmark/harness-2026-09-06.png` |
 
 ---
 
