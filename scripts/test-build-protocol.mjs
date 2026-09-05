@@ -73,9 +73,62 @@ function looksBuildIntent(userText) {
   );
 }
 
+function looksLargeJob(userText) {
+  const t = (userText || '').trim();
+  if (t.length < 80) return false;
+  const lower = t.toLowerCase();
+  if (
+    /\b(implement|refactor|migrate|rewrite|overhaul|architecture|end[- ]to[- ]end|full(?:y)?|across|throughout|feature|subsystem|pipeline|integrate|audit then|plan then)\b/.test(
+      lower,
+    )
+  ) {
+    return true;
+  }
+  return t.length >= 320;
+}
+
+function looksMultiStep(userText) {
+  const t = (userText || '').trim();
+  if (t.length < 40) return false;
+  const lower = t.toLowerCase();
+  if (/\b(step[- ]?by[- ]?step|multi[- ]?step|implement|refactor|migrate|rewrite|build|create|add|fix|and then|then|first|next|finally)\b/.test(lower)) {
+    return true;
+  }
+  return t.length >= 160;
+}
+
+function shouldApplyBuildProcess(userText, opts = {}) {
+  if (opts.planMode) return false;
+  const t = (userText || '').trim();
+  if (!t) return false;
+  if (looksBuildIntent(t) || looksLargeJob(t)) return true;
+  if (!opts.buildMode) return false;
+  if (looksMultiStep(t)) return true;
+  return t.length >= 40;
+}
+
+function looksLikeBuildOutput(text) {
+  const t = text || '';
+  if (/```(?:diff|patch|bash|ts|tsx|js|jsx|mjs|cjs|py|go|rs|json|css|html|vue|svelte)/i.test(t)) return true;
+  if (/^diff --git |^--- (a\/|\/dev\/null)|\+\+\+ b\//m.test(t)) return true;
+  if (/^\/\/ [\w./+-]+\s*$/m.test(t) && t.length > 50) return true;
+  return false;
+}
+
 assert.equal(looksBuildIntent('hi'), false);
 assert.ok(looksBuildIntent('Build a file structure for the new feature module'));
 assert.ok(looksBuildIntent('scaffold the project skeleton then implement auth'));
+
+assert.equal(shouldApplyBuildProcess('hi'), false);
+assert.equal(shouldApplyBuildProcess('thanks'), false);
+assert.equal(shouldApplyBuildProcess('Build a file structure for the new feature module'), true);
+assert.equal(shouldApplyBuildProcess('please implement the auth subsystem across the api'), true);
+assert.equal(shouldApplyBuildProcess('hi', { planMode: true }), false);
+assert.equal(shouldApplyBuildProcess('Build a file structure for the new feature module', { planMode: true }), false);
+assert.ok(shouldApplyBuildProcess('Please add the missing tests for the parser module now.', { buildMode: true }));
+
+assert.equal(looksLikeBuildOutput('ToDo:\n- [ ] a\n- [ ] b'), false);
+assert.ok(looksLikeBuildOutput('```diff\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n```'));
 
 const lifted = liftTodoListToContent(
   '',

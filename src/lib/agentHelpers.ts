@@ -220,30 +220,77 @@ export function needsBuildProtocol(userText: string): boolean {
   return looksBuildIntent(t) || looksLargeJob(t) || looksMultiStep(t);
 }
 
-export function buildBuildModeNudge(): string {
+/**
+ * Reasoning-then-build process (same loop Grok CLI uses; this harness does not spawn grok CLI).
+ * Reasoning is not executed; applyable work must still land in content.
+ */
+export const BUILD_REASONING_PROCESS =
+  '### Reasoning (when reasoning is enabled)\n' +
+  'Before tools or diffs, in the reasoning channel:\n' +
+  '1. Goal — one line restating the build request.\n' +
+  '2. Inspect — which paths/tools you will call first. Do not invent listings or file contents.\n' +
+  '3. Steps — for each step you start: step #, why this approach, what success looks like.\n' +
+  '4. After each tool result: one line on what changed in the plan. Do not restart unless contradicted.\n' +
+  '5. Reasoning is not executed. Diffs, bash fences, and // path files MUST appear in content.\n' +
+  '6. Do not invoke an external grok CLI (or any other coding CLI) as a tool. This IDE is the harness.';
+
+/** Content-channel build steps after (or alongside) reasoning. */
+export const BUILD_IMPLEMENT_PROCESS =
+  '### Build (content)\n' +
+  '1. Emit `ToDo:` with 3–12 `- [ ]` items. First item is scaffolding if new files/folders are required. No essay before the list.\n' +
+  '2. Explore with tools (list_dir, glob, grep, semantic_search, read_file, file_outline) before writing feature patches. Revise the ToDo if discovery changes scope.\n' +
+  '3. If a skeleton is required, CREATE those directories/files NOW with unified diffs or // path fences — before feature code.\n' +
+  '4. Implement remaining ToDos in the SAME run with real ```diff or // relative/path fences. Mark `- [x]` as each finishes.\n' +
+  '5. After a meaningful change, emit a scoped verify ```bash fence (typecheck, lint, or focused test).\n' +
+  '6. Do not stop after only the ToDo. A list with no diffs is a failed build.\n' +
+  '7. Skip this protocol only for trivial one-shots (single-line answer, typo, one-file read).';
+
+export const BUILD_PROCESS_SECTION =
+  '## Reasoning then build\n' +
+  'When the operator sends a build/implement/scaffold request, or Build mode is on:\n\n' +
+  BUILD_REASONING_PROCESS +
+  '\n\n' +
+  BUILD_IMPLEMENT_PROCESS;
+
+/** True for an actual build request (not every multi-step chat). Plan mode never builds. */
+export function shouldApplyBuildProcess(
+  userText: string,
+  opts: { buildMode?: boolean; planMode?: boolean } = {},
+): boolean {
+  if (opts.planMode) return false;
+  const t = (userText || '').trim();
+  if (!t) return false;
+  if (looksBuildIntent(t) || looksLargeJob(t)) return true;
+  if (!opts.buildMode) return false;
+  if (looksMultiStep(t)) return true;
+  return t.length >= 40;
+}
+
+export function buildReasoningThenBuildNudge(): string {
   return (
-    '## Build mode (ACTIVE — implement in this run)\n' +
-    'After reasoning, content MUST:\n' +
-    '1. Start with ToDo: as - [ ] steps (3-12). First item is scaffolding if new files/folders are required.\n' +
-    '2. If a skeleton is required, CREATE those directories/files NOW (unified diffs or // path fences) before feature code.\n' +
-    '3. Then implement remaining ToDos in the SAME run with real diffs/fences. Mark `- [x]` as each finishes.\n' +
-    '4. Do not stop after only the ToDo list. A list with no diffs is a failed build.\n' +
-    '5. Skip this only for trivial one-shots (single-line answer, typo, one-file read).'
+    '## Reasoning then build (ACTIVE for this request)\n' +
+    BUILD_REASONING_PROCESS +
+    '\n\n' +
+    BUILD_IMPLEMENT_PROCESS
   );
+}
+
+export function buildBuildModeNudge(): string {
+  return buildReasoningThenBuildNudge();
 }
 
 export function buildBuildModeTodoNudge(): string {
   return (
-    'Build mode: emit `ToDo:` with 3–12 `- [ ]` steps in content, then immediately scaffold (if needed) and implement with ```diff or // path fences. Do not only reason or only list tasks.'
+    'Build process: emit `ToDo:` with 3–12 `- [ ]` steps in content, then immediately scaffold (if needed) and implement with ```diff or // path fences. Do not only reason or only list tasks. Do not shell out to grok CLI.'
   );
 }
 
 export function buildBuildModeImplementNudge(): string {
   return (
-    'Build mode: you wrote a ToDo list but did not emit any file diffs or path-headed fences. ' +
+    'Build process: you wrote a ToDo list but did not emit any file diffs or path-headed fences. ' +
     'That is not a build. Now: (1) if new structure is required, create the skeleton first; ' +
     '(2) implement the next unchecked ToDo with a real ```diff or // relative/path file in content; ' +
-    '(3) mark `- [x]` on finished items. Do not reply with another list only.'
+    '(3) mark `- [x]` on finished items. Do not reply with another list only. Do not invoke grok CLI.'
   );
 }
 

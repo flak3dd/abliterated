@@ -4,11 +4,16 @@ import { bridge } from "./bridgeClient";
 import { applyGrokEdits, parseGrokEdits } from "./grokLayer";
 import {
   buildLargeJobNudge,
+  buildReasoningThenBuildNudge,
+  buildBuildModeImplementNudge,
   clampMaxAgentTurns,
   EMPTY_CONTENT_REPLY_NOTE,
   isMissingContentAnswer,
   looksLargeJob,
+  looksLikeBuildOutput,
+  liftTodoListToContent,
   parseTodoBullets,
+  shouldApplyBuildProcess,
 } from "./agentHelpers";
 import { finalizeReasoningChannel } from "./agentPhase";
 import { executeMcpToolCall } from "./mcpClient";
@@ -166,6 +171,10 @@ async function runJob(initial: Job, settings: ClientSettings) {
   const active = resolveActiveSettings(settings);
 
   const large = looksLargeJob(job.prompt);
+  const buildProcess = shouldApplyBuildProcess(job.prompt, {
+    buildMode: settings.buildModeEnabled !== false,
+    planMode: settings.planModeEnabled === true,
+  });
   const systemParts = [
     settings.systemPrompt || "",
     workspaceRoot
@@ -176,15 +185,19 @@ async function runJob(initial: Job, settings: ClientSettings) {
       : "Auto-accept edits is OFF — gated write tools skip in headless mode.",
     settings.autoRunShell ? "Auto-run shell is ON." : "Auto-run shell is OFF — shell skips in headless mode.",
     "The final user-visible answer MUST be in content tokens; reasoning-only is incomplete.",
-    large ? buildLargeJobNudge() : "",
+    "Do not invoke an external grok CLI. This job runner is the harness.",
+    buildProcess ? buildReasoningThenBuildNudge() : large ? buildLargeJobNudge() : "",
   ].filter(Boolean);
 
-  if (large) {
+  if (buildProcess) {
+    job = appendLog(job, "build process: reason → ToDo → explore → scaffold → implement → verify");
+  } else if (large) {
     job = appendLog(job, "large job protocol: ToDo → explore codebase → implement");
   }
 
   const history: ChatOpenAiMessage[] = [{ role: "user", content: job.prompt }];
   let turns = 0;
+  let buildImplementNudgeUsed = false;
 
   try {
     for (let turn = 1; turn <= turnCap; turn++) {
@@ -211,13 +224,6 @@ async function runJob(initial: Job, settings: ClientSettings) {
       if (assistantText.trim()) {
         const clip = assistantText.trim().slice(0, 400);
         job = appendLog(job, `assistant: ${clip}${assistantText.length > 400 ? "…" : ""}`);
-      if (large && (!job.todos || job.todos.length === 0)) {
-        const todos = parseTodoBullets(assistantText);
-        if (todos.length) {
-          job = persist({ ...job, todos });
-          job = appendLog(job, `todo (${todos.length}): ${todos.join(" · ")}`);
-        }
-      }
       }
 
       // Finalize/coalesce BEFORE applyGrokEdits so diffs in reasoning are promoted first.
@@ -232,6 +238,14 @@ async function runJob(initial: Job, settings: ClientSettings) {
             ? "coalesced/finalized reasoning → content (zero-cost)"
             : "coalesce promote failed — hard error content",
         );
+      }
+      assistantText = liftTodoListToContent(assistantText, assistantReasoning);
+      if ((buildProcess || large) && (!job.todos || job.todos.length === 0)) {
+        const todos = parseTodoBullets(assistantText);
+        if (todos.length) {
+          job = persist({ ...job, todos });
+          job = appendLog(job, `todo (${todos.length}): ${todos.join(" · ")}`);
+        }
       }
 
       if (settings.autoAcceptEdits && bridge.connected) {
@@ -270,6 +284,17 @@ async function runJob(initial: Job, settings: ClientSettings) {
           } else if (!coalesceOn) {
             job = appendLog(job, "content empty; coalesce off — keeping reasoning only");
           }
+        }
+        if (
+          buildProcess &&
+          !buildImplementNudgeUsed &&
+          parseTodoBullets(assistantText).length > 0 &&
+          !looksLikeBuildOutput(assistantText)
+        ) {
+          buildImplementNudgeUsed = true;
+          history.push({ role: "user", content: buildBuildModeImplementNudge() });
+          job = appendLog(job, "build process: ToDo without diffs — implement nudge");
+          continue;
         }
         job = appendLog(job, "no tool calls — done");
         break;

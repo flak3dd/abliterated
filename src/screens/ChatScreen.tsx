@@ -51,7 +51,14 @@ import {
   buildPlanModeNudge,
   filterPlanModeTools,
   parseTodoBullets,
+  parseTodoItems,
   looksExploreIntent,
+  shouldApplyBuildProcess,
+  buildReasoningThenBuildNudge,
+  buildBuildModeTodoNudge,
+  buildBuildModeImplementNudge,
+  liftTodoListToContent,
+  looksLikeBuildOutput,
 } from '../lib/agentHelpers';
 import { hasValidCompletionFooter } from '../lib/completionFooter';
 import { asStringList, executeAgentTool, toolArgString } from '../lib/agentTools';
@@ -335,6 +342,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     composerSeed,
     onComposerSeedConsumed,
     planMode = false,
+    buildMode = false,
     onTogglePlanMode,
     onApprovePlan,
   },
@@ -624,8 +632,15 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     const out: ChatOpenAiMessage[] = [];
     let sys = thread.systemPrompt || settingsRef.current.systemPrompt || '';
     const lastUser = [...list].reverse().find((m) => m.role === 'user');
+    const buildProcess =
+      !planMode &&
+      lastUser &&
+      shouldApplyBuildProcess(lastUser.content, { buildMode: !!buildMode, planMode: !!planMode });
     const largeNudge =
-      !planMode && lastUser && looksLargeJob(lastUser.content) ? buildLargeJobNudge() : '';
+      !buildProcess && !planMode && lastUser && looksLargeJob(lastUser.content)
+        ? buildLargeJobNudge()
+        : '';
+    const buildNudge = buildProcess ? buildReasoningThenBuildNudge() : '';
     const planNudge = planMode ? buildPlanModeNudge() : '';
     const planBuildNudge =
       planMode && lastUser && /\b(build|implement|apply|write|code)\b/i.test(lastUser.content)
@@ -637,6 +652,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       autoAcceptEdits ? grokAutoAcceptSuffix(workspaceRoot) : '',
       planNudge,
       planBuildNudge,
+      buildNudge,
       largeNudge,
       ...extraSystem,
     ]
@@ -824,6 +840,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     let turnsDone = 0;
     let deepensUsed = 0;
     let fakeToolRetryUsed = false;
+    let buildTodoNudgeUsed = false;
+    let buildImplementNudgeUsed = false;
     let stopReason: AgentStopReason = 'no_tools';
     let turnCap = clampMaxAgentTurns(settingsRef.current.maxAgentTurns);
     const deepenCap = clampSelfDeepenPasses(settingsRef.current.selfDeepenPasses);
@@ -849,6 +867,12 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
 
     try {
       const lastUser = [...history].reverse().find((m) => m.role === 'user');
+      const grokBuildProcess =
+        !planMode &&
+        !!(
+          lastUser &&
+          shouldApplyBuildProcess(lastUser.content, { buildMode: !!buildMode, planMode: !!planMode })
+        );
       const exploreIntent = !!(lastUser && looksExploreIntent(lastUser.content));
       const prefetched =
         lastUser && bridge.connected ? await prefetchWorkspaceFiles(lastUser.content, workspaceRoot) : [];
@@ -976,6 +1000,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           // Coalesce/finalize FIRST so diffs that lived only in reasoning are in content before grok.
           const coalesceOn = settingsRef.current.coalesceReasoningToContent !== false;
           finalizeReasoningChannel(assistant, coalesceOn);
+          assistant.content = liftTodoListToContent(assistant.content || '', assistant.reasoning || '');
           flushStreamPersist({ ...assistant });
           await runGrokLayer(assistant);
 
@@ -1069,6 +1094,46 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                 stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
                 break;
               }
+              if (grokBuildProcess && !looksLikeBuildOutput(content) && !isAnswerCompleteMarker(content)) {
+                const todos = parseTodoItems(content);
+                if (todos.length && !buildImplementNudgeUsed) {
+                  buildImplementNudgeUsed = true;
+                  setPhase(
+                    'self_deepen',
+                    { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+                    turn,
+                  );
+                  const nudge: Message = {
+                    id: uid('msg'),
+                    threadId: thread.id,
+                    role: 'user',
+                    content: buildBuildModeImplementNudge(),
+                    createdAt: Date.now(),
+                    status: 'complete',
+                  };
+                  current = persist(nudge);
+                  continue;
+                }
+                if (!todos.length && !buildTodoNudgeUsed) {
+                  buildTodoNudgeUsed = true;
+                  setPhase(
+                    'self_deepen',
+                    { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+                    turn,
+                  );
+                  const nudge: Message = {
+                    id: uid('msg'),
+                    threadId: thread.id,
+                    role: 'user',
+                    content: buildBuildModeTodoNudge(),
+                    createdAt: Date.now(),
+                    status: 'complete',
+                  };
+                  current = persist(nudge);
+                  continue;
+                }
+              }
+
               const liveDeepen = settingsRef.current;
               const deepenPasses = clampSelfDeepenPasses(liveDeepen.selfDeepenPasses);
               const deepenOn =
