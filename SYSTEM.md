@@ -21,6 +21,7 @@ Only when rewrite beats re-patching. First line exactly `// <relative/path>` (ev
 
 ## Tools
 - Explore: list_dir, glob, grep, semantic_search, file_outline, read_file. web_search for live web; then web_fetch URLs.
+- Project conventions auto-load: AGENTS.md, CLAUDE.md, .cursorrules, .ablit/rules.md, .ablit/skills. Follow them over generic defaults.
 - git_status / git_diff / git_commit over raw git. git_commit, create_pr, checkpoint_restore may need confirmation.
 - todo: session checklist (aliases ToDo, todo_write). merge=true to tick items. Prefer this tool over a markdown-only list.
 - MCP as mcp__server__tool when configured. web_search: live web results, then web_fetch chosen URLs. web_fetch: http(s) only. generate_image: only if Images is enabled.

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { cn } from '../../lib/cn';
 import {
   agentPhaseLabel,
@@ -16,8 +16,12 @@ export type AgentStatusMonitorProps = {
   turn: number;
   maxTurns: number;
   queuedMidRun?: number;
-  /** Elapsed ms since run start (parent ticks while busy). */
+  /** @deprecated Prefer runStartedAt + ticking so the parent transcript does not re-render. */
   elapsedMs?: number;
+  /** Wall-clock start of the current run; used with ticking for an isolated timer. */
+  runStartedAt?: number;
+  /** When true, this component owns the 500ms elapsed ticker. */
+  ticking?: boolean;
   /** Compact idle strip after last stop (optional). */
   compact?: boolean;
   className?: string;
@@ -29,10 +33,27 @@ export function AgentStatusMonitor({
   turn,
   maxTurns,
   queuedMidRun = 0,
-  elapsedMs = 0,
+  elapsedMs: elapsedMsProp = 0,
+  runStartedAt,
+  ticking = false,
   compact = false,
   className,
 }: AgentStatusMonitorProps) {
+  const [tickMs, setTickMs] = useState(0);
+
+  useEffect(() => {
+    if (!ticking) {
+      setTickMs(0);
+      return;
+    }
+    const started = runStartedAt || meta.runStartedAt || Date.now();
+    const tick = () => setTickMs(Date.now() - started);
+    tick();
+    const id = window.setInterval(tick, 500);
+    return () => window.clearInterval(id);
+  }, [ticking, runStartedAt, meta.runStartedAt]);
+
+  const elapsedMs = ticking ? tickMs : elapsedMsProp;
   const label = agentPhaseLabel(phase, meta);
   const stepIdx = agentPhaseStepIndex(phase);
   const stepCount = agentPhaseStepCount();
@@ -42,7 +63,6 @@ export function AgentStatusMonitor({
     const started = meta.reasoningStartedAt ?? meta.runStartedAt;
     if (!started) return false;
     const sec = (Date.now() - started) / 1000;
-    // Prefer elapsed from parent tick so we re-render; fall back to wall clock.
     const fromElapsed =
       meta.reasoningStartedAt && meta.runStartedAt
         ? (elapsedMs - (meta.reasoningStartedAt - meta.runStartedAt)) / 1000

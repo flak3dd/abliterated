@@ -127,24 +127,91 @@ function readJson<T>(key: string, fallback: T): T {
   }
 }
 
+/** Soft cap on persisted chat rows (all threads). Oldest dropped first on write/quota. */
+const MESSAGES_SOFT_CAP = 800;
+/** Per-thread window kept when pruning under quota pressure. */
+const MESSAGES_PER_THREAD_CAP = 200;
+
+function isQuotaError(err: unknown): boolean {
+  const name = err instanceof DOMException ? err.name : '';
+  return (
+    name === 'QuotaExceededError' ||
+    name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    (typeof err === 'object' &&
+      err != null &&
+      'code' in err &&
+      (err as { code?: number }).code === 22) ||
+    (err instanceof Error && /quota/i.test(err.message))
+  );
+}
+
+function windowMessages(messages: Message[]): Message[] {
+  if (messages.length <= MESSAGES_SOFT_CAP) return messages;
+  // Keep newest globally, but never strand a thread with zero rows if possible.
+  const sorted = [...messages].sort((a, b) => a.createdAt - b.createdAt);
+  return sorted.slice(-MESSAGES_SOFT_CAP);
+}
+
+function pruneMessagesForQuota(messages: Message[]): Message[] {
+  const byThread = new Map<string, Message[]>();
+  for (const m of messages) {
+    const list = byThread.get(m.threadId) || [];
+    list.push(m);
+    byThread.set(m.threadId, list);
+  }
+  const kept: Message[] = [];
+  for (const list of byThread.values()) {
+    const ordered = [...list].sort((a, b) => a.createdAt - b.createdAt);
+    kept.push(...ordered.slice(-MESSAGES_PER_THREAD_CAP));
+  }
+  return windowMessages(kept);
+}
+
 function writeJson(key: string, value: unknown): void {
+  const payload = () => JSON.stringify(value);
+  try {
+    localStorage.setItem(key, payload());
+    return;
+  } catch (err) {
+    if (!isQuotaError(err)) {
+      console.warn(`[ablit] localStorage write failed for ${key}`, err);
+      return;
+    }
+    console.warn(`[ablit] localStorage quota exceeded writing ${key}; pruning`);
+  }
+  // Quota path: drop oldest jobs, then shrink messages, then retry.
+  try {
+    if (key !== KEYS.settings && key !== KEYS.threads) {
+      const jobs = readJson<Job[]>(KEYS.jobs, []);
+      if (jobs.length > 20) {
+        const trimmed = jobs
+          .filter((j) => j.status === 'queued' || j.status === 'running')
+          .concat(
+            jobs
+              .filter((j) => j.status !== 'queued' && j.status !== 'running')
+              .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+              .slice(0, 20),
+          );
+        localStorage.setItem(KEYS.jobs, JSON.stringify(trimmed));
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (key === KEYS.messages && Array.isArray(value)) {
+      value = pruneMessagesForQuota(value as Message[]);
+    } else {
+      const msgs = pruneMessagesForQuota(readJson<Message[]>(KEYS.messages, []));
+      localStorage.setItem(KEYS.messages, JSON.stringify(msgs));
+    }
+  } catch {
+    /* ignore */
+  }
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch (err) {
-    const name = err instanceof DOMException ? err.name : '';
-    const quota =
-      name === 'QuotaExceededError' ||
-      name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
-      (typeof err === 'object' &&
-        err != null &&
-        'code' in err &&
-        (err as { code?: number }).code === 22) ||
-      (err instanceof Error && /quota/i.test(err.message));
-    if (quota) {
-      console.warn(`[ablit] localStorage quota exceeded writing ${key}`);
-      return;
-    }
-    console.warn(`[ablit] localStorage write failed for ${key}`, err);
+    console.warn(`[ablit] localStorage write still failing for ${key}`, err);
   }
 }
 
@@ -311,7 +378,7 @@ export function getMessages(threadId?: string): Message[] {
 }
 
 export function setMessages(messages: Message[]): void {
-  writeJson(KEYS.messages, messages);
+  writeJson(KEYS.messages, windowMessages(messages));
 }
 
 export function saveMessage(message: Message): Message[] {
@@ -321,6 +388,14 @@ export function saveMessage(message: Message): Message[] {
   else all.push(message);
   setMessages(all);
   return all.filter((m) => m.threadId === message.threadId);
+}
+
+/** Replace one thread's rows in ablit_messages (used by Chat retry). */
+export function replaceThreadMessages(threadId: string, msgs: Message[]): Message[] {
+  const others = getMessages().filter((m) => m.threadId !== threadId);
+  const next = [...others, ...msgs.map((m) => ({ ...m, threadId }))];
+  setMessages(next);
+  return msgs;
 }
 
 export function deleteThreadMessages(threadId: string): void {

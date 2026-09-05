@@ -3,7 +3,8 @@
  */
 
 import path from 'node:path';
-import { readdir } from 'node:fs/promises';
+import fs from 'node:fs';
+import { readdir, realpath } from 'node:fs/promises';
 
 export function skipDirentName(name) {
   if (name === 'node_modules') return true;
@@ -17,9 +18,48 @@ export function skipSearchName(name) {
   return false;
 }
 
+/**
+ * Path jail: resolve + realpath both sides so symlink escape cannot leave ROOT.
+ * Sync variant used on hot paths; falls back to path.resolve when realpath fails
+ * (missing targets still checked via lexical resolve).
+ */
 export function isInsideRoot(root, target) {
-  const resolved = path.resolve(root, target);
-  const rel = path.relative(root, resolved);
+  const rootAbs = path.resolve(root);
+  const resolved = path.resolve(rootAbs, target);
+  let rootReal = rootAbs;
+  let targetReal = resolved;
+  try {
+    rootReal = fs.realpathSync(rootAbs);
+  } catch {
+    /* root may be mid-create */
+  }
+  try {
+    targetReal = fs.realpathSync(resolved);
+  } catch {
+    // Non-existent path: jail on the lexical resolve (parent must still be inside).
+    targetReal = resolved;
+  }
+  const rel = path.relative(rootReal, targetReal);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/** Async realpath jail for RPC entry points. */
+export async function isInsideRootAsync(root, target) {
+  const rootAbs = path.resolve(root);
+  const resolved = path.resolve(rootAbs, target);
+  let rootReal = rootAbs;
+  let targetReal = resolved;
+  try {
+    rootReal = await realpath(rootAbs);
+  } catch {
+    /* ignore */
+  }
+  try {
+    targetReal = await realpath(resolved);
+  } catch {
+    targetReal = resolved;
+  }
+  const rel = path.relative(rootReal, targetReal);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 

@@ -73,10 +73,14 @@ import { executeMcpToolCall, listConnectedMcpTools, mcpToolsToOpenAi, isMcpToolN
 import { buildFakeToolNudge, looksLikeFakeToolTheater, parseFakeToolCalls } from '../lib/fakeToolCalls';
 import { detokenizeArtifacts } from '../lib/detokenizeArtifacts';
 import { streamChatCompletion } from '../lib/sse';
-import { getMessages, recordAgentRun, saveMessage, uid, upsertThread } from '../lib/storage';
-import { formatSkillsCatalogPrompt, toCatalogEntries, type SkillCatalogEntry } from '../lib/skills';
+import { getMessages, recordAgentRun, replaceThreadMessages, saveMessage, uid, upsertThread } from '../lib/storage';
+import { formatSkillsCatalogPrompt, toCatalogEntries, type SkillCatalogEntry, type SkillRecord } from '../lib/skills';
+import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from '../lib/projectMemory';
 import type { ChatOpenAiMessage, ClientSettings, Message, Thread, ToolCallPayload } from '../types';
 import { PLAN_MODE_TOOLS } from '../types';
+
+/** Render at most this many newest messages; older ones load on demand. */
+const MESSAGE_WINDOW = 80;
 
 export interface ChatScreenHandle {
   stop: () => void;
@@ -374,6 +378,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
   ref,
 ) {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [hiddenPrefix, setHiddenPrefix] = useState(0);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [loopTurn, setLoopTurn] = useState(0);
@@ -390,6 +395,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
   );
   const [planChecklist, setPlanChecklist] = useState<string[]>([]);
   const [skillsCatalog, setSkillsCatalog] = useState<SkillCatalogEntry[]>([]);
+  const [projectMemoryBlock, setProjectMemoryBlock] = useState('');
+  const [workspaceSkillsBlock, setWorkspaceSkillsBlock] = useState('');
   const todosRef = useRef<TodoItem[]>([]);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -417,7 +424,6 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
   const continueAfterToolRef = useRef<((messageId: string) => Promise<void>) | null>(null);
   const [agentPhase, setAgentPhase] = useState<AgentPhase>('idle');
   const [phaseMeta, setPhaseMeta] = useState<AgentPhaseMeta>({});
-  const [elapsedMs, setElapsedMs] = useState(0);
   const [showIdleMonitor, setShowIdleMonitor] = useState(false);
   const agentPhaseRef = useRef<AgentPhase>('idle');
   const phaseMetaRef = useRef<AgentPhaseMeta>({});
@@ -510,6 +516,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     const loaded = getMessages(thread.id);
     messagesRef.current = loaded;
     setMessages(loaded);
+    setHiddenPrefix(Math.max(0, loaded.length - MESSAGE_WINDOW));
     setGrokById({});
     setLatestGrok(undefined);
     setInput('');
@@ -520,7 +527,6 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     phaseMetaRef.current = {};
     setAgentPhase('idle');
     setPhaseMeta({});
-    setElapsedMs(0);
     setShowIdleMonitor(false);
     onAgentStatusRef.current?.('');
     setPlanChecklist([]);
@@ -629,17 +635,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     pushAgentStatus(agentPhaseRef.current, phaseMetaRef.current, loopTurn, queuedMidRun);
   }, [busy, loopTurn, queuedMidRun, pushAgentStatus]);
 
-  // Elapsed ticker while busy (also drives reasoning-no-content warn).
-  useEffect(() => {
-    if (!busy) return;
-    const tick = () => {
-      const started = runStartedAtRef.current || Date.now();
-      setElapsedMs(Date.now() - started);
-    };
-    tick();
-    const id = window.setInterval(tick, 500);
-    return () => window.clearInterval(id);
-  }, [busy]);
+  // Elapsed ticker lives in AgentStatusMonitor so 500ms ticks do not rebuild the transcript.
 
   useEffect(() => {
     if (!composerSeed) return;
@@ -656,19 +652,54 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
 
   useEffect(() => () => clearPersistTimers(), []);
 
+  useEffect(() => {
+    setHiddenPrefix((prev) => {
+      const target = Math.max(0, messages.length - MESSAGE_WINDOW);
+      if (prev === 0) return target;
+      if (prev > target) return target;
+      if (messages.length > MESSAGE_WINDOW && prev >= messages.length - MESSAGE_WINDOW - 1) {
+        return target;
+      }
+      return prev;
+    });
+  }, [messages.length]);
+
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      if (settings.skillsEnabled === false || !bridge.connected) {
-        if (!cancelled) setSkillsCatalog([]);
+      if (!bridge.connected) {
+        if (!cancelled) {
+          setSkillsCatalog([]);
+          setProjectMemoryBlock('');
+          setWorkspaceSkillsBlock('');
+        }
         return;
       }
       try {
-        const skills = await bridge.listSkills();
-        if (!cancelled) setSkillsCatalog(toCatalogEntries(skills));
+        const files = await bridge.readProjectMemory();
+        if (!cancelled) setProjectMemoryBlock(formatProjectMemoryPrompt(files));
       } catch {
-        if (!cancelled) setSkillsCatalog([]);
+        if (!cancelled) setProjectMemoryBlock('');
+      }
+      if (settings.skillsEnabled === false) {
+        if (!cancelled) {
+          setSkillsCatalog([]);
+          setWorkspaceSkillsBlock('');
+        }
+        return;
+      }
+      try {
+        const skills = (await bridge.listSkills()) as SkillRecord[];
+        if (!cancelled) {
+          setSkillsCatalog(toCatalogEntries(skills));
+          setWorkspaceSkillsBlock(formatAutoLoadedSkillsPrompt(skills));
+        }
+      } catch {
+        if (!cancelled) {
+          setSkillsCatalog([]);
+          setWorkspaceSkillsBlock('');
+        }
       }
     };
     void load();
@@ -702,7 +733,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     sys = [
       sys,
       LIVE_WORKSPACE_SUFFIX,
+      projectMemoryBlock,
       settings.skillsEnabled !== false ? formatSkillsCatalogPrompt(skillsCatalog) : '',
+      settings.skillsEnabled !== false ? workspaceSkillsBlock : '',
       autoAcceptEdits ? grokAutoAcceptSuffix(workspaceRoot) : '',
       planNudge,
       planBuildNudge,
@@ -892,7 +925,6 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     let current = history;
     const startedAt = Date.now();
     runStartedAtRef.current = startedAt;
-    setElapsedMs(0);
     phaseMetaRef.current = { runStartedAt: startedAt };
     setPhase('starting', { runStartedAt: startedAt }, 1);
     const toolsUsed: string[] = [];
@@ -988,6 +1020,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             enabledTools: planMode ? effectiveTools : thread.enabledTools,
             extraTools: mcpToolsToOpenAi(listConnectedMcpTools()) as Parameters<typeof streamChatCompletion>[0]['extraTools'],
             toolChoice: turn === 1 && exploreIntent ? 'required' : 'auto',
+            flightKey: `chat:${thread.id}`,
             onDelta: (text) => {
               if (!turnHasContentRef.current) {
                 // First real content delta — replace any live-mirrored reasoning preview.
@@ -1427,6 +1460,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     const trimmed = list.slice(0, lastUserIdx[1] + 1);
     messagesRef.current = trimmed;
     setMessages(trimmed);
+    setHiddenPrefix(Math.max(0, trimmed.length - MESSAGE_WINDOW));
+    replaceThreadMessages(thread.id, trimmed);
     await runCompletion(trimmed);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, thread, settings, workspaceRoot, autoAcceptEdits]);
@@ -1567,23 +1602,37 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               )}
             </div>
           ) : (
-            messages.map((m) => (
-              <MessageBubble
-                key={m.id}
-                message={m}
-                autoAcceptEdits={autoAcceptEdits}
-                writesLocked={planMode}
-                terminalTone={planMode ? 'plan' : buildMode ? 'build' : 'discuss'}
-                grokResults={grokById[m.id]}
-                bridgeConnected={bridgeStatus === 'connected'}
-                onGitCommit={handleGitCommit}
-                onCreatePr={handleCreatePr}
-                onCheckpointRestore={handleCheckpointRestore}
-                onShellExecuted={handleShellExecuted}
-                completionFooterEnabled={settings.completionFooterEnabled !== false}
-                onContinuePrompt={handleContinuePrompt}
-              />
-            ))
+            <>
+              {hiddenPrefix > 0 ? (
+                <div className="mb-3 flex justify-center">
+                  <button
+                    type="button"
+                    className="rounded border border-border bg-surface px-3 py-1 font-mono text-[10px] text-zinc-300 hover:border-zinc-500"
+                    onClick={() => setHiddenPrefix((n) => Math.max(0, n - MESSAGE_WINDOW))}
+                  >
+                    Load earlier messages ({hiddenPrefix} hidden)
+                  </button>
+                </div>
+              ) : null}
+              {messages.slice(hiddenPrefix).map((m) => (
+                <MessageBubble
+                  key={m.id}
+                  message={m}
+                  autoAcceptEdits={autoAcceptEdits}
+                  writesLocked={planMode}
+                  terminalTone={planMode ? 'plan' : buildMode ? 'build' : 'discuss'}
+                  grokResults={grokById[m.id]}
+                  bridgeConnected={bridgeStatus === 'connected'}
+                  onGitCommit={handleGitCommit}
+                  onCreatePr={handleCreatePr}
+                  onCheckpointRestore={handleCheckpointRestore}
+                  onShellExecuted={handleShellExecuted}
+                  completionFooterEnabled={settings.completionFooterEnabled !== false}
+                  onContinuePrompt={handleContinuePrompt}
+                  skipHighlight={m.status === 'streaming'}
+                />
+              ))}
+            </>
           )}
         </div>
         {showJump ? (
@@ -1682,7 +1731,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             turn={busy ? loopTurn : 0}
             maxTurns={maxTurns}
             queuedMidRun={queuedMidRun}
-            elapsedMs={elapsedMs}
+            runStartedAt={busy ? (runStartedAtRef.current || phaseMeta.runStartedAt) : phaseMeta.runStartedAt}
+            ticking={busy}
             compact={!busy && showIdleMonitor}
           />
         ) : null}

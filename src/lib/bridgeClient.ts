@@ -377,6 +377,14 @@ export class BridgeClient {
   }
 
 
+  readProjectMemory(): Promise<Array<{ path: string; text: string }>> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({ type: 'project_memory' }).then((v) => {
+      const msg = v as { files?: Array<{ path: string; text: string }> };
+      return Array.isArray(msg.files) ? msg.files : [];
+    });
+  }
+
   listSkills(): Promise<Array<{ id: string; name: string; description: string; path: string; body: string; source?: string }>> {
     if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
     return this.request({ type: 'list_skills' }).then((v) => {

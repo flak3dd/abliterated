@@ -378,12 +378,15 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
         </Section>
 
 
-        <Section title="Skills" hint="Reusable SKILL.md recipes the agent can discover and follow.">
+        <Section
+          title="Skills"
+          hint="Reusable SKILL.md recipes. Workspace .ablit/skills and AGENTS.md auto-load into chat on session start."
+        >
           <SwitchRow
             label="Enable skills"
             checked={settings.skillsEnabled !== false}
             onChange={(v) => patch({ skillsEnabled: v })}
-            help="Inject an Available skills catalog and expose list_skills / read_skill / suggest_skill / write_skill."
+            help="Inject the skills catalog. Workspace .ablit/skills bodies auto-load. AGENTS.md conventions load even when this is off."
           />
           <div className="mt-2 space-y-1 font-mono text-[11px] text-zinc-400">
             <div>Bundled: {roots.bundled}</div>

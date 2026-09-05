@@ -6,6 +6,7 @@ import {
   resolveActiveSettings,
 } from '../lib/activeEndpoint';
 import { endpointUrl, formatFetchError } from '../lib/apiUrl';
+import { coalesceFetch } from '../lib/coalesceFetch';
 import { setSettings } from '../lib/storage';
 import type { ClientSettings, ReasoningLevel } from '../types';
 
@@ -242,7 +243,7 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
     try {
       const headers: Record<string, string> = { 'X-Retention': 'none' };
       if (draft.sparkToken.trim()) headers.Authorization = 'Bearer ' + draft.sparkToken.trim();
-      const res = await fetch(url, { headers });
+      const res = await coalesceFetch(url, { headers });
       const text = await res.text();
       setResult('GET ' + url + ' ' + String(res.status) + '\n' + text.slice(0, 2000));
     } catch (err) {
@@ -319,7 +320,7 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
         'X-Title': 'ablit',
       };
       if (draft.featherlessToken.trim()) headers.Authorization = 'Bearer ' + draft.featherlessToken.trim();
-      const res = await fetch(url, { headers });
+      const res = await coalesceFetch(url, { headers });
       const text = await res.text();
       setResult('GET ' + url + ' ' + String(res.status) + '\n' + text.slice(0, 2000));
     } catch (err) {
@@ -641,13 +642,14 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
           </select>
         </label>
         <label className="block font-mono text-[10px] uppercase text-muted">
-          Context length
+          Context length (docs only — not sent as max_tokens)
           <input
             type="number"
             min={0}
             value={draft.contextLength ?? ''}
             onChange={(e) => patch({ contextLength: e.target.value ? Number(e.target.value) : undefined })}
             className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+            title="Informational model window size. Completions always use a separate max_tokens default (4096)."
           />
         </label>
         {result ? <pre className="whitespace-pre-wrap rounded border border-border bg-background p-2 font-mono text-[11px] text-zinc-300">{result}</pre> : null}

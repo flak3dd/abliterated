@@ -18,7 +18,8 @@ Frontmatter fields: name, description. Body is markdown steps.
 2. Create SKILL.md under one of the roots above.
 3. Fill name + description (when to use) and markdown steps.
 4. In Settings → Skills, confirm enabled and Refresh.
-5. Ask the agent a matching task — it should call list_skills / read_skill.
+5. New chat / Jobs runs auto-load workspace `.ablit/skills` bodies and `AGENTS.md` (plus CLAUDE.md / `.cursorrules` / `.ablit/rules.md`) into the system prompt.
+6. Ask the agent a matching task — it should follow auto-loaded workspace skills, or call list_skills / read_skill for bundled/user skills.
 
 Do not put secrets in skill files.
 

@@ -21,6 +21,10 @@ export interface StreamChatArgs {
   onReasoningDelta?: (text: string) => void;
   onToolCallComplete?: (tool: ToolCallPayload) => void;
   toolChoice?: 'auto' | 'required';
+  /** Per-caller flight lane (e.g. "chat" or "job:<id>"). Same lane stays single-flight. */
+  flightKey?: string;
+  /** Override provider HTTP concurrency cap for this call. */
+  concurrencyCap?: number;
 }
 
 export type StreamChatResult = {
@@ -450,15 +454,55 @@ function materializeTools(acc: Map<number, ToolAcc>, onToolCallComplete?: (tool:
   return out;
 }
 
-/** Serialize chat streams so concurrent callers never overlap (single-flight). */
-let streamChatFlight: Promise<unknown> = Promise.resolve();
+/** Per-caller lane queues (chat vs each job id). Overlap across lanes is capped. */
+const laneFlights = new Map<string, Promise<unknown>>();
+let providerInFlight = 0;
+const providerWaiters: Array<() => void> = [];
+
+function providerConcurrencyCap(settings: ClientSettings, override?: number): number {
+  if (override != null && override > 0) return Math.min(8, Math.floor(override));
+  const jobs = settings.maxConcurrentJobs ?? 1;
+  // Chat lane + up to maxConcurrentJobs Jobs may overlap; hard ceiling 4 to avoid Featherless stampede.
+  return Math.max(1, Math.min(4, 1 + Math.max(1, jobs)));
+}
+
+function acquireProviderSlot(cap: number): Promise<void> {
+  if (providerInFlight < cap) {
+    providerInFlight += 1;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    providerWaiters.push(() => {
+      providerInFlight += 1;
+      resolve();
+    });
+  });
+}
+
+function releaseProviderSlot(): void {
+  providerInFlight = Math.max(0, providerInFlight - 1);
+  const next = providerWaiters.shift();
+  if (next) next();
+}
 
 export async function streamChatCompletion(args: StreamChatArgs): Promise<StreamChatResult> {
-  const run = streamChatFlight.then(() => streamChatCompletionInner(args));
-  // Keep the queue alive even if a call rejects; next caller waits either way.
-  streamChatFlight = run.then(
-    () => undefined,
-    () => undefined,
+  const lane = (args.flightKey || 'chat').trim() || 'chat';
+  const prev = laneFlights.get(lane) || Promise.resolve();
+  const cap = providerConcurrencyCap(args.settings, args.concurrencyCap);
+  const run = prev.then(async () => {
+    await acquireProviderSlot(cap);
+    try {
+      return await streamChatCompletionInner(args);
+    } finally {
+      releaseProviderSlot();
+    }
+  });
+  laneFlights.set(
+    lane,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
   );
   return run;
 }
@@ -533,7 +577,13 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     body.tools = tools;
     body.tool_choice = toolChoice || 'auto';
   }
-  body.max_tokens = settings.contextLength && settings.contextLength > 0 ? settings.contextLength : 4096;
+  // contextLength is a UI/docs hint for model window — never send it as OpenAI max_tokens.
+  const maxTokens =
+    typeof (settings as ClientSettings & { maxTokens?: number }).maxTokens === 'number' &&
+    (settings as ClientSettings & { maxTokens?: number }).maxTokens! > 0
+      ? Math.floor((settings as ClientSettings & { maxTokens?: number }).maxTokens!)
+      : 4096;
+  body.max_tokens = maxTokens;
   if (usingBuiltin) {
     body.stream_options = { include_usage: true };
   }
@@ -586,15 +636,37 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
       }
       if (!retry.body) throw new Error('Empty response body');
       res = retry;
+    } else if (res.status === 429) {
+      // One polite backoff retry to avoid Featherless stampedes from overlapping probes/jobs.
+      await sleep(1500 + Math.floor(Math.random() * 1500), abortSignal);
+      let retry429: Response;
+      try {
+        retry429 = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal: abortSignal,
+        });
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') throw err;
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(`Chat retry after 429 failed (${active.provider}): ${detail}`);
+      }
+      if (!retry429.ok) {
+        const retryText = await retry429.text().catch(() => retry429.statusText);
+        throw new Error(
+          `HTTP ${retry429.status}: ${retryText.slice(0, 400)} Concurrency/rate limit; Stop chat; wait ~30s; avoid parallel chats/jobs; or switch model.`,
+        );
+      }
+      if (!retry429.body) throw new Error('Empty response body');
+      res = retry429;
     } else {
       const hint =
-        res.status === 429
-          ? ' Concurrency/rate limit; model may use full plan per request; Stop chat; wait ~30s; avoid parallel chats/jobs; self-deepen needs a free slot; or switch to cheaper model.'
-          : res.status === 401 || res.status === 403
-            ? rejectedInferenceAuthError(active, snippet)
-            : res.status >= 500
-              ? ' Provider server error.'
-              : '';
+        res.status === 401 || res.status === 403
+          ? rejectedInferenceAuthError(active, snippet)
+          : res.status >= 500
+            ? ' Provider server error.'
+            : '';
       throw new Error(`HTTP ${res.status}: ${snippet}${hint}`);
     }
   }

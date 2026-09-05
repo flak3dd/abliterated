@@ -58,6 +58,15 @@ function modHint(mac: string, other: string): string {
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
+  const [visitedTabs, setVisitedTabs] = useState<Set<Tab>>(() => new Set<Tab>(['home']));
+  useEffect(() => {
+    setVisitedTabs((prev) => {
+      if (prev.has(tab)) return prev;
+      const next = new Set(prev);
+      next.add(tab);
+      return next;
+    });
+  }, [tab]);
   const [settings, setSettingsState] = useState<ClientSettings>(() => getSettings());
   const [threads, setThreads] = useState<Thread[]>(() => getThreads());
   const [jobs, setJobs] = useState<Job[]>(() => getJobs());
@@ -661,38 +670,52 @@ export default function App() {
       <div className="flex min-w-0 flex-1 flex-col">
         <main className="relative min-h-0 flex-1">
           <div className="h-full">
-            <div className={panelClass('home')}>
-              <HomeScreen
-                threads={threads}
-                settings={settings}
-                onThreadsChange={setThreads}
-                onOpenThread={openThread}
-                onNewSession={createSession}
-                workspaceRoot={workspace.rootPath}
-              />
-            </div>
-            <div className={panelClass('workspace')}>
-              <WorkspaceScreen workspace={workspace} onChange={setWorkspaceState} />
-            </div>
-            <div className={panelClass('models')}>
-              <ModelsScreen settings={settings} onSettingsChange={applySettings} />
-            </div>
-            <div className={panelClass('jobs')}>
-              <JobsScreen jobs={jobs} onJobsChange={setJobs} />
-            </div>
-            <div className={panelClass('api')}>
-              <ApiScreen settings={settings} onSettingsChange={applySettings} />
-            </div>
-            <div className={panelClass('images')}>
-              <ImagesScreen settings={settings} onSettingsChange={applySettings} />
-            </div>
-            <div className={panelClass('settings')}>
-              <SettingsScreen
-                settings={settings}
-                onSettingsChange={applySettings}
-                onWiped={handleWiped}
-              />
-            </div>
+            {visitedTabs.has('home') ? (
+              <div className={panelClass('home')}>
+                <HomeScreen
+                  threads={threads}
+                  settings={settings}
+                  onThreadsChange={setThreads}
+                  onOpenThread={openThread}
+                  onNewSession={createSession}
+                  workspaceRoot={workspace.rootPath}
+                />
+              </div>
+            ) : null}
+            {visitedTabs.has('workspace') ? (
+              <div className={panelClass('workspace')}>
+                <WorkspaceScreen workspace={workspace} onChange={setWorkspaceState} />
+              </div>
+            ) : null}
+            {visitedTabs.has('models') ? (
+              <div className={panelClass('models')}>
+                <ModelsScreen settings={settings} onSettingsChange={applySettings} />
+              </div>
+            ) : null}
+            {visitedTabs.has('jobs') ? (
+              <div className={panelClass('jobs')}>
+                <JobsScreen jobs={jobs} onJobsChange={setJobs} />
+              </div>
+            ) : null}
+            {visitedTabs.has('api') ? (
+              <div className={panelClass('api')}>
+                <ApiScreen settings={settings} onSettingsChange={applySettings} />
+              </div>
+            ) : null}
+            {visitedTabs.has('images') ? (
+              <div className={panelClass('images')}>
+                <ImagesScreen settings={settings} onSettingsChange={applySettings} />
+              </div>
+            ) : null}
+            {visitedTabs.has('settings') ? (
+              <div className={panelClass('settings')}>
+                <SettingsScreen
+                  settings={settings}
+                  onSettingsChange={applySettings}
+                  onWiped={handleWiped}
+                />
+              </div>
+            ) : null}
           </div>
           {activeThread ? (
             <div className="absolute inset-0 z-10">

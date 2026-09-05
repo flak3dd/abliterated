@@ -201,6 +201,8 @@ export interface Job {
   startedAt?: number;
   endedAt?: number;
   error?: string;
+  /** Why the job stopped: cap | abort | error | no_tools (optional). */
+  stopReason?: 'cap' | 'abort' | 'error' | 'no_tools' | 'done';
 }
 
 export interface WorkspaceContext {

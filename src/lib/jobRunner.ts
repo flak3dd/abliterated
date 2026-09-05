@@ -1,6 +1,7 @@
 import { resolveActiveSettings } from "./activeEndpoint";
 import { executeAgentTool } from "./agentTools";
 import { formatSkillsCatalogPrompt, toCatalogEntries } from "./skills";
+import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from "./projectMemory";
 import { bridge } from "./bridgeClient";
 import { applyGrokEdits, parseGrokEdits } from "./grokLayer";
 import {
@@ -110,6 +111,7 @@ export function cancelJob(id: string): void {
 }
 
 export function deleteJob(id: string): void {
+  cancelJob(id);
   setJobs(getJobs().filter((j) => j.id !== id));
   notify();
 }
@@ -177,18 +179,32 @@ async function runJob(initial: Job, settings: ClientSettings) {
     planMode: settings.planModeEnabled === true,
   });
   let skillsCatalogBlock = "";
+  let workspaceSkillsBlock = "";
+  let projectMemoryBlock = "";
+  if (bridge.connected) {
+    try {
+      const files = await bridge.readProjectMemory();
+      projectMemoryBlock = formatProjectMemoryPrompt(files);
+    } catch {
+      projectMemoryBlock = "";
+    }
+  }
   if (settings.skillsEnabled !== false && bridge.connected) {
     try {
       const skills = await bridge.listSkills();
       skillsCatalogBlock = formatSkillsCatalogPrompt(toCatalogEntries(skills));
+      workspaceSkillsBlock = formatAutoLoadedSkillsPrompt(skills);
     } catch {
       skillsCatalogBlock = "";
+      workspaceSkillsBlock = "";
     }
   }
 
   const systemParts = [
     settings.systemPrompt || "",
+    projectMemoryBlock,
     skillsCatalogBlock,
+    workspaceSkillsBlock,
     workspaceRoot
       ? `Workspace root: ${workspaceRoot}. Prefer relative paths. You are running as a headless background job.`
       : "No workspace root set. Connect the bridge Workspace before relying on file tools.",
@@ -199,6 +215,8 @@ async function runJob(initial: Job, settings: ClientSettings) {
     buildProcess ? buildReasoningThenBuildNudge() : large ? buildLargeJobNudge() : "",
   ].filter(Boolean);
 
+  if (projectMemoryBlock) job = appendLog(job, "auto-loaded project AGENTS.md / convention files");
+  if (workspaceSkillsBlock) job = appendLog(job, "auto-loaded workspace .ablit/skills");
   if (buildProcess) {
     job = appendLog(job, "build process: reason → ToDo → explore → scaffold → implement → verify");
   } else if (large) {
@@ -208,6 +226,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
   const history: ChatOpenAiMessage[] = [{ role: "user", content: job.prompt }];
   let turns = 0;
   let buildImplementNudgeUsed = false;
+  let hitCap = false;
 
   try {
     for (let turn = 1; turn <= turnCap; turn++) {
@@ -223,6 +242,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
         messages: [{ role: "system", content: systemParts.join("\n\n") }, ...history],
         abortSignal: ac.signal,
         enabledTools,
+        flightKey: `job:${job.id}`,
         onDelta: (t) => {
           assistantText += t;
         },
@@ -343,15 +363,33 @@ async function runJob(initial: Job, settings: ClientSettings) {
         });
       }
 
-      if (turn === turnCap) job = appendLog(job, "hit max agent turns");
+      if (turn === turnCap) {
+        hitCap = true;
+        job = appendLog(job, "hit max agent turns");
+      }
     }
 
-    job = persist({
-      ...job,
-      status: "done",
-      endedAt: Date.now(),
-      logs: [...job.logs, `[${new Date().toISOString()}] finished (${turns} turn(s))`],
-    });
+    if (hitCap) {
+      job = persist({
+        ...job,
+        status: "error",
+        stopReason: "cap",
+        error: `hit max agent turns (${turnCap})`,
+        endedAt: Date.now(),
+        logs: [
+          ...job.logs,
+          `[${new Date().toISOString()}] stopped: max agent turns (${turns}/${turnCap})`,
+        ],
+      });
+    } else {
+      job = persist({
+        ...job,
+        status: "done",
+        stopReason: "done",
+        endedAt: Date.now(),
+        logs: [...job.logs, `[${new Date().toISOString()}] finished (${turns} turn(s))`],
+      });
+    }
   } catch (e) {
     const aborted = e instanceof DOMException && e.name === "AbortError";
     const msg = aborted ? "cancelled" : e instanceof Error ? e.message : String(e);
@@ -359,6 +397,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
     persist({
       ...latest,
       status: "error",
+      stopReason: aborted ? "abort" : "error",
       error: msg,
       endedAt: Date.now(),
       logs: [...latest.logs, `[${new Date().toISOString()}] ${aborted ? "cancelled" : "error: " + msg}`],

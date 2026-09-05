@@ -4,14 +4,14 @@
  * Binds 127.0.0.1:17322 only. Confirm-gating lives in the UI.
  */
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { applyUnified, decodeBuffer, detectEol, encodeFileText, restoreEol } from './fsutil.js';
 import { outlineFromText, MAX_OUTLINE_LINES, MAX_READ_FOR_OUTLINE } from './outline.js';
 import { semanticSearch } from './semantic.js';
-import { isInsideRoot as isInsideRootPath, matchGlob, skipDirentName, skipSearchName, toRel as toRelPath, walkFiles } from './search.js';
+import { isInsideRoot as isInsideRootPath, isInsideRootAsync, matchGlob, skipDirentName, skipSearchName, toRel as toRelPath, walkFiles } from './search.js';
 import { appRootRefuseMessage, isInsideAppRoot, resolveAppRoot } from './appRoot.js';
 import * as mcp from './mcp.js';
 import * as skills from './skills.js';
@@ -22,11 +22,16 @@ import {
   wrapWithWorkspaceVenv,
 } from './pyManaged.js';
 import { searchWeb } from './webSearch.js';
+import { readProjectMemory } from './projectMemory.js';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.ABLIT_PORT || 17322);
 const APP_ROOT = resolveAppRoot();
 let ROOT = path.resolve(process.env.ABLIT_ROOT || process.cwd());
+/** Hard exec timeout (ms). Override with ABLIT_EXEC_TIMEOUT_MS. */
+const EXEC_TIMEOUT_MS = Math.max(5_000, Number(process.env.ABLIT_EXEC_TIMEOUT_MS || 120_000));
+/** Cap combined stdout+stderr streamed back to the UI. */
+const EXEC_OUTPUT_CAP = 2 * 1024 * 1024;
 const MAX_READ_BYTES = 8 * 1024 * 1024;
 const MAX_GREP_MATCHES = 200;
 const MAX_GREP_LINE = 200;
@@ -102,6 +107,12 @@ function resolveInside(relOrAbs) {
   return abs;
 }
 
+async function resolveInsideAsync(relOrAbs) {
+  const abs = path.resolve(ROOT, relOrAbs);
+  if (!(await isInsideRootAsync(ROOT, abs))) throw new Error('path escapes workspace root');
+  return abs;
+}
+
 function handleExec(ws, msg) {
   const runId = msg.runId;
   const command = String(msg.command || '');
@@ -128,20 +139,76 @@ function handleExec(ws, msg) {
     cwd: ROOT,
     shell: true,
     env: { ...process.env, ABLIT_ROOT: ROOT },
+    detached: process.platform !== 'win32',
   });
   let errBuf = '';
-  child.stdout.on('data', (buf) => send(ws, { runId, type: 'stdout', data: buf.toString() }));
-  child.stderr.on('data', (buf) => {
-    const text = buf.toString();
-    errBuf += text;
-    send(ws, { runId, type: 'stderr', data: text });
-  });
+  let outBytes = 0;
+  let finished = false;
+  let timedOut = false;
+  const killTree = () => {
+    if (!child.pid) return;
+    try {
+      if (process.platform === 'win32') {
+        child.kill();
+      } else {
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+        } catch {
+          child.kill('SIGKILL');
+        }
+      }
+    } catch {
+      /* already dead */
+    }
+  };
+  const timer = setTimeout(() => {
+    if (finished) return;
+    timedOut = true;
+    send(ws, {
+      runId,
+      type: 'stderr',
+      data: `\n[ablit] exec timed out after ${EXEC_TIMEOUT_MS}ms\n`,
+    });
+    killTree();
+  }, EXEC_TIMEOUT_MS);
+  const onCloseOrAbort = () => {
+    if (finished) return;
+    killTree();
+  };
+  ws.once('close', onCloseOrAbort);
+  const track = (chunk, channel) => {
+    const text = chunk.toString();
+    outBytes += Buffer.byteLength(text);
+    if (outBytes > EXEC_OUTPUT_CAP) {
+      if (!finished) {
+        send(ws, {
+          runId,
+          type: 'stderr',
+          data: '\n[ablit] exec output capped; killing process\n',
+        });
+        killTree();
+      }
+      return;
+    }
+    if (channel === 'stderr') errBuf += text;
+    send(ws, { runId, type: channel, data: text });
+  };
+  child.stdout.on('data', (buf) => track(buf, 'stdout'));
+  child.stderr.on('data', (buf) => track(buf, 'stderr'));
   child.on('error', (err) => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    ws.off('close', onCloseOrAbort);
     send(ws, { runId, type: 'stderr', data: String(err.message) + '\n' });
     send(ws, { runId, type: 'exit', code: 1 });
   });
   child.on('close', (code) => {
-    const exit = code ?? 1;
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    ws.off('close', onCloseOrAbort);
+    const exit = timedOut ? 124 : (code ?? 1);
     if (exit !== 0 && !pep668 && isExternallyManagedError(errBuf)) {
       send(ws, { runId, type: 'stderr', data: pep668Hint(command) });
     }
@@ -305,7 +372,14 @@ async function handleSetRoot(ws, msg) {
       throw new Error('directory not found');
     }
     if (!st.isDirectory()) throw new Error('not a directory');
-    ROOT = resolved;
+    let real = resolved;
+    try {
+      real = await realpath(resolved);
+    } catch {
+      real = resolved;
+    }
+    assertNotAppInstall(real, 'workspace');
+    ROOT = real;
     send(ws, { runId, status: 'ok', root: ROOT, appRoot: APP_ROOT });
   } catch (err) {
     send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
@@ -787,6 +861,16 @@ async function handleCheckpointList(ws, msg) {
 }
 
 
+async function handleProjectMemory(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const files = await readProjectMemory(ROOT);
+    send(ws, { runId, status: 'ok', files });
+  } catch (err) {
+    send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 async function handleListSkills(ws, msg) {
   const runId = msg.runId;
   try {
@@ -925,6 +1009,7 @@ wss.on('connection', (ws, req) => {
       || type === 'file_outline' || type === 'semantic_search' || type === 'git_status' || type === 'git_commit'
       || type === 'git_diff' || type === 'create_pr' || type === 'checkpoint_save' || type === 'checkpoint_restore'
       || type === 'checkpoint_list' || type === 'mcp_connect' || type === 'exec' || type === 'apply_patch'
+      || type === 'project_memory'
       || type === 'write_file' || type === 'delete_file';
     if (needsWorkspace) {
       try {
@@ -990,6 +1075,10 @@ wss.on('connection', (ws, req) => {
     }
     if (type === 'checkpoint_list') {
       void handleCheckpointList(ws, msg);
+      return;
+    }
+    if (type === 'project_memory') {
+      void handleProjectMemory(ws, msg);
       return;
     }
     if (type === 'list_skills') {

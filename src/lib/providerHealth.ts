@@ -1,5 +1,6 @@
 import { resolveActiveSettings } from './activeEndpoint';
 import { endpointUrl } from './apiUrl';
+import { coalesceFetch } from './coalesceFetch';
 import type { ClientSettings } from '../types';
 
 export type HealthState = 'unknown' | 'ok' | 'down';
@@ -42,7 +43,11 @@ async function probe(url: string, token: string): Promise<HealthState> {
   try {
     const headers: Record<string, string> = { 'X-Retention': 'none' };
     if (token.trim()) headers.Authorization = 'Bearer ' + token.trim();
-    await fetch(url, { headers, signal: ac.signal });
+    const res = await coalesceFetch(url, { headers, signal: ac.signal });
+    if (res.status === 429) {
+      // Treat rate-limit as reachable but cool down briefly for next poll.
+      return 'ok';
+    }
     return 'ok';
   } catch {
     return 'down';

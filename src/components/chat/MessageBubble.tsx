@@ -202,7 +202,7 @@ function highlightLine(line: string): ReactNode[] {
   return tokens.length ? tokens : [<span key="empty">{line}</span>];
 }
 
-function CodeBlock({ lang, code }: { lang: string; code: string }) {
+function CodeBlock({ lang, code, skipHighlight = false }: { lang: string; code: string; skipHighlight?: boolean }) {
   const [copied, setCopied] = useState(false);
   const lines = useMemo(() => code.split('\n'), [code]);
 
@@ -244,7 +244,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
         </div>
         <div className="min-w-0 flex-1 whitespace-pre font-mono text-zinc-200">
           {lines.map((line, i) => (
-            <div key={i}>{highlightLine(line)}</div>
+            <div key={i}>{skipHighlight ? line : highlightLine(line)}</div>
           ))}
         </div>
       </div>
@@ -257,18 +257,19 @@ function renderMessageContent(
   autoAccept: boolean,
   writesLocked = false,
   terminalTone: TerminalTone = 'discuss',
+  skipHighlight = false,
 ) {
   return splitMessageContent(content).map((block, i) => {
     if (block.kind === 'diff') {
-      if (writesLocked) return <CodeBlock key={i} lang="diff" code={block.code} />;
+      if (writesLocked) return <CodeBlock key={i} lang="diff" code={block.code} skipHighlight={skipHighlight} />;
       return <DiffViewer key={i} rawDiff={block.code} autoAccept={autoAccept} />;
     }
     if (block.kind === 'shell') {
-      if (writesLocked) return <CodeBlock key={i} lang="bash" code={block.code} />;
+      if (writesLocked) return <CodeBlock key={i} lang="bash" code={block.code} skipHighlight={skipHighlight} />;
       return <TerminalPane key={i} command={block.code} tone={terminalTone} />;
     }
     if (block.kind === 'code') {
-      return <CodeBlock key={i} lang={block.lang} code={block.code} />;
+      return <CodeBlock key={i} lang={block.lang} code={block.code} skipHighlight={skipHighlight} />;
     }
     return (
       <div key={i} className="whitespace-pre-wrap break-words font-mono text-[12px] leading-6 text-zinc-200">
@@ -283,6 +284,8 @@ export type MessageBubbleProps = {
   autoAcceptEdits: boolean;
   /** Plan mode: hide Apply / Run / Commit so writes stay locked. */
   writesLocked?: boolean;
+  /** Skip syntax highlight while the message is streaming (cheaper re-renders). */
+  skipHighlight?: boolean;
   grokResults?: GrokApplyResult[];
   bridgeConnected: boolean;
   onGitCommit: (message: Message) => void;
@@ -300,6 +303,7 @@ function MessageBubbleInner({
   message: m,
   autoAcceptEdits,
   writesLocked = false,
+  skipHighlight = false,
   grokResults,
   bridgeConnected,
   onGitCommit,
@@ -365,8 +369,9 @@ function MessageBubbleInner({
       autoAcceptEdits && m.status === 'complete',
       writesLocked,
       terminalTone,
+      skipHighlight,
     );
-  }, [mainContent, m.reasoning, autoAcceptEdits, m.status, writesLocked, terminalTone]);
+  }, [mainContent, m.reasoning, autoAcceptEdits, m.status, writesLocked, terminalTone, skipHighlight]);
 
   const isUser = m.role === 'user';
   const ToolIcon = m.toolCall ? getToolIcon(m.toolCall.name) : Zap;

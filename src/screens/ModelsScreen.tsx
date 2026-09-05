@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import { resolveActiveSettings } from '../lib/activeEndpoint';
 import { endpointUrl, formatFetchError } from '../lib/apiUrl';
+import { coalesceFetch } from '../lib/coalesceFetch';
 import { cn } from '../lib/cn';
 import { setSettings } from '../lib/storage';
 import type { ClientSettings } from '../types';
@@ -147,8 +148,11 @@ export function ModelsScreen({ settings, onSettingsChange }: Props) {
           url = appendQuery(base, params);
         }
 
-        const res = await fetch(url, { headers });
+        const res = await coalesceFetch(url, { headers });
         if (!res.ok) {
+          if (res.status === 429) {
+            throw new Error('HTTP 429 — rate limited; wait a few seconds before refreshing models');
+          }
           const localFeather =
             resolved.provider === 'featherless' &&
             (resolved.baseUrl.includes('127.0.0.1:3000') || resolved.baseUrl.includes('localhost:3000'));

@@ -203,7 +203,7 @@ export function JobsScreen({ jobs, onJobsChange }: Props) {
             <Plus size={12} /> Run background job
           </button>
           <p className="font-mono text-[10px] text-muted">
-            Single-flight autonomous agent queue. Runs headlessly in background.
+            Background agent queue (concurrency from Settings → Max concurrent Jobs). Runs headlessly.
           </p>
         </div>
       </div>
