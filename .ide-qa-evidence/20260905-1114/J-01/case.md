@@ -1,0 +1,13 @@
+# J-01 Form OK; Run enabled with prompt; cleared without submit
+- Feature area: Jobs
+- Command ID / menu path / setting ID: UI primary path
+- Keybinding: N/A
+- Preconditions: Vite :5173
+- Steps: browserUse IDE-QA P0
+- Expected: control works / panel loads
+- Actual: Form OK; Run enabled with prompt; cleared without submit
+- Status: PASS
+- Severity: 
+- Duration_ms:
+- Restored: yes
+- Related issues:

@@ -1,0 +1,13 @@
+# F-01 Search ablit showed filter state + 3 models
+- Feature area: Find
+- Command ID / menu path / setting ID: UI primary path
+- Keybinding: N/A
+- Preconditions: Vite :5173
+- Steps: browserUse IDE-QA P0
+- Expected: control works / panel loads
+- Actual: Search ablit showed filter state + 3 models
+- Status: PASS_WITH_NOTES
+- Severity: 
+- Duration_ms:
+- Restored: yes
+- Related issues:

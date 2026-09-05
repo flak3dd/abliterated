@@ -1,0 +1,13 @@
+
+=== MCP smoke ===
+
+  ✓ namespace: mcp__filesystem__read_file
+  ✓ parse: {"server":"filesystem","tool":"read_file"}
+  ✓ parse non-mcp: null
+  ✓ tools/list: add, echo
+  ✓ tools/call echo: hello-mcp
+  ✓ tools/call add: 42
+  ✓ unknown tool: throws
+  ✓ disconnect: ok
+
+MCP smoke passed.

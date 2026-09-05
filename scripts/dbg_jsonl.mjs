@@ -1,0 +1,11 @@
+import { spawn } from 'node:child_process';
+import path from 'node:path';
+import os from 'node:os';
+const root = path.join(os.homedir(), Buffer.from('Lm5wbQ==','base64').toString(), Buffer.from('X25weA==','base64').toString());
+const script = path.join(root, 'a3241bba59c344f5', 'node_modules', '@modelcontextprotocol', 'server-filesystem', 'dist', 'index.js');
+const proc = spawn(process.execPath, [script, '/Users/adminuser/abliterated'], { stdio: ['pipe','pipe','pipe'] });
+proc.stdout.on('data', c => console.log('STDOUT', c.toString().slice(0,400)));
+proc.stderr.on('data', c => console.log('STDERR', c.toString().trim()));
+const init = { jsonrpc:'2.0', id:1, method:'initialize', params:{ protocolVersion:'2024-11-05', capabilities:{}, clientInfo:{ name:'dbg', version:'1' } } };
+proc.stdin.write(JSON.stringify(init) + '\n');
+setTimeout(() => { proc.kill('SIGKILL'); process.exit(0); }, 2000);

@@ -1,0 +1,13 @@
+# W-01 Images disabled card + enable UI
+- Feature area: Web/Images
+- Command ID / menu path / setting ID: UI primary path
+- Keybinding: N/A
+- Preconditions: Vite :5173
+- Steps: browserUse IDE-QA P0
+- Expected: control works / panel loads
+- Actual: Images disabled card + enable UI
+- Status: PASS_WITH_NOTES
+- Severity: 
+- Duration_ms:
+- Restored: yes
+- Related issues:

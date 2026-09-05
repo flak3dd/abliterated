@@ -1,0 +1,13 @@
+{
+  "name": "abliterated-daemon",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "main": "bridge.js",
+  "scripts": {
+    "start": "node bridge.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.1"
+  }
+}

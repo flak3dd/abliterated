@@ -1,0 +1,13 @@
+# Z-01 No persistent settings mutations from QA UI pass; fixtures l
+- Feature area: Wrap-up
+- Command ID / menu path / setting ID: UI primary path
+- Keybinding: N/A
+- Preconditions: Vite :5173
+- Steps: browserUse IDE-QA P0
+- Expected: control works / panel loads
+- Actual: No persistent settings mutations from QA UI pass; fixtures left under .ide-qa-fixtures/
+- Status: PASS
+- Severity: 
+- Duration_ms:
+- Restored: yes
+- Related issues:

@@ -1,0 +1,54 @@
+{
+  "probe": {
+    "id": 1,
+    "prompt": "analyse dir",
+    "expect": "list_dir or recovered tools, not fake bash alone",
+    "plan": false
+  },
+  "idle": {
+    "ok": true,
+    "elapsed": 4077,
+    "total": 2,
+    "newCount": 2,
+    "streaming": false,
+    "hasUser": true,
+    "stopBtn": false,
+    "headerIdle": true,
+    "lastStatus": "complete",
+    "lastRole": "assistant"
+  },
+  "newMsgs": [
+    {
+      "role": "user",
+      "status": "complete",
+      "content": "analyse dir",
+      "reasoning": "",
+      "toolCall": null
+    },
+    {
+      "role": "assistant",
+      "status": "complete",
+      "content": "(No content tokens — see reasoning)",
+      "reasoning": "The user wants to analyze the directory structure, so I'll call list_dir on the root to show the workspace contents.\n",
+      "toolCall": null
+    }
+  ],
+  "scored": {
+    "id": 1,
+    "prompt": "analyse dir",
+    "expect": "list_dir or recovered tools, not fake bash alone",
+    "score": "FAIL",
+    "used_real_tools": "no",
+    "fake_bash_theater": "no",
+    "factual_ok": "no",
+    "tools_seen": [],
+    "tool_details": [],
+    "idle_ms": 4077,
+    "idle_ok": true,
+    "notes": "no toolCall records; empty/no_tools likely; reasoning-only empty content",
+    "assistant_excerpt": "(No content tokens — see reasoning)\nThe user wants to analyze the directory structure, so I'll call list_dir on the root to show the workspace contents.\n",
+    "reasoning_excerpt": "The user wants to analyze the directory structure, so I'll call list_dir on the root to show the workspace contents.\n",
+    "workspaceRoot": "/Users/adminuser/abliterated",
+    "plan_mode": false
+  }
+}

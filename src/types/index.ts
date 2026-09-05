@@ -1,0 +1,220 @@
+export type Tab = 'home' | 'workspace' | 'models' | 'jobs' | 'api' | 'settings' | 'images';
+export type ReasoningLevel = 'off' | 'low' | 'high' | 'max';
+export const ALL_TOOL_TYPES = [
+  'web_fetch',
+  'read_file',
+  'shell',
+  'grep',
+  'glob',
+  'git_status',
+  'git_commit',
+  'git_diff',
+  'create_pr',
+  'checkpoint_save',
+  'checkpoint_restore',
+  'list_dir',
+  'file_outline',
+  'semantic_search',
+  'generate_image',
+] as const;
+export type ToolType = (typeof ALL_TOOL_TYPES)[number];
+/** Exact default lists from older builds — upgradeEnabledTools replaces these with ALL_TOOL_TYPES. */
+export const OLD_DEFAULT_TOOLS: ToolType[] = ['web_fetch', 'read_file', 'shell'];
+export const PREV_DEFAULT_TOOLS: ToolType[] = [
+  'web_fetch',
+  'read_file',
+  'shell',
+  'grep',
+  'glob',
+  'git_status',
+  'git_commit',
+];
+
+/** Prior full tool list before git_diff / create_pr / checkpoints. */
+export const PREV2_DEFAULT_TOOLS: ToolType[] = [
+  'web_fetch',
+  'read_file',
+  'shell',
+  'grep',
+  'glob',
+  'git_status',
+  'git_commit',
+  'list_dir',
+  'file_outline',
+  'semantic_search',
+  'generate_image',
+];
+
+export const DEFAULT_ENABLED_TOOLS: ToolType[] = [...ALL_TOOL_TYPES];
+
+/** Read-only tools allowed while Plan mode is on (writes unlock after approve). */
+export const PLAN_MODE_TOOLS: ToolType[] = [
+  'read_file',
+  'grep',
+  'glob',
+  'list_dir',
+  'file_outline',
+  'semantic_search',
+  'git_status',
+  'git_diff',
+  'web_fetch',
+];
+
+export type HunkStatus = 'pending' | 'accepted' | 'rejected';
+
+export interface DiffHunk {
+  file: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  content: string;
+  status: HunkStatus;
+}
+
+export type ToolCallStatus = 'pending' | 'allowed' | 'denied' | 'executed' | 'error';
+
+export interface ToolCallPayload {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  status: ToolCallStatus;
+  result?: string;
+}
+
+export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
+export type MessageStatus = 'streaming' | 'complete' | 'error';
+
+export interface Message {
+  id: string;
+  threadId: string;
+  role: MessageRole;
+  content: string;
+  reasoning?: string;
+  toolCallId?: string;
+  toolCall?: ToolCallPayload;
+  toolCalls?: ToolCallPayload[];
+  createdAt: number;
+  status?: MessageStatus;
+}
+
+export interface Thread {
+  id: string;
+  title: string;
+  model: string;
+  pinned: boolean;
+  systemPrompt?: string;
+  enabledTools: ToolType[];
+  /** Working directory when the session was created / last active. */
+  workspaceRoot?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type JobStatus = 'queued' | 'running' | 'done' | 'error';
+
+export interface Job {
+  id: string;
+  projectName: string;
+  title: string;
+  prompt: string;
+  threadId?: string;
+  status: JobStatus;
+  logs: string[];
+  /** Bullet ToDo extracted from large-job planning output. */
+  todos?: string[];
+  createdAt: number;
+  startedAt?: number;
+  endedAt?: number;
+  error?: string;
+}
+
+export interface WorkspaceContext {
+  rootPath: string;
+  currentBranch: string;
+  isDirty: boolean;
+  selectedFiles: string[];
+  scratchpadContent: string;
+}
+
+
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+  enabled: boolean;
+}
+
+export type InferenceProvider = 'abliteration' | 'dgx-spark' | 'featherless' | 'custom';
+
+export interface ClientSettings {
+  baseUrl: string;
+  token: string;
+  defaultModel: string;
+  reasoning: ReasoningLevel;
+  contextLength?: number;
+  systemPrompt: string;
+  remoteHostEnabled: boolean;
+  pairingCode: string;
+  /** Opt-in: apply parsed file edits via the localhost bridge without an Apply click. Default false. */
+  autoAcceptEdits: boolean;
+  /** Opt-in: run model shell tool calls on the localhost daemon without a Run click. Default false. Independent of autoAcceptEdits. */
+  autoRunShell: boolean;
+  /** Max agent loop turns per run. Default 24; UI clamps 1–50. */
+  maxAgentTurns: number;
+  /** How many Jobs may run in parallel (1 = single-flight). */
+  maxConcurrentJobs: number;
+  /** After a text-only answer, optionally self-review / deepen. Default true. */
+  selfDeepenEnabled: boolean;
+  /** Max deepen passes per run (0–5). Default 2; 0 disables even if enabled. */
+  selfDeepenPasses: number;
+  /** When true (default), user can queue messages while the agent is busy (mid-run barge-in). */
+  midRunInjectEnabled: boolean;
+  /** When true (default), parse/show completion footer Continue chips; prompt still asks for the footer when on. */
+  completionFooterEnabled: boolean;
+  /** Default Plan-mode preference (UI may still toggle per session). */
+  planModeEnabled: boolean;
+  /** Optional small/fast model id for summaries/footers (empty = use active model). */
+  fastModel: string;
+  /** Which inference backend the UI routes chat/models through. Default abliteration. */
+  inferenceProvider: InferenceProvider;
+  /** Master availability flag for DGX Spark / NIM. Off by default. */
+  sparkEnabled: boolean;
+  sparkBaseUrl: string;
+  sparkToken: string;
+  sparkModel: string;
+  /** When true (default), DEV rewrites local Spark URLs to same-origin `/spark-v1`. */
+  sparkViaProxy: boolean;
+  /** Master availability for Featherless. Default true when selected. */
+  featherlessEnabled: boolean;
+  featherlessBaseUrl: string;
+  /** Featherless API key (preferred cloud mode). */
+  featherlessToken: string;
+  featherlessModel: string;
+  /** When true, DEV rewrites local Featherless (:3000) URLs to `/featherless-v1`. Cloud api.featherless.ai uses `/featherless-api` regardless. */
+  featherlessViaProxy: boolean;
+  /** Opt-in local/OpenAI-compatible image generation. Default false. */
+  imageGenEnabled: boolean;
+  imageBaseUrl: string;
+  imageToken: string;
+  imageModel: string;
+  /** When true (default), DEV rewrites local image URLs to same-origin `/image-v1`. */
+  imageViaProxy: boolean;
+  /** Optional MCP stdio servers (spawned via localhost bridge). */
+  mcpServers: McpServerConfig[];
+}
+
+export type ChatOpenAiToolCall = {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+};
+
+export type ChatOpenAiMessage = {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_call_id?: string;
+  tool_calls?: ChatOpenAiToolCall[];
+};

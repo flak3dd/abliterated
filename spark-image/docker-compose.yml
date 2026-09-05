@@ -1,0 +1,23 @@
+# GPU host only. Does not pull weights into the IDE workspace.
+services:
+  abliterated-image:
+    build: .
+    ports:
+      - "7860:7860"
+    env_file:
+      - .env
+    environment:
+      ABLITERATED_IMAGE_HOST: 0.0.0.0
+      ABLITERATED_IMAGE_PORT: 7860
+    # Uncomment on NVIDIA hosts:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+volumes:
+  hf_cache:

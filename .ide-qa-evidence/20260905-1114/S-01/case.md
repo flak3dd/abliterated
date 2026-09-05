@@ -1,0 +1,13 @@
+# S-01 No VS Code workspace-trust dialog
+- Feature area: Security
+- Command ID / menu path / setting ID: UI primary path
+- Keybinding: N/A
+- Preconditions: Vite :5173
+- Steps: browserUse IDE-QA P0
+- Expected: control works / panel loads
+- Actual: No VS Code workspace-trust dialog
+- Status: PASS
+- Severity: 
+- Duration_ms:
+- Restored: yes
+- Related issues:

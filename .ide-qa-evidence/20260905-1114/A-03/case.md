@@ -1,0 +1,13 @@
+# A-03 /docs/ guide rendered
+- Feature area: Arrival
+- Command ID / menu path / setting ID: UI primary path
+- Keybinding: N/A
+- Preconditions: Vite :5173
+- Steps: browserUse IDE-QA P0
+- Expected: control works / panel loads
+- Actual: /docs/ guide rendered
+- Status: PASS
+- Severity: 
+- Duration_ms:
+- Restored: yes
+- Related issues:

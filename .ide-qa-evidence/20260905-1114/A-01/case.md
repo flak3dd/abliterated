@@ -1,0 +1,13 @@
+# A-01 App chrome loaded; status bar bridge disconnected, main, aut
+- Feature area: Arrival
+- Command ID / menu path / setting ID: UI primary path
+- Keybinding: N/A
+- Preconditions: Vite :5173
+- Steps: browserUse IDE-QA P0
+- Expected: control works / panel loads
+- Actual: App chrome loaded; status bar bridge disconnected, main, auto-accept off, auto-run off, ablit
+- Status: PASS
+- Severity: 
+- Duration_ms:
+- Restored: yes
+- Related issues:

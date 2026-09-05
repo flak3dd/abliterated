@@ -1,0 +1,10 @@
+PASS B-01: set_root /Users/adminuser/abliterated/.ide-qa-fixtures/hello-ts
+PASS E-02: ls sees fixture: {"runId":"run_mtntfhc9_2bz950","status":"ok","entries":[{"name":"index.ts","path":"index.ts","dir":false},{"name":"package.json","path":"package.json","dir":false}]}
+PASS B-02: write_file .ide-qa-probe-1788578451081.txt
+PASS B-03: read_file matches
+PASS B-04: delete_file .ide-qa-probe-1788578451081.txt
+PASS B-04b: file gone from disk
+PASS M-02: git_status: {"runId":"run_mtntfhcb_4ap80s","status":"ok","branch":"","dirty":false,"porcelain":"","text":"not a git repository","content":"not a git repository"}
+PASS U-02: mcp_connect tools=echo,add
+PASS U-03: mcp_call_tool: bridge-mcp
+PASS U-04: mcp_disconnect

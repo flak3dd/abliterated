@@ -1,0 +1,54 @@
+{
+  "probe": {
+    "id": 5,
+    "prompt": "What is 2+2?",
+    "expect": "trivial; no fake tools",
+    "plan": false
+  },
+  "idle": {
+    "ok": true,
+    "elapsed": 3619,
+    "total": 14,
+    "newCount": 2,
+    "streaming": false,
+    "hasUser": true,
+    "stopBtn": false,
+    "headerIdle": true,
+    "lastStatus": "complete",
+    "lastRole": "assistant"
+  },
+  "newMsgs": [
+    {
+      "role": "user",
+      "status": "complete",
+      "content": "What is 2+2?",
+      "reasoning": "",
+      "toolCall": null
+    },
+    {
+      "role": "assistant",
+      "status": "complete",
+      "content": "\n\n2 + 2 = 4\n\n---\n**Done:** Answered the arithmetic question\n**Continue:**\n1. Ask about another file or feature\n2. Request a code change\n3. Explore the codebase further",
+      "reasoning": "Simple arithmetic question - 2+2 equals 4.\n",
+      "toolCall": null
+    }
+  ],
+  "scored": {
+    "id": 5,
+    "prompt": "What is 2+2?",
+    "expect": "trivial; no fake tools",
+    "score": "PASS",
+    "used_real_tools": "n/a",
+    "fake_bash_theater": "no",
+    "factual_ok": "yes",
+    "tools_seen": [],
+    "tool_details": [],
+    "idle_ms": 3619,
+    "idle_ok": true,
+    "notes": "",
+    "assistant_excerpt": "\n\n2 + 2 = 4\n\n---\n**Done:** Answered the arithmetic question\n**Continue:**\n1. Ask about another file or feature\n2. Request a code change\n3. Explore the codebase further\nSimple arithmetic question - 2+2 equals 4.\n",
+    "reasoning_excerpt": "Simple arithmetic question - 2+2 equals 4.\n",
+    "workspaceRoot": "/Users/adminuser/abliterated",
+    "plan_mode": false
+  }
+}

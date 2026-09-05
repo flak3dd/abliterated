@@ -1,0 +1,13 @@
+# F-02 Active/Abliterated/Ranking/Name A-Z responded
+- Feature area: Find
+- Command ID / menu path / setting ID: UI primary path
+- Keybinding: N/A
+- Preconditions: Vite :5173
+- Steps: browserUse IDE-QA P0
+- Expected: control works / panel loads
+- Actual: Active/Abliterated/Ranking/Name A-Z responded
+- Status: PASS
+- Severity: 
+- Duration_ms:
+- Restored: yes
+- Related issues:

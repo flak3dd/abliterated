@@ -1,0 +1,38 @@
+{
+  "name": "abliterated-ide",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "bridge": "node daemon/bridge.js",
+    "smoke": "node scripts/smoke-agent.mjs && node daemon/search.test.js && node daemon/fsutil.test.js && node daemon/outline.test.js",
+    "test:agent": "node scripts/test-agent-response.mjs",
+    "test": "npm run smoke && npm run test:agent",
+    "image:mock": "cd spark-image && ABLITERATED_IMAGE_MOCK=1 ABLITERATED_IMAGE_HOST=127.0.0.1 ABLITERATED_IMAGE_PORT=7860 python3 serve-openai-bridge.py",
+    "featherless-oauth": "node featherless-oauth/server.mjs",
+    "bridge:install": "cp scripts/ai.abliteration.bridge.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.abliteration.bridge.plist || launchctl load -w ~/Library/LaunchAgents/ai.abliteration.bridge.plist",
+    "bridge:status": "launchctl print gui/$(id -u)/ai.abliteration.bridge | head -30; curl -s -o /dev/null -w \"http=%{http_code}\\n\" http://127.0.0.1:17322/"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.475.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^2.6.0",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.2",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
+  }
+}

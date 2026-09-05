@@ -1,0 +1,54 @@
+{
+  "probe": {
+    "id": 4,
+    "prompt": "Summarize what daemon/bridge.js does in 3 bullets",
+    "expect": "read_file then summary",
+    "plan": false
+  },
+  "idle": {
+    "ok": true,
+    "elapsed": 9057,
+    "total": 12,
+    "newCount": 2,
+    "streaming": false,
+    "hasUser": true,
+    "stopBtn": false,
+    "headerIdle": true,
+    "lastStatus": "complete",
+    "lastRole": "assistant"
+  },
+  "newMsgs": [
+    {
+      "role": "user",
+      "status": "complete",
+      "content": "Summarize what daemon/bridge.js does in 3 bullets",
+      "reasoning": "",
+      "toolCall": null
+    },
+    {
+      "role": "assistant",
+      "status": "complete",
+      "content": "\n\n- **WebSocket bridge server** binding to `127.0.0.1:17322` that exposes file system operations (read/write/delete/list), search tools (grep/glob/semantic search/outline), and shell command execution with deadly-command blocking\n- **Git integration** providing status, commit, diff, and PR creation via `gh` CLI, plus checkpoint save/restore functionality that stores patches under `.ablit/checkpoints/`\n- **MCP server host** allowing connections to external Model Context Protocol servers, tool discovery, and tool invocation through the bridge\n\n---\n**Done:** Summarized daemon/bridge.js core functionality in 3 bullets\n**Continue:**\n1. Summarize another file (e.g., \"summarize src/lib/bridgeClient.ts\")\n2. Show how bridge.js and bridgeClient.ts communicate\n3. List MCP-related code in the codebase",
+      "reasoning": "The user wants a summary of what daemon/bridge.js does. I already have the file content from the initial prompt, so I can analyze it directly without needing to call read_file again.\n\nLooking at the bridge.js code:\n\n1. It's a local WebSocket bridge server that binds to 127.0.0.1:17322\n2. It provides file system operations (read, write, delete, list directories)\n3. It provides git operations (status, commit, diff, PR creation)\n4. It provides search operations (grep, glob, semantic search, file outline)\n5. It provides checkpoint save/restore functionality\n6. It provides MCP (Model Context Protocol) server connections\n7. It has security features like deadly command detection for shell execution\n\nLet me summarize in 3 concise bullets.\n",
+      "toolCall": null
+    }
+  ],
+  "scored": {
+    "id": 4,
+    "prompt": "Summarize what daemon/bridge.js does in 3 bullets",
+    "expect": "read_file then summary",
+    "score": "PARTIAL",
+    "used_real_tools": "no",
+    "fake_bash_theater": "no",
+    "factual_ok": "yes",
+    "tools_seen": [],
+    "tool_details": [],
+    "idle_ms": 9057,
+    "idle_ok": true,
+    "notes": "",
+    "assistant_excerpt": "\n\n- **WebSocket bridge server** binding to `127.0.0.1:17322` that exposes file system operations (read/write/delete/list), search tools (grep/glob/semantic search/outline), and shell command execution with deadly-command blocking\n- **Git integration** providing status, commit, diff, and PR creation via `gh` CLI, plus checkpoint save/restore functionality that stores patches under `.ablit/checkpoints/`\n- **MCP server host** allowing connections to external Model Context Protocol servers, tool discovery, and tool invocation through the bridge\n\n---\n**Done:** Summarized daemon/bridge.js core functionality in 3 bullets\n**Continue:**\n1. Summarize another file (e.g., \"summarize src/lib/bridgeClient.ts\")\n2. Show how bridge.js and bridgeClient.ts communicate\n3. List MCP-related code in the codebase\nThe user wants a summary of what daemon/bridge.js does. I already have the file content from the initial prompt, so I can analyze it directly without needing to call read_file again.\n\nLooking at the bridge.js code:\n\n1. It's a local WebSocket bridge server that binds to 127.0.0.1:17322\n2. It provides file system operations (read, write, delete, list directories)\n3. It provides git operations (status, commit, diff, PR creation)\n4. It provides search operations (grep, glob, semantic search, file outline)\n5. It provides checkpoint save/restore functionality\n6. It provides MCP (Model Context Protocol) server connections\n7. It has security features like deadly command detection for shell executio",
+    "reasoning_excerpt": "The user wants a summary of what daemon/bridge.js does. I already have the file content from the initial prompt, so I can analyze it directly without needing to call read_file again.\n\nLooking at the bridge.js code:\n\n1. It's a local WebSocket bridge server that binds to 127.0.0.1:17322\n2. It provides file system operations (read, write, delete, list directories)\n3. It provides git operations (status, commit, diff, PR creation)\n4. It provides search operations (grep, glob, semantic search, file outline)\n5. It provides checkpoint save/restore functionality\n6. It provides MCP (Model Context Protocol) server connections\n7. It has security features like deadly command detection for shell execution\n\nLet me summarize in 3 concise bullets.\n",
+    "workspaceRoot": "/Users/adminuser/abliterated",
+    "plan_mode": false
+  }
+}

@@ -1,0 +1,13 @@
+# L-01 Status bar bridge/provider labels
+- Feature area: Layout
+- Command ID / menu path / setting ID: UI primary path
+- Keybinding: N/A
+- Preconditions: Vite :5173
+- Steps: browserUse IDE-QA P0
+- Expected: control works / panel loads
+- Actual: Status bar bridge/provider labels
+- Status: PASS_WITH_NOTES
+- Severity: 
+- Duration_ms:
+- Restored: yes
+- Related issues:

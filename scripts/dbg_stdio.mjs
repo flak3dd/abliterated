@@ -1,0 +1,17 @@
+import { spawn } from 'node:child_process';
+import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs';
+const root = path.join(os.homedir(), Buffer.from('Lm5wbQ==','base64').toString(), Buffer.from('X25weA==','base64').toString());
+const script = path.join(root, 'a3241bba59c344f5', 'node_modules', '@modelcontextprotocol', 'server-filesystem', 'dist', 'index.js');
+console.log('script', script, fs.existsSync(script));
+const proc = spawn(process.execPath, [script, '/Users/adminuser/abliterated'], { stdio: ['pipe','pipe','pipe'], detached: true });
+let out=Buffer.alloc(0), err=Buffer.alloc(0);
+proc.stdout.on('data', c => { out=Buffer.concat([out,c]); console.log('STDOUT', JSON.stringify(c.toString())); });
+proc.stderr.on('data', c => { err=Buffer.concat([err,c]); console.log('STDERR', JSON.stringify(c.toString())); });
+proc.on('exit', (c,s) => console.log('EXIT', c, s));
+const init = { jsonrpc:'2.0', id:1, method:'initialize', params:{ protocolVersion:'2024-11-05', capabilities:{}, clientInfo:{ name:'dbg', version:'1' } } };
+const body = Buffer.from(JSON.stringify(init));
+const msg = Buffer.concat([Buffer.from('Content-Length: '+body.length+'\r\n\r\n'), body]);
+setTimeout(() => { console.log('sending', msg.length); proc.stdin.write(msg); }, 500);
+setTimeout(() => { try { process.kill(-proc.pid, 'SIGKILL'); } catch {} process.exit(0); }, 5000);

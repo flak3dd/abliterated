@@ -1,0 +1,13 @@
+# D-01 Ctrl+K opened command palette
+- Feature area: Discoverability
+- Command ID / menu path / setting ID: UI primary path
+- Keybinding: Ctrl+K
+- Preconditions: Vite :5173
+- Steps: browserUse IDE-QA P0
+- Expected: control works / panel loads
+- Actual: Ctrl+K opened command palette
+- Status: PASS
+- Severity: 
+- Duration_ms:
+- Restored: yes
+- Related issues:

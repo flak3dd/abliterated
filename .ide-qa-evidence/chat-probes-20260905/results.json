@@ -1,0 +1,350 @@
+{
+  "providerInfo": {
+    "baseUrl": "",
+    "hasToken": false,
+    "workspaceRoot": "/Users/adminuser/abliterated",
+    "thread": {
+      "id": "thr_mtnvgbav_sdfvtt",
+      "title": "New session",
+      "model": "abliterated-model",
+      "workspaceRoot": "/Users/adminuser/abliterated/.ide-qa-fixtures/hello-ts"
+    }
+  },
+  "results": [
+    {
+      "id": 1,
+      "prompt": "analyse dir",
+      "expect": "list_dir or recovered tools, not fake bash alone",
+      "score": "FAIL",
+      "used_real_tools": "no",
+      "fake_bash_theater": "no",
+      "factual_ok": "no",
+      "tools_seen": [],
+      "tool_details": [],
+      "idle_ms": 4077,
+      "idle_ok": true,
+      "notes": "no toolCall records; empty/no_tools likely; reasoning-only empty content",
+      "assistant_excerpt": "(No content tokens — see reasoning)\nThe user wants to analyze the directory structure, so I'll call list_dir on the root to show the workspace contents.\n",
+      "reasoning_excerpt": "The user wants to analyze the directory structure, so I'll call list_dir on the root to show the workspace contents.\n",
+      "workspaceRoot": "/Users/adminuser/abliterated",
+      "plan_mode": false
+    },
+    {
+      "id": 2,
+      "prompt": "What is the package.json name field?",
+      "expect": "read_file then abliterated-ide",
+      "score": "PARTIAL",
+      "used_real_tools": "no",
+      "fake_bash_theater": "no",
+      "factual_ok": "yes",
+      "tools_seen": [],
+      "tool_details": [],
+      "idle_ms": 7696,
+      "idle_ok": true,
+      "notes": "",
+      "assistant_excerpt": "\n\nThe `package.json` name field is: **\"abliterated-ide\"**\n(No content tokens — see reasoning)\nThe user wants to know the name field from package.json, which is already provided in the workspace file context at the top of the message.\n\nThe user wants to know if my answer was complete. I provided the package.json name field value directly from the tool result. That fully answers the question.\n",
+      "reasoning_excerpt": "The user wants to know the name field from package.json, which is already provided in the workspace file context at the top of the message.\n\nThe user wants to know if my answer was complete. I provided the package.json name field value directly from the tool result. That fully answers the question.\n",
+      "workspaceRoot": "/Users/adminuser/abliterated",
+      "plan_mode": false
+    },
+    {
+      "id": 3,
+      "prompt": "List the top-level folders only",
+      "expect": "list_dir",
+      "score": "PASS",
+      "used_real_tools": "yes",
+      "fake_bash_theater": "no",
+      "factual_ok": "yes",
+      "tools_seen": [
+        "list_dir"
+      ],
+      "tool_details": [
+        {
+          "name": "list_dir",
+          "status": "pending",
+          "args": {
+            "path": "."
+          },
+          "result_excerpt": ""
+        },
+        {
+          "name": "list_dir",
+          "status": "executed",
+          "args": {
+            "path": "."
+          },
+          "result_excerpt": "d\tdaemon\nd\tdist\nd\tdocs\nd\tpublic\nd\tscripts\nd\tspark\nd\tspark-image\nd\tsrc\nf\t.gitignore\nf\tBENCHMARK.md\nf\tindex.html\nf\tpackage-lock.json\nf\tpackage.json\nf\tpostcss.config.js\nf\tREADME.md\nf\tSYSTEM.md\nf\ttailwind.config.js\nf\ttsconfig.app.json\nf\ttsconfig.json\nf\ttsconfig.node.json\nf\tvite.config.ts"
+        }
+      ],
+      "idle_ms": 7702,
+      "idle_ok": true,
+      "notes": "",
+      "assistant_excerpt": "\n\n\nTop-level folders:\n\n- daemon\n- dist\n- docs\n- public\n- scripts\n- spark\n- spark-image\n- src\n\n---\n**Done:** Listed 8 top-level directories from the workspace root\n**Continue:**\n1. Explore a specific folder (e.g., \"list src folder\")\n2. Search for files matching a pattern\n3. Read contents of a specific file\nThe user wants top-level folders only, so I'll call list_dir on the workspace root.\n\nThe user asked for top-level folders only. From the list_dir result, I can see the directories (marked with 'd'):\n\n- daemon\n- dist\n- docs\n- public\n- scripts\n- spark\n- spark-image\n- src\n\nLet me list just these folders.\n",
+      "reasoning_excerpt": "The user wants top-level folders only, so I'll call list_dir on the workspace root.\n\nThe user asked for top-level folders only. From the list_dir result, I can see the directories (marked with 'd'):\n\n- daemon\n- dist\n- docs\n- public\n- scripts\n- spark\n- spark-image\n- src\n\nLet me list just these folders.\n",
+      "workspaceRoot": "/Users/adminuser/abliterated",
+      "plan_mode": false
+    },
+    {
+      "id": 4,
+      "prompt": "Summarize what daemon/bridge.js does in 3 bullets",
+      "expect": "read_file then summary",
+      "score": "PARTIAL",
+      "used_real_tools": "no",
+      "fake_bash_theater": "no",
+      "factual_ok": "yes",
+      "tools_seen": [],
+      "tool_details": [],
+      "idle_ms": 9057,
+      "idle_ok": true,
+      "notes": "",
+      "assistant_excerpt": "\n\n- **WebSocket bridge server** binding to `127.0.0.1:17322` that exposes file system operations (read/write/delete/list), search tools (grep/glob/semantic search/outline), and shell command execution with deadly-command blocking\n- **Git integration** providing status, commit, diff, and PR creation via `gh` CLI, plus checkpoint save/restore functionality that stores patches under `.ablit/checkpoints/`\n- **MCP server host** allowing connections to external Model Context Protocol servers, tool discovery, and tool invocation through the bridge\n\n---\n**Done:** Summarized daemon/bridge.js core functionality in 3 bullets\n**Continue:**\n1. Summarize another file (e.g., \"summarize src/lib/bridgeClient.ts\")\n2. Show how bridge.js and bridgeClient.ts communicate\n3. List MCP-related code in the codebase\nThe user wants a summary of what daemon/bridge.js does. I already have the file content from the initial prompt, so I can analyze it directly without needing to call read_file again.\n\nLooking at the bridge.js code:\n\n1. It's a local WebSocket bridge server that binds to 127.0.0.1:17322\n2. It provides file system operations (read, write, delete, list directories)\n3. It provides git operations (status, commit, diff, PR creation)\n4. It provides search operations (grep, glob, semantic search, file outline)\n5. It provides checkpoint save/restore functionality\n6. It provides MCP (Model Context Protocol) server connections\n7. It has security features like deadly command detection for shell executio",
+      "reasoning_excerpt": "The user wants a summary of what daemon/bridge.js does. I already have the file content from the initial prompt, so I can analyze it directly without needing to call read_file again.\n\nLooking at the bridge.js code:\n\n1. It's a local WebSocket bridge server that binds to 127.0.0.1:17322\n2. It provides file system operations (read, write, delete, list directories)\n3. It provides git operations (status, commit, diff, PR creation)\n4. It provides search operations (grep, glob, semantic search, file outline)\n5. It provides checkpoint save/restore functionality\n6. It provides MCP (Model Context Protocol) server connections\n7. It has security features like deadly command detection for shell execution\n\nLet me summarize in 3 concise bullets.\n",
+      "workspaceRoot": "/Users/adminuser/abliterated",
+      "plan_mode": false
+    },
+    {
+      "id": 5,
+      "prompt": "What is 2+2?",
+      "expect": "trivial; no fake tools",
+      "score": "PASS",
+      "used_real_tools": "n/a",
+      "fake_bash_theater": "no",
+      "factual_ok": "yes",
+      "tools_seen": [],
+      "tool_details": [],
+      "idle_ms": 3619,
+      "idle_ok": true,
+      "notes": "",
+      "assistant_excerpt": "\n\n2 + 2 = 4\n\n---\n**Done:** Answered the arithmetic question\n**Continue:**\n1. Ask about another file or feature\n2. Request a code change\n3. Explore the codebase further\nSimple arithmetic question - 2+2 equals 4.\n",
+      "reasoning_excerpt": "Simple arithmetic question - 2+2 equals 4.\n",
+      "workspaceRoot": "/Users/adminuser/abliterated",
+      "plan_mode": false
+    },
+    {
+      "id": 6,
+      "prompt": "grep for SYSTEM_PROMPT export in src",
+      "expect": "grep tool",
+      "score": "PASS",
+      "used_real_tools": "yes",
+      "fake_bash_theater": "no",
+      "factual_ok": "yes",
+      "tools_seen": [
+        "grep"
+      ],
+      "tool_details": [
+        {
+          "name": "grep",
+          "status": "pending",
+          "args": {
+            "path": "src",
+            "pattern": "SYSTEM_PROMPT"
+          },
+          "result_excerpt": ""
+        },
+        {
+          "name": "grep",
+          "status": "executed",
+          "args": {
+            "path": "src",
+            "pattern": "SYSTEM_PROMPT"
+          },
+          "result_excerpt": "src/lib/storage.ts:21:import { LEGACY_PROMPTS, SYSTEM_PROMPT } from './systemPrompt';\nsrc/lib/storage.ts:54:  systemPrompt: SYSTEM_PROMPT,\nsrc/lib/storage.ts:124:      ? SYSTEM_PROMPT\nsrc/lib/systemPrompt.ts:1:export const LEGACY_SYSTEM_PROMPT = 'You are a concise, exact engineering assistant.';\nsrc/lib/systemPrompt.ts:3:export const PREVIOUS_SYSTEM_PROMPT = `You are Abliterated, the in-IDE coding"
+        }
+      ],
+      "idle_ms": 8154,
+      "idle_ok": true,
+      "notes": "",
+      "assistant_excerpt": "\n\n\nFound `SYSTEM_PROMPT` export in:\n\n- **src/lib/systemPrompt.ts:521** - The main `SYSTEM_PROMPT` export (current version)\n- **src/lib/storage.ts:21** - Import of `SYSTEM_PROMPT`\n- **src/lib/storage.ts:54** - Used as default system prompt value\n- **src/lib/storage.ts:124** - Used in conditional logic\n\nThe file also contains 12 previous versions (`PREVIOUS_SYSTEM_PROMPT` through `PREVIOUS_SYSTEM_PROMPT_V12`) for localStorage migration support.\n\n---\n**Done:** Located all `SYSTEM_PROMPT` references in src\n**Continue:**\n1. Read the current SYSTEM_PROMPT content\n2. Compare current vs previous versions\n3. Search for where SYSTEM_PROMPT is used in the app\nSearching for SYSTEM_PROMPT export in src directory using grep.\n\n(No content tokens — see reasoning)\n",
+      "reasoning_excerpt": "Searching for SYSTEM_PROMPT export in src directory using grep.\n\n(No content tokens — see reasoning)\n",
+      "workspaceRoot": "/Users/adminuser/abliterated",
+      "plan_mode": false
+    },
+    {
+      "id": 7,
+      "prompt": "Create a plan to add a dark-mode toggle",
+      "expect": "plan checklist without implementing",
+      "score": "PASS",
+      "used_real_tools": "yes",
+      "fake_bash_theater": "no",
+      "factual_ok": "yes",
+      "tools_seen": [
+        "glob",
+        "grep",
+        "read_file"
+      ],
+      "tool_details": [
+        {
+          "name": "glob",
+          "status": "pending",
+          "args": {
+            "pattern": "**/*.css"
+          },
+          "result_excerpt": ""
+        },
+        {
+          "name": "glob",
+          "status": "pending",
+          "args": {
+            "pattern": "**/tailwind.config.*"
+          },
+          "result_excerpt": ""
+        },
+        {
+          "name": "grep",
+          "status": "pending",
+          "args": {
+            "pattern": "class=.*theme|dark:|className.*dark",
+            "path": "src"
+          },
+          "result_excerpt": ""
+        },
+        {
+          "name": "glob",
+          "status": "executed",
+          "args": {
+            "pattern": "**/*.css"
+          },
+          "result_excerpt": "src/index.css"
+        },
+        {
+          "name": "glob",
+          "status": "executed",
+          "args": {
+            "pattern": "**/tailwind.config.*"
+          },
+          "result_excerpt": "tailwind.config.js"
+        },
+        {
+          "name": "grep",
+          "status": "executed",
+          "args": {
+            "pattern": "class=.*theme|dark:|className.*dark",
+            "path": "src"
+          },
+          "result_excerpt": "no matches"
+        },
+        {
+          "name": "read_file",
+          "status": "pending",
+          "args": {
+            "path": "tailwind.config.js"
+          },
+          "result_excerpt": ""
+        },
+        {
+          "name": "read_file",
+          "status": "pending",
+          "args": {
+            "path": "src/index.css"
+          },
+          "result_excerpt": ""
+        },
+        {
+          "name": "glob",
+          "status": "pending",
+          "args": {
+            "pattern": "src/App.tsx"
+          },
+          "result_excerpt": ""
+        },
+        {
+          "name": "read_file",
+          "status": "executed",
+          "args": {
+            "path": "tailwind.config.js"
+          },
+          "result_excerpt": "/** @type {import('tailwindcss').Config} */\nexport default {\n  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],\n  theme: {\n    extend: {\n      colors: {\n        background: '#09090b',\n        surface: '#18181b',\n        'surface-raised': '#202024',\n        'surface-elevated': '#27272a',\n        'surface-hover': '#2e2e33',\n        border: '#27272a',\n        'border-subtle': '#1f1f23',\n     "
+        },
+        {
+          "name": "read_file",
+          "status": "executed",
+          "args": {
+            "path": "src/index.css"
+          },
+          "result_excerpt": "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n\nhtml,\nbody,\n#root {\n  height: 100%;\n}\n\nbody {\n  margin: 0;\n  background: #09090b;\n  color: #f4f4f5;\n  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;\n  overflow: hidden;\n  user-select: none;\n}\n\ninput,\ntextarea,\npre,\ncode,\n.selectable {\n  user-select: text;\n}\n\n::-webkit-scrollbar {\n  width: 5px;\n  height: 5px;"
+        },
+        {
+          "name": "glob",
+          "status": "executed",
+          "args": {
+            "pattern": "src/App.tsx"
+          },
+          "result_excerpt": "src/App.tsx"
+        },
+        {
+          "name": "read_file",
+          "status": "pending",
+          "args": {
+            "path": "src/App.tsx"
+          },
+          "result_excerpt": ""
+        },
+        {
+          "name": "glob",
+          "status": "pending",
+          "args": {
+            "pattern": "src/components/**/*.tsx"
+          },
+          "result_excerpt": ""
+        },
+        {
+          "name": "read_file",
+          "status": "executed",
+          "args": {
+            "path": "src/App.tsx"
+          },
+          "result_excerpt": "import { useCallback, useEffect, useMemo, useRef, useState } from 'react';\nimport { CommandPalette, type CommandAction } from './components/CommandPalette';\nimport { BottomNav, DesktopRail } from './components/layout/Navigation';\nimport { StatusBar } from './components/layout/StatusBar';\nimport { resumeJobQueue } from './lib/jobRunner';\nimport { syncMcpServers } from './lib/mcpClient';\nimport { br"
+        },
+        {
+          "name": "glob",
+          "status": "executed",
+          "args": {
+            "pattern": "src/components/**/*.tsx"
+          },
+          "result_excerpt": "src/components/CommandPalette.tsx\nsrc/components/ErrorBoundary.tsx\nsrc/components/chat/AgentStatusMonitor.tsx\nsrc/components/chat/DiffViewer.tsx\nsrc/components/chat/MessageBubble.tsx\nsrc/components/chat/TerminalPane.tsx\nsrc/components/common/FileMentionPopup.tsx\nsrc/components/common/ShortcutsModal.tsx\nsrc/components/common/Toast.tsx\nsrc/components/layout/Navigation.tsx\nsrc/components/layout/Statu"
+        }
+      ],
+      "idle_ms": 26310,
+      "idle_ok": true,
+      "notes": "",
+      "assistant_excerpt": "\n\n\n\n\n## Plan: Add Dark-Mode Toggle\n\n1. **Enable Tailwind dark mode** - Configure `tailwind.config.js` to use `class` strategy with `dark:` prefix support\n2. **Add light theme colors** - Extend Tailwind config with light-mode color palette (background, surface, border, muted)\n3. **Create theme state** - Add `darkMode` setting to `ClientSettings` type in `src/types.ts` with localStorage persistence\n4. **Update index.css** - Add light-mode CSS rules using `[data-theme=\"light\"]` or `.light` class selector for body/background/colors\n5. **Add toggle component** - Create `ThemeToggle` button component in `src/components/common/ThemeToggle.tsx`\n6. **Integrate into SettingsScreen** - Add theme toggle switch in settings panel\n7. **Add to DesktopRail/StatusBar** - Optional: add quick toggle button in navigation or status bar\n8. **Update App.tsx** - Apply theme class to root element based on settings state\n9. **Update DEFAULT_SETTINGS** - Add `darkMode: true` default to maintain current dark appearance\n10. **Test both themes** - Verify all UI components render correctly in light and dark modes\n\n---\n**Done:** Created 10-step plan for dark-mode toggle implementation\n**Continue:**\n1. Approve plan and proceed with implementation\n2. Modify specific steps (e.g., \"use system preference detection\")\n3. Ask for more details on any step\nUser wants a plan for adding dark-mode toggle - this is a non-trivial feature request, so I should explore the codebase first to understand the current theming setu",
+      "reasoning_excerpt": "User wants a plan for adding dark-mode toggle - this is a non-trivial feature request, so I should explore the codebase first to understand the current theming setup, then create a concrete plan.\n\nThe grep found no matches for dark mode related classes. Let me check the tailwind config and the CSS file to understand the current setup.\n\nPlan to add a dark-mode toggle (currently the app is dark-only).\n",
+      "workspaceRoot": "/Users/adminuser/abliterated",
+      "plan_mode": true
+    },
+    {
+      "id": 8,
+      "prompt": "git status",
+      "expect": "git_status tool not fake bash",
+      "score": "PASS",
+      "used_real_tools": "yes",
+      "fake_bash_theater": "no",
+      "factual_ok": "yes",
+      "tools_seen": [
+        "git_status"
+      ],
+      "tool_details": [
+        {
+          "name": "git_status",
+          "status": "pending",
+          "args": {},
+          "result_excerpt": ""
+        },
+        {
+          "name": "git_status",
+          "status": "executed",
+          "args": {},
+          "result_excerpt": "not a git repository"
+        }
+      ],
+      "idle_ms": 9069,
+      "idle_ok": true,
+      "notes": "",
+      "assistant_excerpt": "\n\n\n---\n**Done:** Checked git status - workspace is not a git repository\n**Continue:**\n1. Initialize git repo: `git init`\n2. Proceed with dark-mode implementation\n3. Check for existing .git directory\nUser wants to see git status - I'll use the git_status tool to get the current state.\n",
+      "reasoning_excerpt": "User wants to see git status - I'll use the git_status tool to get the current state.\n",
+      "workspaceRoot": "/Users/adminuser/abliterated",
+      "plan_mode": false
+    }
+  ],
+  "consoleErrors": []
+}

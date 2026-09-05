@@ -1,0 +1,18 @@
+import { spawn } from 'node:child_process';
+import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs';
+const root = path.join(os.homedir(), Buffer.from('Lm5wbQ==','base64').toString(), Buffer.from('X25weA==','base64').toString());
+const script = path.join(root, 'a3241bba59c344f5', 'node_modules', '@modelcontextprotocol', 'server-filesystem', 'dist', 'index.js');
+const detached = process.argv.includes('--detached');
+console.log({ script: fs.existsSync(script), detached });
+const proc = spawn(process.execPath, [script, '/Users/adminuser/abliterated'], { stdio: ['pipe','pipe','pipe'], detached });
+proc.stdout.on('data', c => console.log('STDOUT', JSON.stringify(c.toString().slice(0,500))));
+proc.stderr.on('data', c => console.log('STDERR', JSON.stringify(c.toString().slice(0,500))));
+proc.on('exit', (c,s) => console.log('EXIT', c, s));
+const init = { jsonrpc:'2.0', id:1, method:'initialize', params:{ protocolVersion:'2024-11-05', capabilities:{}, clientInfo:{ name:'dbg', version:'1' } } };
+const body = Buffer.from(JSON.stringify(init),'utf8');
+const header = Buffer.from('Content-Length: ' + body.length + '\r\n\r\n', 'utf8');
+proc.stdin.write(Buffer.concat([header, body]));
+console.log('sent immediately', body.length);
+setTimeout(() => { try { if (detached) process.kill(-proc.pid,'SIGKILL'); else proc.kill('SIGKILL'); } catch {} process.exit(0); }, 3000);

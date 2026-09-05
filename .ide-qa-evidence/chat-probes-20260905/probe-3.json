@@ -1,0 +1,94 @@
+{
+  "probe": {
+    "id": 3,
+    "prompt": "List the top-level folders only",
+    "expect": "list_dir",
+    "plan": false
+  },
+  "idle": {
+    "ok": true,
+    "elapsed": 7702,
+    "total": 10,
+    "newCount": 4,
+    "streaming": false,
+    "hasUser": true,
+    "stopBtn": false,
+    "headerIdle": true,
+    "lastStatus": "complete",
+    "lastRole": "assistant"
+  },
+  "newMsgs": [
+    {
+      "role": "user",
+      "status": "complete",
+      "content": "List the top-level folders only",
+      "reasoning": "",
+      "toolCall": null
+    },
+    {
+      "role": "assistant",
+      "status": "complete",
+      "content": "",
+      "reasoning": "The user wants top-level folders only, so I'll call list_dir on the workspace root.\n",
+      "toolCall": null
+    },
+    {
+      "role": "tool",
+      "status": "complete",
+      "content": "d\tdaemon\nd\tdist\nd\tdocs\nd\tpublic\nd\tscripts\nd\tspark\nd\tspark-image\nd\tsrc\nf\t.gitignore\nf\tBENCHMARK.md\nf\tindex.html\nf\tpackage-lock.json\nf\tpackage.json\nf\tpostcss.config.js\nf\tREADME.md\nf\tSYSTEM.md\nf\ttailwind.config.js\nf\ttsconfig.app.json\nf\ttsconfig.json\nf\ttsconfig.node.json\nf\tvite.config.ts",
+      "reasoning": "",
+      "toolCall": {
+        "name": "list_dir",
+        "status": "executed",
+        "arguments": {
+          "path": "."
+        },
+        "result": "d\tdaemon\nd\tdist\nd\tdocs\nd\tpublic\nd\tscripts\nd\tspark\nd\tspark-image\nd\tsrc\nf\t.gitignore\nf\tBENCHMARK.md\nf\tindex.html\nf\tpackage-lock.json\nf\tpackage.json\nf\tpostcss.config.js\nf\tREADME.md\nf\tSYSTEM.md\nf\ttailwind.config.js\nf\ttsconfig.app.json\nf\ttsconfig.json\nf\ttsconfig.node.json\nf\tvite.config.ts"
+      }
+    },
+    {
+      "role": "assistant",
+      "status": "complete",
+      "content": "\n\nTop-level folders:\n\n- daemon\n- dist\n- docs\n- public\n- scripts\n- spark\n- spark-image\n- src\n\n---\n**Done:** Listed 8 top-level directories from the workspace root\n**Continue:**\n1. Explore a specific folder (e.g., \"list src folder\")\n2. Search for files matching a pattern\n3. Read contents of a specific file",
+      "reasoning": "The user asked for top-level folders only. From the list_dir result, I can see the directories (marked with 'd'):\n\n- daemon\n- dist\n- docs\n- public\n- scripts\n- spark\n- spark-image\n- src\n\nLet me list just these folders.\n",
+      "toolCall": null
+    }
+  ],
+  "scored": {
+    "id": 3,
+    "prompt": "List the top-level folders only",
+    "expect": "list_dir",
+    "score": "PASS",
+    "used_real_tools": "yes",
+    "fake_bash_theater": "no",
+    "factual_ok": "yes",
+    "tools_seen": [
+      "list_dir"
+    ],
+    "tool_details": [
+      {
+        "name": "list_dir",
+        "status": "pending",
+        "args": {
+          "path": "."
+        },
+        "result_excerpt": ""
+      },
+      {
+        "name": "list_dir",
+        "status": "executed",
+        "args": {
+          "path": "."
+        },
+        "result_excerpt": "d\tdaemon\nd\tdist\nd\tdocs\nd\tpublic\nd\tscripts\nd\tspark\nd\tspark-image\nd\tsrc\nf\t.gitignore\nf\tBENCHMARK.md\nf\tindex.html\nf\tpackage-lock.json\nf\tpackage.json\nf\tpostcss.config.js\nf\tREADME.md\nf\tSYSTEM.md\nf\ttailwind.config.js\nf\ttsconfig.app.json\nf\ttsconfig.json\nf\ttsconfig.node.json\nf\tvite.config.ts"
+      }
+    ],
+    "idle_ms": 7702,
+    "idle_ok": true,
+    "notes": "",
+    "assistant_excerpt": "\n\n\nTop-level folders:\n\n- daemon\n- dist\n- docs\n- public\n- scripts\n- spark\n- spark-image\n- src\n\n---\n**Done:** Listed 8 top-level directories from the workspace root\n**Continue:**\n1. Explore a specific folder (e.g., \"list src folder\")\n2. Search for files matching a pattern\n3. Read contents of a specific file\nThe user wants top-level folders only, so I'll call list_dir on the workspace root.\n\nThe user asked for top-level folders only. From the list_dir result, I can see the directories (marked with 'd'):\n\n- daemon\n- dist\n- docs\n- public\n- scripts\n- spark\n- spark-image\n- src\n\nLet me list just these folders.\n",
+    "reasoning_excerpt": "The user wants top-level folders only, so I'll call list_dir on the workspace root.\n\nThe user asked for top-level folders only. From the list_dir result, I can see the directories (marked with 'd'):\n\n- daemon\n- dist\n- docs\n- public\n- scripts\n- spark\n- spark-image\n- src\n\nLet me list just these folders.\n",
+    "workspaceRoot": "/Users/adminuser/abliterated",
+    "plan_mode": false
+  }
+}

@@ -1,0 +1,57 @@
+# Primary recipe: THe-Plague Qwen3.6-35B-A3B abliterated NVFP4 + MTP on DGX Spark (GB10).
+# Copy this folder to the Spark host. Do not pull weights onto the IDE box.
+#
+# Preferred image: vllm/vllm-openai:cu130-nightly (portable-ish; Marlin envs for sm_121).
+# Optional Spark-only ARM64: ghcr.io/aeon-7/aeon-vllm-ultimate:latest
+#
+# Alternate weights (see README): AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4
+
+services:
+  qwen-abliterated:
+    image: ${IMAGE:-vllm/vllm-openai:cu130-nightly}
+    container_name: qwen-abliterated
+    restart: unless-stopped
+    ipc: host
+    shm_size: "16gb"
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ${MODEL_DIR:-./models/Qwen3.6-35B-A3B-abliterated-NVFP4-MTP}:/models/current:ro
+    environment:
+      VLLM_NVFP4_GEMM_BACKEND: marlin
+      VLLM_TEST_FORCE_FP8_MARLIN: "1"
+      VLLM_USE_FLASHINFER_MOE_FP4: "0"
+      CUTE_DSL_ARCH: sm_121a
+      FLASHINFER_DISABLE_VERSION_CHECK: "1"
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    command:
+      - vllm
+      - serve
+      - /models/current
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --served-model-name
+      - ${SERVED_NAME:-qwen-abliterated}
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --moe-backend
+      - marlin
+      - --gpu-memory-utilization
+      - ${GPU_MEMORY_UTILIZATION:-0.6}
+      - --kv-cache-dtype
+      - fp8
+      - --max-model-len
+      - "65536"
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3}'

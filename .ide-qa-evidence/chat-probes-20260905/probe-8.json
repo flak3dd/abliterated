@@ -1,0 +1,88 @@
+{
+  "probe": {
+    "id": 8,
+    "prompt": "git status",
+    "expect": "git_status tool not fake bash",
+    "plan": false
+  },
+  "idle": {
+    "ok": true,
+    "elapsed": 9069,
+    "total": 35,
+    "newCount": 4,
+    "streaming": false,
+    "hasUser": true,
+    "stopBtn": false,
+    "headerIdle": true,
+    "lastStatus": "complete",
+    "lastRole": "assistant"
+  },
+  "newMsgs": [
+    {
+      "role": "user",
+      "status": "complete",
+      "content": "git status",
+      "reasoning": "",
+      "toolCall": null
+    },
+    {
+      "role": "assistant",
+      "status": "complete",
+      "content": "",
+      "reasoning": "User wants to see git status - I'll use the git_status tool to get the current state.\n",
+      "toolCall": null
+    },
+    {
+      "role": "tool",
+      "status": "complete",
+      "content": "not a git repository",
+      "reasoning": "",
+      "toolCall": {
+        "name": "git_status",
+        "status": "executed",
+        "arguments": {},
+        "result": "not a git repository"
+      }
+    },
+    {
+      "role": "assistant",
+      "status": "complete",
+      "content": "\n\n---\n**Done:** Checked git status - workspace is not a git repository\n**Continue:**\n1. Initialize git repo: `git init`\n2. Proceed with dark-mode implementation\n3. Check for existing .git directory",
+      "reasoning": "",
+      "toolCall": null
+    }
+  ],
+  "scored": {
+    "id": 8,
+    "prompt": "git status",
+    "expect": "git_status tool not fake bash",
+    "score": "PASS",
+    "used_real_tools": "yes",
+    "fake_bash_theater": "no",
+    "factual_ok": "yes",
+    "tools_seen": [
+      "git_status"
+    ],
+    "tool_details": [
+      {
+        "name": "git_status",
+        "status": "pending",
+        "args": {},
+        "result_excerpt": ""
+      },
+      {
+        "name": "git_status",
+        "status": "executed",
+        "args": {},
+        "result_excerpt": "not a git repository"
+      }
+    ],
+    "idle_ms": 9069,
+    "idle_ok": true,
+    "notes": "",
+    "assistant_excerpt": "\n\n\n---\n**Done:** Checked git status - workspace is not a git repository\n**Continue:**\n1. Initialize git repo: `git init`\n2. Proceed with dark-mode implementation\n3. Check for existing .git directory\nUser wants to see git status - I'll use the git_status tool to get the current state.\n",
+    "reasoning_excerpt": "User wants to see git status - I'll use the git_status tool to get the current state.\n",
+    "workspaceRoot": "/Users/adminuser/abliterated",
+    "plan_mode": false
+  }
+}
