@@ -298,7 +298,7 @@ Flagship **numeric cells unchanged** from 2026-09-04 except where this file alre
 | MCP | `mcpClient.ts`, `daemon/mcp.js` |
 | License / tokens | `license.ts`, `builtinTokens.ts` |
 | Electron | `electron/`, `package.json` desktop scripts |
-| Promo chart | [docs/assets/harness-2026-09-06.png](docs/assets/harness-2026-09-06.png) · site `public/benchmark/harness-2026-09-06.png` |
+| Promo charts | [harness](docs/assets/harness-2026-09-06.png) · [restrictive posture](docs/assets/restrictive-posture-2026-09-06.png) · site `public/benchmark/` |
 
 ---
 

@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Restrictive vs unrestricted posture 2026-09-06</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: #09090b;
+    color: #e4e4e7;
+  }
+  .frame {
+    width: 1200px;
+    height: 675px;
+    padding: 32px 40px 24px;
+    background:
+      radial-gradient(ellipse at 12% 0%, rgba(14,165,233,0.18), transparent 50%),
+      radial-gradient(ellipse at 92% 100%, rgba(34,211,238,0.08), transparent 45%),
+      #09090b;
+    display: flex;
+    flex-direction: column;
+  }
+  .top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 20px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: #38bdf8;
+    border: 1px solid #27272a;
+    background: rgba(24,24,27,0.7);
+    border-radius: 999px;
+    padding: 4px 12px;
+  }
+  .badge i {
+    width: 7px; height: 7px; border-radius: 50%; background: #38bdf8;
+  }
+  h1 {
+    margin: 12px 0 6px;
+    font-size: 30px;
+    letter-spacing: -0.03em;
+    font-weight: 650;
+    color: #fff;
+  }
+  h1 span {
+    background: linear-gradient(90deg, #38bdf8, #67e8f9);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .sub {
+    margin: 0;
+    max-width: 640px;
+    color: #a1a1aa;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  .scorepill { text-align: right; min-width: 200px; }
+  .scorepill .label {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    color: #71717a;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .scorepill .num {
+    font-size: 44px;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    color: #fff;
+    line-height: 1.05;
+  }
+  .scorepill .num em {
+    font-style: normal;
+    color: #38bdf8;
+    font-size: 20px;
+    font-weight: 600;
+  }
+  .scorepill .delta {
+    margin-top: 4px;
+    font-size: 12px;
+    color: #a1a1aa;
+  }
+  .grid {
+    margin-top: 16px;
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 16px;
+    flex: 1;
+    min-height: 0;
+  }
+  .card {
+    background: rgba(24,24,27,0.72);
+    border: 1px solid #27272a;
+    border-radius: 16px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .card h2 {
+    margin: 0 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #a1a1aa;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .bars { display: flex; flex-direction: column; gap: 7px; flex: 1; }
+  .row { display: grid; grid-template-columns: 108px 1fr 44px; gap: 8px; align-items: center; }
+  .row .name { font-size: 12px; color: #d4d4d8; }
+  .row .name.abl { color: #7dd3fc; font-weight: 600; }
+  .track {
+    height: 11px;
+    background: #18181b;
+    border: 1px solid #27272a;
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #3f3f46, #52525b);
+  }
+  .fill.abl {
+    background: linear-gradient(90deg, #0284c7, #22d3ee);
+  }
+  .fill.restrict {
+    background: linear-gradient(90deg, #7c2d12, #f97316);
+  }
+  .fill.restrict-low {
+    background: linear-gradient(90deg, #3f3f46, #71717a);
+  }
+  .val { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #a1a1aa; text-align: right; }
+  .val.abl { color: #7dd3fc; font-weight: 600; }
+  .split {
+    display: grid;
+    grid-template-rows: 1fr auto;
+    gap: 10px;
+    flex: 1;
+    min-height: 0;
+  }
+  .axes {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .axis {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    align-items: center;
+  }
+  .axis .meta { font-size: 12px; color: #e4e4e7; line-height: 1.25; }
+  .axis .meta small { display: block; color: #71717a; font-size: 10px; margin-top: 1px; }
+  .axis .pill {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    color: #67e8f9;
+    background: rgba(14,165,233,0.12);
+    border: 1px solid rgba(56,189,248,0.35);
+    border-radius: 8px;
+    padding: 5px 8px;
+    white-space: nowrap;
+  }
+  .axis .pill.n {
+    color: #a1a1aa;
+    background: rgba(63,63,70,0.35);
+    border-color: #3f3f46;
+  }
+  .axis .pill.p {
+    color: #fbbf24;
+    background: rgba(245,158,11,0.1);
+    border-color: rgba(245,158,11,0.35);
+  }
+  .mini {
+    border-top: 1px solid #27272a;
+    padding-top: 10px;
+  }
+  .mini h3 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #71717a;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .rrows { display: flex; flex-direction: column; gap: 5px; }
+  .rrow { display: grid; grid-template-columns: 90px 1fr 36px; gap: 6px; align-items: center; }
+  .rrow .name { font-size: 11px; color: #a1a1aa; }
+  .rrow .name.abl { color: #7dd3fc; font-weight: 600; }
+  .caveat {
+    margin-top: 12px;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.08);
+    color: #fbbf24;
+    border-radius: 12px;
+    padding: 9px 12px;
+    font-size: 11.5px;
+    line-height: 1.4;
+  }
+  .caveat strong { color: #fde68a; }
+  .foot {
+    margin-top: 8px;
+    display: flex;
+    justify-content: space-between;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 10.5px;
+    color: #52525b;
+  }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <div class="top">
+      <div>
+        <div class="badge"><i></i> Section H · inference &amp; product posture · 2026-09-06</div>
+        <h1>Restrictive vs <span>unrestricted posture</span></h1>
+        <p class="sub">Real BENCHMARK.md §H subtotals (/8). Higher unrestricted score = more BYO / local / uncensored / no-telemetry freedom. Policy ≠ intelligence.</p>
+      </div>
+      <div class="scorepill">
+        <div class="label">Abliterated §H</div>
+        <div class="num">8.0<em>/8</em></div>
+        <div class="delta">Highest unrestricted posture<br/>among listed products</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Unrestricted posture score /8</h2>
+        <div class="bars">
+          <div class="row"><div class="name abl">Abliterated</div><div class="track"><div class="fill abl" style="width:100%"></div></div><div class="val abl">8.0</div></div>
+          <div class="row"><div class="name">Claude Code</div><div class="track"><div class="fill" style="width:68.75%"></div></div><div class="val">5.5</div></div>
+          <div class="row"><div class="name">Gemini</div><div class="track"><div class="fill" style="width:68.75%"></div></div><div class="val">5.5</div></div>
+          <div class="row"><div class="name">Grok</div><div class="track"><div class="fill" style="width:68.75%"></div></div><div class="val">5.5</div></div>
+          <div class="row"><div class="name">Cursor</div><div class="track"><div class="fill" style="width:62.5%"></div></div><div class="val">5.0</div></div>
+          <div class="row"><div class="name">Codex</div><div class="track"><div class="fill" style="width:62.5%"></div></div><div class="val">5.0</div></div>
+          <div class="row"><div class="name">Copilot</div><div class="track"><div class="fill" style="width:50%"></div></div><div class="val">4.0</div></div>
+          <div class="row"><div class="name">Windsurf</div><div class="track"><div class="fill" style="width:43.75%"></div></div><div class="val">3.5</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="split">
+          <div>
+            <h2>Key §H freedom axes (Abliterated)</h2>
+            <div class="axes">
+              <div class="axis">
+                <div class="meta">BYOK / OpenAI-compatible custom base URL<small>rubric #68</small></div>
+                <div class="pill">Y</div>
+              </div>
+              <div class="axis">
+                <div class="meta">First-class local / self-host path (e.g. Spark)<small>rubric #70</small></div>
+                <div class="pill">Y</div>
+              </div>
+              <div class="axis">
+                <div class="meta">Abliterated / uncensored model path as product niche<small>rubric #74</small></div>
+                <div class="pill">Y</div>
+              </div>
+              <div class="axis">
+                <div class="meta">Client claims no product telemetry<small>rubric #73</small></div>
+                <div class="pill">Y</div>
+              </div>
+              <div class="axis">
+                <div class="meta">Multi-provider switch in UI<small>rubric #69</small></div>
+                <div class="pill">Y</div>
+              </div>
+            </div>
+          </div>
+          <div class="mini">
+            <h3>Restrictiveness flip · (8 − H)</h3>
+            <div class="rrows">
+              <div class="rrow"><div class="name abl">Abliterated</div><div class="track"><div class="fill restrict-low" style="width:0%"></div></div><div class="val abl">0.0</div></div>
+              <div class="rrow"><div class="name">CC / Gem / Grk</div><div class="track"><div class="fill restrict" style="width:31.25%"></div></div><div class="val">2.5</div></div>
+              <div class="rrow"><div class="name">Cur / Cdx</div><div class="track"><div class="fill restrict" style="width:37.5%"></div></div><div class="val">3.0</div></div>
+              <div class="rrow"><div class="name">Copilot</div><div class="track"><div class="fill restrict" style="width:50%"></div></div><div class="val">4.0</div></div>
+              <div class="rrow"><div class="name">Windsurf</div><div class="track"><div class="fill restrict" style="width:56.25%"></div></div><div class="val">4.5</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="caveat">
+      <strong>Caption:</strong> Section H inference &amp; product posture (/8). Not SWE-bench. Policy ≠ intelligence. High unrestricted score ≠ smarter model — it measures hosted safety / refusal / telemetry / lock-in limits on agent freedom.
+    </div>
+    <div class="foot">
+      <span>abliterated.app/benchmark · BENCHMARK.md §H cells summed Yes=1 · Partial=0.5 · No=0</span>
+      <span>restrictive-posture-2026-09-06</span>
+    </div>
+  </div>
+</body>
+</html>
