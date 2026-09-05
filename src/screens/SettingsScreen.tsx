@@ -8,14 +8,11 @@ import {
   syncMcpServers,
 } from '../lib/mcpClient';
 import {
-  ADMIN_LICENSE_KEY,
   LICENSE_TEST_KEYS,
   PRICING_HINT,
-  adminCredentials,
   countEnabledMcp,
   getLicenseState,
   normalizeLicenseKey,
-  verifyAdminLogin,
 } from '../lib/license';
 import { generatePairingCode, setSettings, uid, wipeAll } from '../lib/storage';
 import type { ClientSettings, McpServerConfig } from '../types';
@@ -103,11 +100,6 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   const [mcpHint, setMcpHint] = useState('');
   const [licenseDraft, setLicenseDraft] = useState(settings.licenseKey || '');
   const [licenseMsg, setLicenseMsg] = useState('');
-  const creds = adminCredentials();
-  const [adminUser, setAdminUser] = useState(creds.username);
-  const [adminPass, setAdminPass] = useState('');
-  const [adminMsg, setAdminMsg] = useState('');
-  const [adminErr, setAdminErr] = useState('');
 
   useEffect(() => {
     setLicenseDraft(settings.licenseKey || '');
@@ -136,22 +128,6 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
     return nextLicense;
   };
 
-  const signInAdmin = () => {
-    setAdminErr('');
-    setAdminMsg('');
-    if (!verifyAdminLogin(adminUser, adminPass)) {
-      setAdminErr(
-        `Invalid username or password. Use ${creds.username} / ${creds.password}, or paste ABLIT-ADMIN in the password field.`,
-      );
-      return;
-    }
-    const next = persistLicense(ADMIN_LICENSE_KEY);
-    setAdminPass('');
-    setAdminMsg(
-      `Signed in as admin — ${next.label}. This unlocks local IDE gates only. Cloud chat still needs an API key on the API tab (Abliteration token or Featherless key).`,
-    );
-    setLicenseMsg(`Activated ${next.label}.`);
-  };
 
   const updateMcp = (id: string, partial: Partial<McpServerConfig>) => {
     const next = (settings.mcpServers || []).map((s) => (s.id === id ? { ...s, ...partial } : s));
@@ -270,21 +246,6 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             />
           </FieldLabel>
 
-          <SwitchRow
-            label="Plan mode active"
-            checked={settings.planModeEnabled === true}
-            onChange={(v) =>
-              patch({ planModeEnabled: v, buildModeEnabled: v ? false : settings.buildModeEnabled !== false })
-            }
-            help="When on, chat is read-only explore → checklist until you Approve plan. Write/shell/MCP stay locked. Turns Build mode off."
-          />
-
-          <SwitchRow
-            label="Build mode active"
-            checked={settings.buildModeEnabled !== false && settings.planModeEnabled !== true}
-            onChange={(v) => patch({ buildModeEnabled: v, planModeEnabled: v ? false : settings.planModeEnabled })}
-            help="After reasoning, emit a ToDo list in content. If new file/folder structure is needed, scaffold it first, then work the ToDos."
-          />
 
           <FieldLabel
             label={`Max concurrent Jobs (1–${Number.isFinite(license.features.maxConcurrentJobs) ? license.features.maxConcurrentJobs : 4})`}
@@ -602,62 +563,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             <li>Shared seats: {license.features.sharedSeats ? 'Team placeholder' : '—'}</li>
           </ul>
 
-          <div className="rounded border border-emerald-900/50 bg-emerald-950/20 px-3 py-2">
-            <div className="font-mono text-[10px] uppercase text-emerald-400/90">Development admin</div>
-            <p className="mt-1 font-mono text-[11px] text-muted">
-              Full usage while developing. User <span className="text-zinc-200">{creds.username}</span> / password{' '}
-              <span className="text-zinc-200">{creds.password}</span>
-              {import.meta.env.DEV ? ' · Vite DEV auto-unlocks Admin when no key is set.' : ''}.
-            </p>
-            <form
-              className="mt-2 space-y-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                signInAdmin();
-              }}
-            >
-              <div className="grid gap-2 sm:grid-cols-2">
-                <input
-                  value={adminUser}
-                  onChange={(e) => setAdminUser(e.target.value)}
-                  placeholder="username"
-                  autoComplete="off"
-                  name="ablit-admin-user"
-                  className="field font-mono text-[12px]"
-                />
-                <input
-                  type="password"
-                  value={adminPass}
-                  onChange={(e) => setAdminPass(e.target.value)}
-                  placeholder="password"
-                  autoComplete="off"
-                  name="ablit-admin-pass"
-                  className="field font-mono text-[12px]"
-                />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button type="submit" className="btn-primary h-7 px-3 text-[10px]">
-                  Sign in as admin
-                </button>
-                <button
-                  type="button"
-                  className="btn-ghost h-7 px-2 text-[10px]"
-                  onClick={() => {
-                    setAdminErr('');
-                    const next = persistLicense(ADMIN_LICENSE_KEY);
-                    setAdminMsg(`Applied ${ADMIN_LICENSE_KEY} — ${next.label}.`);
-                    setLicenseMsg(`Activated ${next.label}.`);
-                  }}
-                >
-                  Unlock admin key
-                </button>
-              </div>
-            </form>
-            {adminErr ? <p className="mt-1 font-mono text-[11px] text-rose-400">{adminErr}</p> : null}
-            {adminMsg ? <p className="mt-1 font-mono text-[11px] text-emerald-300">{adminMsg}</p> : null}
-          </div>
-
-          <FieldLabel label="License key" hint="ABLIT-ADMIN · ABLIT-DEV-UNLOCK · ABLIT-PRO-XXXX-XXXX · ABLIT-FREE to test gates">
+          <FieldLabel label="License key" hint="Paste your ABLIT-* license key from checkout or redeem. IDE activates via license key (loginId support later).">
             <input
               value={licenseDraft}
               onChange={(e) => setLicenseDraft(e.target.value)}
@@ -687,21 +593,8 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
               type="button"
               className="btn-ghost h-7 px-2 text-[10px]"
               onClick={() => {
-                const next = persistLicense(LICENSE_TEST_KEYS.admin);
-                setAdminErr('');
-                setAdminMsg(`Applied ${LICENSE_TEST_KEYS.admin} — ${next.label}.`);
-                setLicenseMsg(`Activated ${next.label}.`);
-              }}
-            >
-              Apply admin key
-            </button>
-            <button
-              type="button"
-              className="btn-ghost h-7 px-2 text-[10px]"
-              onClick={() => {
                 persistLicense(LICENSE_TEST_KEYS.free);
-                setAdminMsg('');
-                setLicenseMsg('Forced Free (ABLIT-FREE) to test gates. Sign in as admin to restore.');
+                setLicenseMsg('Forced Free (ABLIT-FREE) to test gates. Paste your license key above to restore.');
               }}
             >
               Test Free gates
