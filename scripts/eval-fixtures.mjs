@@ -20,6 +20,7 @@ const files = [
   "src/lib/replanTriggers.ts",
   "src/lib/verifyDone.ts",
   "src/lib/hierarchicalTaskGraph.ts",
+  "src/lib/harnessGates.ts",
 ];
 execFileSync(
   "npx",
@@ -46,6 +47,7 @@ const gk = await import(pathToFileURL(path.join(outDir, "goalKeeper.js")).href);
 const rp = await import(pathToFileURL(path.join(outDir, "replanTriggers.js")).href);
 const vd = await import(pathToFileURL(path.join(outDir, "verifyDone.js")).href);
 const ht = await import(pathToFileURL(path.join(outDir, "hierarchicalTaskGraph.js")).href);
+const hg = await import(pathToFileURL(path.join(outDir, "harnessGates.js")).href);
 
 let table = {};
 let c1 = wl.claimWritePath(table, "src/a.ts", "coder-1", "n1");
@@ -80,6 +82,7 @@ assert.equal(vd.coldVerifierRequiresVerify(["shell"]).ok, false);
 assert.equal(vd.coldVerifierRequiresVerify(["verify"]).ok, true);
 
 function shouldUseTaskGraph(opts) {
+  if (opts.hasExistingGraph) return true;
   if (opts.multiAgent) return true;
   if (opts.largeJob || opts.buildProcess) return true;
   return false;
@@ -89,8 +92,101 @@ function shouldAutoInjectVerifyStrict(opts) {
 }
 assert.equal(shouldUseTaskGraph({ largeJob: false, buildProcess: false }), false);
 assert.equal(shouldUseTaskGraph({ largeJob: true }), true);
+assert.equal(shouldUseTaskGraph({ hasExistingGraph: true }), true);
 assert.equal(shouldAutoInjectVerifyStrict({ buildProcess: true }), true);
 assert.equal(shouldAutoInjectVerifyStrict({}), false);
+
+assert.equal(vd.looksLikeVerifyEvidence("", ["verify"]), true);
+assert.equal(vd.looksLikeVerifyEvidence("npx tsc -b\nexit 0", ["shell"]), true);
+assert.equal(vd.looksLikeVerifyEvidence("hi", ["shell"]), false);
+
+assert.equal(
+  hg.needsInspectBeforeWrite({
+    userText: "implement auth middleware across the api",
+    toolsUsed: [],
+    pendingToolNames: ["write_file"],
+    trivialEdit: false,
+  }),
+  true,
+);
+assert.equal(
+  hg.needsInspectBeforeWrite({
+    userText: "fix the typo in main.ts",
+    toolsUsed: [],
+    pendingToolNames: ["write_file"],
+    trivialEdit: true,
+  }),
+  false,
+);
+assert.equal(
+  hg.needsInspectBeforeWrite({
+    userText: "implement auth",
+    toolsUsed: ["read_file"],
+    pendingToolNames: ["write_file"],
+    trivialEdit: false,
+  }),
+  false,
+);
+assert.equal(
+  hg.shouldEvidenceDeepen({
+    content: "working",
+    deepenOn: true,
+    openTodos: false,
+  }),
+  false,
+);
+assert.equal(
+  hg.shouldEvidenceDeepen({
+    content: "- [ ] still open",
+    deepenOn: true,
+    openTodos: true,
+  }),
+  true,
+);
+assert.equal(
+  hg.shouldEvidenceDeepen({
+    content: "x",
+    deepenOn: true,
+    junkTurn: true,
+    openTodos: true,
+  }),
+  false,
+);
+assert.equal(
+  hg.multiAgentShouldRun({
+    multiAgentEnabled: true,
+    jobMultiAgent: true,
+    hasGraph: true,
+    assignableNodes: 1,
+  }),
+  false,
+);
+assert.equal(
+  hg.multiAgentShouldRun({
+    multiAgentEnabled: true,
+    jobMultiAgent: true,
+    hasGraph: true,
+    assignableNodes: 2,
+  }),
+  true,
+);
+assert.equal(
+  hg.multiAgentShouldRun({
+    multiAgentEnabled: true,
+    jobMultiAgent: true,
+    hasGraph: false,
+  }),
+  true,
+);
+assert.equal(hg.assignableNodeCount({ subtasks: [{ status: "pending" }, { status: "done" }] }), 1);
+assert.ok(hg.lockedGoalSystemBlock("Add auth middleware").includes("LOCKED GOAL"));
+assert.equal(
+  hg.extractLockedGoal([
+    { role: "user", content: "Prove improvement: fake" },
+    { role: "user", content: "Add JWT auth middleware and tests" },
+  ]),
+  "Add JWT auth middleware and tests",
+);
 
 const preset = {
   buildModeEnabled: true,
@@ -127,5 +223,13 @@ graph = {
 assert.equal(ht.canClaimWritePath(graph, "src/x.ts", "other"), false);
 const rec = ht.reclaimStaleNodes(graph, 90_000);
 assert.ok(rec.reclaimed.includes(a.node.id));
+
+const sysSrc = fs.readFileSync(path.join(root, "src/lib/systemPrompt.ts"), "utf8");
+assert.ok(sysSrc.includes("## Done contract"));
+assert.ok(sysSrc.includes("locked user goal"));
+assert.ok(sysSrc.includes("PREVIOUS_SYSTEM_PROMPT_V18"));
+assert.ok(sysSrc.includes("PREVIOUS_SYSTEM_PROMPT_V19"));
+assert.ok(sysSrc.includes("matching SKILL.md recipes are auto-injected"));
+assert.ok(sysSrc.includes("matching connected MCP tools are attached"));
 
 console.log("eval-fixtures: ok");

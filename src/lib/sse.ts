@@ -793,9 +793,9 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
   const tools = profile.sendTools
     ? filterChatTools(profile.toolNames as ToolType[], {
         imageGenEnabled: settings.imageGenEnabled === true,
-        skillsEnabled: settings.skillsEnabled !== false && !profile.compactPrompt,
+        skillsEnabled: settings.skillsEnabled !== false,
         mempalaceEnabled: settings.mempalaceEnabled !== false,
-        extraTools: profile.allowMcp ? extraTools : undefined,
+        extraTools,
       })
     : [];
   // Featherless docs: resend reasoning_content across tool calls for thinking models.

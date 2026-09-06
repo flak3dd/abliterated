@@ -408,7 +408,9 @@ export function shouldUseTaskGraph(opts: {
   buildProcess?: boolean;
   multiAgent?: boolean;
   hasExistingGraph?: boolean;
+  verifyStrictProfile?: boolean;
 }): boolean {
+  if (opts.hasExistingGraph) return true;
   if (opts.multiAgent) return true;
   if (opts.largeJob || opts.buildProcess) return true;
   return false;

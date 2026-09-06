@@ -73,8 +73,21 @@ import {
   looksLikeBuildOutput,
   shouldSkipSelfDeepen,
   looksReadOnlyOrControlPrompt,
+  looksTrivialFileEdit,
+  type AgentRunRecord,
 } from '../lib/agentHelpers';
-import { looksLikeProvenImprovement, buildProveImproveNudge } from '../lib/proveImprove';
+import { looksLikeProvenImprovement, buildProveImproveNudge, buildRunProof } from '../lib/proveImprove';
+import {
+  needsInspectBeforeWrite,
+  buildInspectBeforeWriteNudge,
+  shouldEvidenceDeepen,
+  extractLockedGoal,
+  lastOperatorPrompt,
+  lockedGoalSystemBlock,
+  hasOpenTodos,
+  type RunProof,
+} from '../lib/harnessGates';
+import { ProofChip } from '../components/chat/ProofChip';
 import {
   PLAN_CODE_OMITTED_NOTE,
   liftReasoningWork,
@@ -84,6 +97,16 @@ import {
 import { hasValidCompletionFooter } from '../lib/completionFooter';
 import { asStringList, executeAgentTool, toolArgString } from '../lib/agentTools';
 import { executeMcpToolCall, listConnectedMcpTools, mcpToolsToOpenAi, isMcpToolName } from '../lib/mcpClient';
+import {
+  planCapabilities,
+  needsMcpFollowNudge,
+  needsSkillCreateNudge,
+  needsSkillReadNudge,
+  buildMcpFollowNudge,
+  buildSkillCreateNudge,
+  buildSkillReadNudge,
+  type CapabilityPlan,
+} from '../lib/capabilityRouter';
 import { buildFakeToolNudge, looksLikeFakeToolTheater, parseFakeToolCalls } from '../lib/fakeToolCalls';
 import { detokenizeArtifacts } from '../lib/detokenizeArtifacts';
 import { streamChatCompletion } from '../lib/sse';
@@ -417,6 +440,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
   const [busy, setBusy] = useState(false);
   const [loopTurn, setLoopTurn] = useState(0);
   const [lastStopReason, setLastStopReason] = useState<AgentStopReason | null>(null);
+  const [lastProof, setLastProof] = useState<RunProof | null>(null);
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>(bridge.currentStatus);
   const [appRoot, setAppRoot] = useState(bridge.currentAppRoot);
   const [dirConfirmed, setDirConfirmed] = useState(false);
@@ -799,6 +823,20 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     bridgeStatus,
   ]);
 
+  const buildCapabilityPlan = (queryText: string): CapabilityPlan =>
+    planCapabilities({
+      queryText,
+      skills: skillsRecords,
+      mcpTools: listConnectedMcpTools(),
+      skillsEnabled: settingsRef.current.skillsEnabled !== false,
+      allowAllMcp: agentProfile.allowMcp && !planMode,
+      canWriteSkill: !planMode && autoAcceptEdits && agentProfile.toolTier === 'full',
+      excludeSkillIds:
+        settingsRef.current.skillsEnabled !== false && settingsRef.current.verifyStrictProfile === true
+          ? ['verify-strict']
+          : [],
+    });
+
   const toApiMessages = (list: Message[], extraSystem: string[] = []): ChatOpenAiMessage[] => {
     const out: ChatOpenAiMessage[] = [];
     let sys = thread.systemPrompt || settingsRef.current.systemPrompt || '';
@@ -825,9 +863,11 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       planMode && lastUser && /\b(build|implement|apply|write|code)\b/i.test(lastUser.content)
         ? 'Plan mode is still on; only checklist allowed — operator must Approve to write. Do not emit diffs.'
         : '';
+    const lockedGoal = extractLockedGoal(list);
     const injectGraph = shouldUseTaskGraph({
       largeJob: !!(lastUser && looksLargeJob(lastUser.content)),
       buildProcess: !!buildProcess,
+      hasExistingGraph: !!taskGraphBlock,
     });
     const injectVerifyStrict =
       settings.skillsEnabled !== false &&
@@ -839,17 +879,20 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     const verifyStrictBlock = injectVerifyStrict
       ? formatVerifyStrictSkillPrompt(skillsRecords, { force: true })
       : '';
+    const capPlan = buildCapabilityPlan(`${lockedGoal}\n${lastOperatorPrompt(list) || lastUser?.content || ''}`);
     sys = [
       sys,
       LIVE_WORKSPACE_SUFFIX,
       projectMemoryBlock,
       mempalaceBlock,
+      lockedGoalSystemBlock(lockedGoal),
       injectGraph ? taskGraphBlock : '',
       !agentProfile.compactPrompt && settings.skillsEnabled !== false
         ? formatSkillsCatalogPrompt(skillsCatalog)
         : '',
       !agentProfile.compactPrompt && settings.skillsEnabled !== false ? workspaceSkillsBlock : '',
       verifyStrictBlock,
+      capPlan.systemBlock,
 
       shouldWriteWorkspaceFiles({
         planMode,
@@ -1031,11 +1074,23 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
 
   const finishRun = (
     stopReason: AgentStopReason,
-    meta: { startedAt: number; turns: number; tools: string[] },
+    meta: {
+      startedAt: number;
+      turns: number;
+      tools: string[];
+      theaterRetries?: number;
+      fakeToolParsed?: number;
+      deepenPasses?: number;
+      verifyEvidence?: boolean;
+      provenImprovement?: boolean;
+      inspectBeforeWrite?: boolean;
+      proof?: RunProof;
+    },
   ) => {
     const endedAt = Date.now();
     setLastStopReason(stopReason);
-    recordAgentRun({
+    if (meta.proof) setLastProof(meta.proof);
+    const run: AgentRunRecord = {
       threadId: thread.id,
       startedAt: meta.startedAt,
       endedAt,
@@ -1043,7 +1098,14 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       stopReason,
       tools: meta.tools,
       ms: endedAt - meta.startedAt,
-    });
+      theaterRetries: meta.theaterRetries,
+      fakeToolParsed: meta.fakeToolParsed,
+      deepenPasses: meta.deepenPasses,
+      verifyEvidence: meta.verifyEvidence,
+      provenImprovement: meta.provenImprovement,
+      inspectBeforeWrite: meta.inspectBeforeWrite,
+    };
+    recordAgentRun(run);
     const s = settingsRef.current;
     if (s.mempalaceEnabled === false || s.mempalaceAutoSave === false) return;
     if (!bridge.connected) return;
@@ -1074,6 +1136,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     setLoopTurn(1);
     loopTurnRef.current = 1;
     setLastStopReason(null);
+    setLastProof(null);
     pendingMidRunRef.current = [];
     setQueuedMidRun(0);
     queuedMidRunRef.current = 0;
@@ -1087,6 +1150,11 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     let turnsDone = 0;
     let deepensUsed = 0;
     let fakeToolRetryUsed = false;
+    let fakeToolParsedCount = 0;
+    let inspectBeforeWriteUsed = false;
+    let mcpFollowNudgeUsed = false;
+    let skillCreateNudgeUsed = false;
+    let skillReadNudgeUsed = false;
     let buildTodoNudgeUsed = false;
     let buildImplementNudgeUsed = false;
     let proveImproveNudgeUsed = false;
@@ -1115,7 +1183,10 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     };
 
     try {
-      const lastUser = [...history].reverse().find((m) => m.role === 'user');
+      const lastUser = (() => {
+        const prompt = lastOperatorPrompt(history);
+        return prompt ? { role: 'user' as const, content: prompt } : [...history].reverse().find((m) => m.role === 'user');
+      })();
       const grokBuildProcess =
         !planMode &&
         !!(
@@ -1170,18 +1241,24 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         try {
           const live = settingsRef.current;
           const active = resolveActiveSettings(live);
+          const capNow = buildCapabilityPlan(
+            `${extractLockedGoal(current)}\n${lastOperatorPrompt(current) || lastUser?.content || ''}`,
+          );
+          const extraMcpTools = capNow.extraMcp.length
+            ? mcpToolsToOpenAi(capNow.extraMcp)
+            : agentProfile.allowMcp
+              ? mcpToolsToOpenAi(listConnectedMcpTools())
+              : [];
           const result = await streamChatCompletion({
             settings: live,
             model: active.defaultModel || thread.model,
             messages: toApiMessages(current, turn === 1 ? prefetched : []),
             abortSignal: ac.signal,
             enabledTools: planMode ? effectiveTools : thread.enabledTools,
-            extraTools: agentProfile.allowMcp
-              ? (mcpToolsToOpenAi(listConnectedMcpTools()) as Parameters<
-                  typeof streamChatCompletion
-                >[0]['extraTools'])
+            extraTools: extraMcpTools.length
+              ? (extraMcpTools as Parameters<typeof streamChatCompletion>[0]['extraTools'])
               : undefined,
-            toolChoice: turn === 1 && exploreIntent ? 'required' : 'auto',
+            toolChoice: turn === 1 && (exploreIntent || capNow.forceTools) ? 'required' : 'auto',
             flightKey: `chat:${thread.id}`,
             onDelta: (text) => {
               if (!turnHasContentRef.current) {
@@ -1252,6 +1329,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             const detectContent = stripThinkForDetect(content);
             const fakeParsed = parseFakeToolCalls(detectContent);
             if (fakeParsed.length) {
+              fakeToolParsedCount += fakeParsed.length;
               toolCalls = fakeParsed.map((f) => ({
                 id: uid('tool'),
                 name: f.name as ToolCallPayload['name'],
@@ -1384,12 +1462,17 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                 }
               }
 
+              const toolEvidence = current
+                .filter((m) => m.role === 'tool')
+                .map((m) => m.content || '')
+                .join('\n');
+              const verifyText = `${detectContent}\n${toolEvidence}`;
               if (
                 grokBuildProcess &&
                 !buildVerifyNudgeUsed &&
                 !shouldSkipSelfDeepen(detectContent, { status: assistant.status }) &&
                 looksLikeBuildOutput(detectContent, toolsUsed) &&
-                !looksLikeVerifyEvidence(detectContent, toolsUsed) &&
+                !looksLikeVerifyEvidence(verifyText, toolsUsed) &&
                 !isAnswerCompleteMarker(content)
               ) {
                 buildVerifyNudgeUsed = true;
@@ -1419,7 +1502,18 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                 liveDeepen.completionFooterEnabled !== false && hasValidCompletionFooter(content);
               // Junk / error / truncated / network-error turns never deepen.
               const junkTurn = shouldSkipSelfDeepen(detectContent, { status: assistant.status });
-              if (deepenOn && content.trim() && !footerDone && !junkTurn && !isAnswerCompleteMarker(content)) {
+              const openTodos =
+                hasOpenTodos(todosRef.current) || parseTodoItems(detectContent).some((t) => !t.done);
+              if (
+                shouldEvidenceDeepen({
+                  content,
+                  deepenOn,
+                  junkTurn,
+                  footerDone,
+                  answerComplete: isAnswerCompleteMarker(content),
+                  openTodos,
+                })
+              ) {
                 deepensUsed += 1;
                 setPhase(
                   'self_deepen',
@@ -1469,11 +1563,109 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                 current = persist(nudge);
                 continue;
               }
+              const capStop = buildCapabilityPlan(
+                `${extractLockedGoal(current)}\n${lastOperatorPrompt(current) || lastUser?.content || ''}`,
+              );
+              if (!planMode && !mcpFollowNudgeUsed && needsMcpFollowNudge(capStop, toolsUsed) && !isAnswerCompleteMarker(content)) {
+                mcpFollowNudgeUsed = true;
+                setPhase(
+                  'self_deepen',
+                  { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+                  turn,
+                );
+                const nudge: Message = {
+                  id: uid('msg'),
+                  threadId: thread.id,
+                  role: 'user',
+                  content: buildMcpFollowNudge(capStop),
+                  createdAt: Date.now(),
+                  status: 'complete',
+                };
+                current = persist(nudge);
+                continue;
+              }
+              if (
+                !planMode &&
+                !skillReadNudgeUsed &&
+                needsSkillReadNudge(capStop, toolsUsed) &&
+                !isAnswerCompleteMarker(content)
+              ) {
+                skillReadNudgeUsed = true;
+                setPhase(
+                  'self_deepen',
+                  { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+                  turn,
+                );
+                const nudge: Message = {
+                  id: uid('msg'),
+                  threadId: thread.id,
+                  role: 'user',
+                  content: buildSkillReadNudge(capStop),
+                  createdAt: Date.now(),
+                  status: 'complete',
+                };
+                current = persist(nudge);
+                continue;
+              }
+              if (
+                !planMode &&
+                !skillCreateNudgeUsed &&
+                needsSkillCreateNudge(capStop, toolsUsed) &&
+                !isAnswerCompleteMarker(content)
+              ) {
+                skillCreateNudgeUsed = true;
+                setPhase(
+                  'self_deepen',
+                  { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+                  turn,
+                );
+                const nudge: Message = {
+                  id: uid('msg'),
+                  threadId: thread.id,
+                  role: 'user',
+                  content: buildSkillCreateNudge(capStop),
+                  createdAt: Date.now(),
+                  status: 'complete',
+                };
+                current = persist(nudge);
+                continue;
+              }
               // Content is non-empty here (coalesce / empty handling above).
               setPhase('finishing', {}, turn);
               stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
               break;
             }
+          }
+
+          if (
+            !planMode &&
+            !inspectBeforeWriteUsed &&
+            lastUser?.content &&
+            needsInspectBeforeWrite({
+              userText: lastUser.content,
+              toolsUsed,
+              pendingToolNames: toolCalls.map((t) => t.name),
+              trivialEdit: looksTrivialFileEdit(lastUser.content),
+            })
+          ) {
+            inspectBeforeWriteUsed = true;
+            assistant.toolCalls = undefined;
+            flushStreamPersist({ ...assistant, toolCalls: undefined });
+            setPhase(
+              'self_deepen',
+              { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+              turn,
+            );
+            const nudge: Message = {
+              id: uid('msg'),
+              threadId: thread.id,
+              role: 'user',
+              content: buildInspectBeforeWriteNudge(),
+              createdAt: Date.now(),
+              status: 'complete',
+            };
+            current = persist(nudge);
+            continue;
           }
 
           setPhase('tool_plan', { toolName: undefined }, turn);
@@ -1560,7 +1752,26 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           });
         }
       }
-      finishRun(stopReason, { startedAt, turns: turnsDone, tools: [...new Set(toolsUsed)] });
+      const lastAsst = [...getMessages(thread.id)].reverse().find((m) => m.role === 'assistant');
+      const toolEvidenceEnd = getMessages(thread.id)
+        .filter((m) => m.role === 'tool')
+        .map((m) => m.content || '')
+        .join('\n');
+      const proofText = `${lastAsst?.content || ''}\n${toolEvidenceEnd}`;
+      const uniqueTools = [...new Set(toolsUsed)];
+      const proof = buildRunProof(proofText, uniqueTools);
+      finishRun(stopReason, {
+        startedAt,
+        turns: turnsDone,
+        tools: uniqueTools,
+        theaterRetries: fakeToolRetryUsed ? 1 : 0,
+        fakeToolParsed: fakeToolParsedCount,
+        deepenPasses: deepensUsed,
+        verifyEvidence: proof.verify,
+        provenImprovement: proof.proven,
+        inspectBeforeWrite: inspectBeforeWriteUsed,
+        proof,
+      });
       if (stopReason === 'cap') {
         persist({
           id: uid('msg'),
@@ -2021,6 +2232,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             ticking={busy}
             compact={!busy && showIdleMonitor}
           />
+        ) : null}
+        {!busy && lastProof ? (
+          <ProofChip proof={lastProof} className="mb-1.5" />
         ) : null}
         {!busy && !needsWorkingDir ? (
           <div className="mb-1.5">

@@ -1,21 +1,13 @@
 /** Hard gate: agent turns must prove enhancement (file write, verify, or tool-backed finding). */
 
-const BUILD_WRITE_TOOLS = new Set([
-  'write_file',
-  'apply_patch',
-  'search_replace',
-  'edit_file',
-  'str_replace',
-]);
+import { BUILD_WRITE_TOOL_NAMES, EXPLORE_TOOL_NAMES, summarizeRunProof, type RunProof } from './harnessGates';
+import { looksLikeVerifyEvidence } from './verifyDone';
 
-const EXPLORE_TOOLS = new Set([
-  'read_file',
-  'grep',
-  'list_dir',
-  'glob',
-  'semantic_search',
-  'file_outline',
-]);
+const BUILD_WRITE_TOOLS = BUILD_WRITE_TOOL_NAMES;
+const EXPLORE_TOOLS = EXPLORE_TOOL_NAMES;
+
+export type { RunProof };
+export { summarizeRunProof };
 
 function hasTool(toolsUsed: string[] | undefined, names: Set<string>): boolean {
   if (!toolsUsed || !toolsUsed.length) return false;
@@ -37,16 +29,26 @@ export { looksReadOnlyOrControlPrompt } from './agentHelpers';
 export function looksLikeProvenImprovement(content: string, toolsUsed?: string[]): boolean {
   if (hasTool(toolsUsed, BUILD_WRITE_TOOLS)) return true;
   if (looksLikeContentArtifacts(content)) return true;
-  if (toolsUsed && toolsUsed.some((t) => String(t || '').toLowerCase() === 'verify')) return true;
+  if (looksLikeVerifyEvidence(content, toolsUsed)) return true;
   if (toolsUsed && toolsUsed.some((t) => String(t || '').toLowerCase() === 'shell')) {
     const c = (content || '').toLowerCase();
     if (/\b(pass(ed)?|ok|success|green|typecheck|lint|tests?\s+(pass|ok))\b/.test(c)) return true;
   }
   if (hasTool(toolsUsed, EXPLORE_TOOLS)) {
     const c = (content || '').trim();
-    if (c.length > 80 && !/\b(i('ll| will\s+look|let me (check|look|search)|going to (read|check))\b/i.test(c)) return true;
+    if (c.length > 80 && !/\b(i'll|i will look|let me (check|look|search)|going to (read|check))\b/i.test(c)) return true;
   }
   return false;
+}
+
+export function buildRunProof(content: string, toolsUsed?: string[]): RunProof {
+  const tools = (toolsUsed || []).map((t) => String(t || '').toLowerCase());
+  return summarizeRunProof({
+    write: hasTool(toolsUsed, BUILD_WRITE_TOOLS) || looksLikeContentArtifacts(content),
+    verify: looksLikeVerifyEvidence(content, toolsUsed),
+    explore: tools.some((t) => EXPLORE_TOOLS.has(t)),
+    proven: looksLikeProvenImprovement(content, toolsUsed),
+  });
 }
 
 export function buildProveImproveNudge(): string {

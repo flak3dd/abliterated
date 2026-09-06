@@ -19,6 +19,14 @@ export type AgentRunRecord = {
   stopReason: AgentStopReason;
   tools: string[];
   ms: number;
+  /** Times the model emitted tool theater and we recovered or stopped. */
+  theaterRetries?: number;
+  /** Count of fake tool_calls parsed out of markdown/JSON this run. */
+  fakeToolParsed?: number;
+  deepenPasses?: number;
+  verifyEvidence?: boolean;
+  provenImprovement?: boolean;
+  inspectBeforeWrite?: boolean;
 };
 
 export function clampMaxAgentTurns(n: unknown): number {

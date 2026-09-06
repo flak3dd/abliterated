@@ -32,6 +32,10 @@ execFileSync(
 const vd = await import(pathToFileURL(path.join(outDir, "verifyDone.js")).href);
 assert.equal(vd.looksLikeVerifyEvidence("", ["verify"]), true);
 assert.equal(vd.looksLikeVerifyEvidence("hi", ["shell"]), false);
+assert.equal(vd.looksLikeVerifyEvidence("npx tsc -b\nexit 0", ["shell"]), true);
+assert.equal(vd.looksLikeVerifyEvidence("npm test\nTest Suites: 1 passed\nexit 0", ["shell"]), true);
+assert.equal(vd.looksLikeVerifyEvidence("npx tsc -b\nerror TS2304\nexit 1", ["shell"]), false);
+assert.equal(vd.looksLikeVerifyEvidence("I'll run tests later", ["shell"]), false);
 assert.ok(vd.buildIncompleteCapNote(24).includes("24"));
 assert.equal(vd.coldVerifierRequiresVerify(["shell"]).ok, false);
 assert.equal(vd.coldVerifierRequiresVerify(["verify"]).ok, true);

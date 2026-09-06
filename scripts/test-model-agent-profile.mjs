@@ -49,6 +49,18 @@ assert.equal(qwen.sendTools, true);
 assert.equal(qwen.useThoughtLock, true);
 assert.ok(qwen.toolNames.includes("shell") || qwen.toolNames.includes("read_file"));
 assert.ok(qwen.toolNames.includes("write_file"));
+const core = buildModelAgentProfile({
+  model: "Qwen/Qwen3-8B",
+  provider: "featherless",
+  toolUse: true,
+  contextLength: 8192,
+  buildMode: true,
+});
+assert.equal(core.toolTier, "core");
+assert.ok(core.toolNames.includes("verify"));
+assert.ok(core.toolNames.includes("shell"));
+assert.ok(core.toolNames.includes("read_skill"));
+assert.ok(core.toolNames.includes("suggest_skill"));
 assert.ok(qwen.systemAddendum.includes("Thinking model"));
 
 const base = buildModelAgentProfile({

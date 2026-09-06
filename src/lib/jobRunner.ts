@@ -15,6 +15,7 @@ import {
   buildBuildModeImplementNudge,
   buildVerifyBeforeDoneNudge,
   looksLikeVerifyEvidence,
+  looksTrivialFileEdit,
   clampMaxAgentTurns,
   EMPTY_CONTENT_REPLY_NOTE,
   isMissingContentAnswer,
@@ -25,9 +26,23 @@ import {
   shouldApplyBuildProcess,
 } from "./agentHelpers";
 import { looksLikeProvenImprovement, buildProveImproveNudge, looksReadOnlyOrControlPrompt } from './proveImprove';
+import {
+  needsInspectBeforeWrite,
+  buildInspectBeforeWriteNudge,
+  lockedGoalSystemBlock,
+} from "./harnessGates";
 import { finalizeReasoningChannel } from "./agentPhase";
 import { enforceThoughtNoCode } from "./reasoningWork";
-import { executeMcpToolCall } from "./mcpClient";
+import { executeMcpToolCall, listConnectedMcpTools, mcpToolsToOpenAi } from "./mcpClient";
+import {
+  planCapabilities,
+  needsMcpFollowNudge,
+  needsSkillCreateNudge,
+  needsSkillReadNudge,
+  buildMcpFollowNudge,
+  buildSkillCreateNudge,
+  buildSkillReadNudge,
+} from "./capabilityRouter";
 import { streamChatCompletion } from "./sse";
 import { buildModelAgentProfile } from "./modelAgentProfile";
 import { peekFeatherlessModel } from "./featherlessLimits";
@@ -271,18 +286,22 @@ async function runJob(initial: Job, settings: ClientSettings) {
   }
 
   let taskGraphBlock = "";
+  let existingGraph = null as ReturnType<typeof parseTaskGraph>;
+  if (bridge.connected) {
+    try {
+      existingGraph = parseTaskGraph(await bridge.readFile(TASK_GRAPH_PATH));
+    } catch {
+      existingGraph = null;
+    }
+  }
   const useGraph = shouldUseTaskGraph({
     largeJob: large,
     buildProcess,
-    multiAgent: shouldRunMultiAgent(job, settings),
+    multiAgent: shouldRunMultiAgent(job, settings, existingGraph),
+    hasExistingGraph: !!(existingGraph && (existingGraph.goal.trim() || existingGraph.subtasks.length)),
   });
-  if (useGraph && bridge.connected) {
-    try {
-      const raw = await bridge.readFile(TASK_GRAPH_PATH);
-      taskGraphBlock = formatTaskGraphPrompt(parseTaskGraph(raw));
-    } catch {
-      taskGraphBlock = "";
-    }
+  if (useGraph && existingGraph) {
+    taskGraphBlock = formatTaskGraphPrompt(existingGraph);
   } else if (!useGraph) {
     job = appendLog(job, "one-shot: skipping task graph inject");
   }
@@ -297,13 +316,32 @@ async function runJob(initial: Job, settings: ClientSettings) {
     contextLength: jobPeek?.contextLength,
     enabledTools,
   });
+  const capPlan = planCapabilities({
+    queryText: job.prompt,
+    skills: listedSkills as never,
+    mcpTools: listConnectedMcpTools(),
+    skillsEnabled: settings.skillsEnabled !== false,
+    allowAllMcp: jobProfile.allowMcp && settings.planModeEnabled !== true,
+    canWriteSkill:
+      settings.planModeEnabled !== true &&
+      settings.autoAcceptEdits === true &&
+      jobProfile.toolTier === "full",
+    excludeSkillIds: verifyStrictBlock ? ["verify-strict"] : [],
+  });
+  const extraMcpTools = capPlan.extraMcp.length
+    ? mcpToolsToOpenAi(capPlan.extraMcp)
+    : jobProfile.allowMcp
+      ? mcpToolsToOpenAi(listConnectedMcpTools())
+      : [];
   const systemParts = [
     settings.systemPrompt || "",
     projectMemoryBlock,
     mempalaceBlock,
+    lockedGoalSystemBlock(job.prompt),
     !jobProfile.compactPrompt ? skillsCatalogBlock : "",
     !jobProfile.compactPrompt ? workspaceSkillsBlock : "",
     verifyStrictBlock,
+    capPlan.systemBlock,
     taskGraphBlock,
 
     effectiveRoot
@@ -338,8 +376,18 @@ async function runJob(initial: Job, settings: ClientSettings) {
   } else if (large) {
     job = appendLog(job, "large job protocol: ToDo → explore codebase → implement");
   }
+  if (capPlan.matchedSkills.length) {
+    job = appendLog(
+      job,
+      `matched skills: ${capPlan.matchedSkills.map((s) => s.id).join(", ")}`,
+    );
+  }
+  if (capPlan.extraMcp.length) {
+    job = appendLog(job, `matched MCP: ${capPlan.extraMcp.slice(0, 6).map((t) => t.namespaced).join(", ")}`);
+  }
+  if (capPlan.suggestNewSkill) job = appendLog(job, "skill create: no matching recipe — will nudge");
 
-  if (shouldRunMultiAgent(job, settings)) {
+  if (shouldRunMultiAgent(job, settings, existingGraph)) {
     try {
       job = await runMultiAgentFleet({
         job,
@@ -371,6 +419,10 @@ async function runJob(initial: Job, settings: ClientSettings) {
   let buildImplementNudgeUsed = false;
   let proveImproveNudgeUsed = false;
   let buildVerifyNudgeUsed = false;
+  let inspectBeforeWriteUsed = false;
+  let mcpFollowNudgeUsed = false;
+  let skillCreateNudgeUsed = false;
+  let skillReadNudgeUsed = false;
   let hitCap = false;
   const toolsUsed: string[] = [];
 
@@ -388,6 +440,10 @@ async function runJob(initial: Job, settings: ClientSettings) {
         messages: [{ role: "system", content: systemParts.join("\n\n") }, ...history],
         abortSignal: ac.signal,
         enabledTools,
+        extraTools: extraMcpTools.length
+          ? (extraMcpTools as Parameters<typeof streamChatCompletion>[0]['extraTools'])
+          : undefined,
+        toolChoice: turn === 1 && capPlan.forceTools ? "required" : "auto",
         flightKey: `job:${job.id}`,
         onDelta: (t) => {
           assistantText += t;
@@ -480,11 +536,15 @@ async function runJob(initial: Job, settings: ClientSettings) {
           job = appendLog(job, "build process: ToDo without diffs — implement nudge");
           continue;
         }
+        const toolEvidence = history
+          .filter((m) => m.role === "tool")
+          .map((m) => m.content || "")
+          .join("\n");
         if (
           (buildProcess || large) &&
           !buildVerifyNudgeUsed &&
           looksLikeBuildOutput(assistantText, toolsUsed) &&
-          !looksLikeVerifyEvidence(assistantText, toolsUsed)
+          !looksLikeVerifyEvidence(`${assistantText}\n${toolEvidence}`, toolsUsed)
         ) {
           buildVerifyNudgeUsed = true;
           history.push({ role: "user", content: buildVerifyBeforeDoneNudge() });
@@ -502,8 +562,56 @@ async function runJob(initial: Job, settings: ClientSettings) {
           job = appendLog(job, "prove-improve: no evidence — nudge");
           continue;
         }
+        if (
+          settings.planModeEnabled !== true &&
+          !mcpFollowNudgeUsed &&
+          needsMcpFollowNudge(capPlan, toolsUsed)
+        ) {
+          mcpFollowNudgeUsed = true;
+          history.push({ role: "user", content: buildMcpFollowNudge(capPlan) });
+          job = appendLog(job, "mcp-follow: matching MCP unused — nudge");
+          continue;
+        }
+        if (
+          settings.planModeEnabled !== true &&
+          !skillReadNudgeUsed &&
+          needsSkillReadNudge(capPlan, toolsUsed)
+        ) {
+          skillReadNudgeUsed = true;
+          history.push({ role: "user", content: buildSkillReadNudge(capPlan) });
+          job = appendLog(job, "skill-follow: matching skill unused — nudge");
+          continue;
+        }
+        if (
+          settings.planModeEnabled !== true &&
+          !skillCreateNudgeUsed &&
+          needsSkillCreateNudge(capPlan, toolsUsed)
+        ) {
+          skillCreateNudgeUsed = true;
+          history.push({ role: "user", content: buildSkillCreateNudge(capPlan) });
+          job = appendLog(job, "skill-create: reusable process missing — nudge");
+          continue;
+        }
         job = appendLog(job, "no tool calls — done");
         break;
+      }
+
+      if (
+        settings.planModeEnabled !== true &&
+        !inspectBeforeWriteUsed &&
+        needsInspectBeforeWrite({
+          userText: job.prompt,
+          toolsUsed,
+          pendingToolNames: toolCalls.map((t) => t.name),
+          trivialEdit: looksTrivialFileEdit(job.prompt),
+        })
+      ) {
+        inspectBeforeWriteUsed = true;
+        const last = history[history.length - 1];
+        if (last && last.role === "assistant") delete last.tool_calls;
+        history.push({ role: "user", content: buildInspectBeforeWriteNudge() });
+        job = appendLog(job, "inspect-before-write: first write without explore — nudge");
+        continue;
       }
 
       for (const tc of toolCalls) {

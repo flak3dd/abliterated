@@ -603,7 +603,7 @@ Only when rewrite beats re-patching. First line exactly \`// <relative/path>\` (
 - MemPalace: memory_search before answering about past work/people/decisions; memory_save for facts that should persist; memory_status / memory_wake for palace overview. Search-before-answer. Do not guess palace contents.
 
 ## Work
-LOCKED: every non-Plan agent response must prove enhancement — a file write (`write_file` / diff / `// path` fence), a verified command result, or a concrete tool-backed finding. Chatter or ToDo-only without proof is incomplete.
+LOCKED: every non-Plan agent response must prove enhancement — a file write (\`write_file\` / diff / \`// path\` fence), a verified command result, or a concrete tool-backed finding. Chatter or ToDo-only without proof is incomplete.
 Trivial one-shot: do it (tiny patch, single read). No formal plan.
 Build / implement / scaffold / large job / Build mode:
 1. Reasoning (if on): goal; what to inspect; each step as #, why, success. After a tool, one line on what changed. Do not restart unless contradicted.
@@ -655,9 +655,32 @@ export const COMPLETENESS_HARD_LOCK =
   'Do not stop at a skeleton, TODO, or partial product. Finish the feature in this run, then verify (tsc / tests / scoped bash).\n' +
   'The build is incomplete until the final product works and those tests have been executed.';
 
-export const SYSTEM_PROMPT = PREVIOUS_SYSTEM_PROMPT_V17.replace(
+export const PREVIOUS_SYSTEM_PROMPT_V18 = PREVIOUS_SYSTEM_PROMPT_V17.replace(
   '5. A todo list with no diffs is a failed build.',
   '5. A todo list with no diffs is a failed build.\n\n' + COMPLETENESS_HARD_LOCK,
+);
+
+/** Paths / change / verify / open items — required before a Done footer. */
+export const DONE_CONTRACT_SECTION =
+  '## Done contract\n' +
+  'A turn is complete only when it names:\n' +
+  '- Paths written or inspected\n' +
+  '- What changed (or why no write)\n' +
+  '- Verify outcome (command + result/exit) after a landed change\n' +
+  '- Open items (none, or listed)\n' +
+  'Do not emit a Done footer that claims completeness without those facts. ' +
+  'Inspect the target file with tools before the first write (skip only for a trivial one-line edit). ' +
+  'Stay on the locked user goal.\n\n';
+
+export const PREVIOUS_SYSTEM_PROMPT_V19 = PREVIOUS_SYSTEM_PROMPT_V18.replace(
+  '## Self-review',
+  DONE_CONTRACT_SECTION + '## Self-review',
+);
+
+export const SYSTEM_PROMPT = PREVIOUS_SYSTEM_PROMPT_V19.replace(
+  '- MCP as mcp__server__tool when configured. web_search: live web results, then web_fetch chosen URLs. web_fetch: http(s) only. generate_image: only if Images is enabled.',
+  '- Skills: matching SKILL.md recipes are auto-injected when they fit the ask — follow them this turn. Call `read_skill` only if a needed body was not injected. Call `suggest_skill` when a reusable process is missing from the catalog; `write_skill` after confirm (Auto-accept may save immediately).\n' +
+    '- MCP: matching connected MCP tools are attached as `mcp__server__tool`. Call them instead of faking browser/HTTP/memory results. web_search: live web results, then web_fetch chosen URLs. web_fetch: http(s) only. generate_image: only if Images is enabled.',
 );
 
 /** Prior SYSTEM_PROMPT before compact Work section (dropped Large jobs / Multi-step duplication). */
@@ -768,4 +791,6 @@ export const LEGACY_PROMPTS = [
   PREVIOUS_SYSTEM_PROMPT_V15,
   PREVIOUS_SYSTEM_PROMPT_V16,
   PREVIOUS_SYSTEM_PROMPT_V17,
+  PREVIOUS_SYSTEM_PROMPT_V18,
+  PREVIOUS_SYSTEM_PROMPT_V19,
 ] as const;

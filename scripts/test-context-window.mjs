@@ -92,6 +92,10 @@ const fitted = fitChatPayload({
 assert.ok(fitted.estimatedTokens <= fitted.budget, `est ${fitted.estimatedTokens} > budget ${fitted.budget}`);
 assert.equal(fitted.messages[fitted.messages.length - 1].content, 'what is 2+2?');
 assert.equal(fitted.messages[0].role, 'system');
+assert.ok(
+  fitted.messages.some((m) => m.role === 'user' && m.content === 'old question'),
+  'locked first user goal must stay pinned',
+);
 assert.ok(fitted.dropped > 0 || fitted.truncated);
 
 const budget = promptTokenBudget(32768, 4096);

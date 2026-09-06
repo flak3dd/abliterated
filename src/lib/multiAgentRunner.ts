@@ -36,6 +36,7 @@ import { peekFeatherlessModel } from "./featherlessLimits";
 import type { ChatOpenAiMessage, ClientSettings, Job, ToolType } from "../types";
 import { DEFAULT_ENABLED_TOOLS, PLAN_MODE_TOOLS } from "../types";
 import { executeMcpToolCall } from "./mcpClient";
+import { assignableNodeCount, multiAgentShouldRun } from "./harnessGates";
 
 export type MultiAgentProgress = {
   job: Job;
@@ -527,9 +528,16 @@ async function runRoleLoop(opts: {
   return { job, toolsUsed };
 }
 
-/** Whether a Job should use the multi-agent runner. */
-export function shouldRunMultiAgent(job: Job, settings: ClientSettings): boolean {
-  if (settings.multiAgentEnabled !== true) return false;
-  if (job.multiAgent === true) return true;
-  return false;
+/** Whether a Job should use the multi-agent runner. Graph with <2 assignable nodes stays single-agent. */
+export function shouldRunMultiAgent(
+  job: Job,
+  settings: ClientSettings,
+  graph?: TaskGraph | null,
+): boolean {
+  return multiAgentShouldRun({
+    multiAgentEnabled: settings.multiAgentEnabled === true,
+    jobMultiAgent: job.multiAgent === true,
+    hasGraph: !!(graph && graph.subtasks.length),
+    assignableNodes: assignableNodeCount(graph),
+  });
 }

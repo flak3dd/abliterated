@@ -9,9 +9,14 @@ export const CORE_AGENT_TOOLS = [
   'list_dir',
   'file_outline',
   'todo',
+  'verify',
+  'shell',
   'git_status',
   'git_diff',
   'memory_search',
+  'list_skills',
+  'read_skill',
+  'suggest_skill',
 ] as const;
 
 const FULL_TOOL_NAMES = [
