@@ -3,7 +3,7 @@
 **Brand:** Abliterated / abliteration.ai
 **Product:** Local agent IDE - chat + tools + Jobs + MCP for OpenAI-compatible endpoints.
 **Distribution:** Electron desktop (macOS dmg/dir first; Windows NSIS/portable later).
-**Monetization:** Freemium license keys (offline stub now; Stripe-signed keys later).
+**Monetization:** Freemium license keys; in-app Stripe + Solana + redeem via abliterated.app APIs (secrets on site).
 
 ---
 
@@ -69,10 +69,18 @@ Public client pepper is not a secret; stub accepts prefixes only.
 
 ---
 
+## In-app checkout
+
+Checkout is **in-app** (Settings → License / Plan): card (Stripe Checkout session), Solana USDC, and access-code redeem.
+
+- The desktop IDE calls public HTTPS APIs on **abliterated.app** (`POST /api/checkout`, `GET /api/checkout/session`, `POST|GET /api/checkout/solana`, `POST /api/checkout/solana/confirm`, `POST /api/redeem`).
+- Stripe secrets, webhooks, and license minting stay on the **site** — never embed payment provider secrets in this client repo.
+- After payment, the IDE polls until a license key appears, then activates via the existing `licenseKey` / `persistLicense` path. Optional deep link: `abliterated://license?key=…`.
+
 ## Roadmap to payments
 
-1. Checkout links for Pro and Team
-2. Webhook issues signed license keys
+1. ~~Checkout links for Pro and Team~~ — in-app checkout shipped (card + Solana + redeem)
+2. Webhook issues signed license keys (site)
 3. Customer portal
 4. Optional online expiry check
 5. Notarization, auto-update, Windows signing

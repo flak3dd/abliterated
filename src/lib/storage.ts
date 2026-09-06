@@ -98,6 +98,8 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   mcpServers: [],
   skillsEnabled: true,
   licenseKey: import.meta.env.DEV ? 'ABLIT-ADMIN' : '',
+  billingSiteUrl: 'https://abliterated.app',
+  billingEmail: '',
   webSearchBraveKey: '',
   webSearchSearxUrl: '',
   jobWorktreesEnabled: false,
@@ -319,6 +321,12 @@ export function getSettings(): ClientSettings {
     skillsEnabled: stored.skillsEnabled !== false,
     licenseKey:
       typeof stored.licenseKey === 'string' ? stored.licenseKey.trim() : DEFAULT_SETTINGS.licenseKey,
+    billingSiteUrl:
+      typeof stored.billingSiteUrl === 'string' && stored.billingSiteUrl.trim()
+        ? stored.billingSiteUrl.trim().replace(/\/+$/, '')
+        : (DEFAULT_SETTINGS.billingSiteUrl || 'https://abliterated.app'),
+    billingEmail:
+      typeof stored.billingEmail === 'string' ? stored.billingEmail.trim() : '',
     webSearchBraveKey:
       typeof stored.webSearchBraveKey === 'string' ? stored.webSearchBraveKey.trim() : '',
     webSearchSearxUrl:

@@ -114,6 +114,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const desktop = window.ablitDesktop;
+    if (!desktop?.onLicenseDeepLink) return;
+    return desktop.onLicenseDeepLink((key) => {
+      const k = (key || '').trim();
+      if (!k) return;
+      const cur = settingsRef.current;
+      if ((cur.licenseKey || '').trim() === k) return;
+      const next = { ...cur, licenseKey: k };
+      setSettings(next);
+      setSettingsState(next);
+      try {
+        void desktop.setLicense?.(k);
+      } catch {
+        /* ignore */
+      }
+    });
+  }, []);
+
+  useEffect(() => {
     let handshake = 0;
     const clearForbiddenWorkspace = (appRoot = bridge.currentAppRoot) => {
       const prev = workspaceRef.current;

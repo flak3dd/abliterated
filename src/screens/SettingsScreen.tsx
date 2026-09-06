@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { bridge } from '../lib/bridgeClient';
 import {
   EXAMPLE_FILESYSTEM_MCP,
@@ -15,6 +15,21 @@ import {
   normalizeLicenseKey,
   type LicenseState,
 } from '../lib/license';
+import {
+  BILLING_PLAN_LABELS,
+  BILLING_PLANS,
+  BillingApiError,
+  confirmSolanaPayment,
+  createSolanaPayment,
+  createStripeCheckout,
+  extractStripeSessionId,
+  getCheckoutSession,
+  getOrCreateDeviceId,
+  getSolanaPayment,
+  openBillingUrl,
+  redeemAccessCode,
+  type BillingPlan,
+} from '../lib/billingApi';
 import {
   formatTokenCount,
   loadBuiltinUsage,
@@ -134,6 +149,16 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   const [mcpHint, setMcpHint] = useState('');
   const [licenseDraft, setLicenseDraft] = useState(settings.licenseKey || '');
   const [licenseMsg, setLicenseMsg] = useState('');
+  const [billingEmail, setBillingEmail] = useState(settings.billingEmail || '');
+  const [billingPlan, setBillingPlan] = useState<BillingPlan>('pro_monthly');
+  const [billingSeats, setBillingSeats] = useState(1);
+  const [redeemCode, setRedeemCode] = useState('');
+  const [checkoutBusy, setCheckoutBusy] = useState<'stripe' | 'solana' | 'redeem' | null>(null);
+  const [pendingStripeSession, setPendingStripeSession] = useState<string | null>(null);
+  const [pendingSolanaId, setPendingSolanaId] = useState<string | null>(null);
+  const [solanaPayUrl, setSolanaPayUrl] = useState('');
+  const [solanaAmount, setSolanaAmount] = useState('');
+  const pollAbortRef = useRef(0);
   const [skillRows, setSkillRows] = useState<SkillCatalogEntry[]>([]);
   const [skillsBusy, setSkillsBusy] = useState(false);
   const [mpHint, setMpHint] = useState('');
@@ -142,6 +167,16 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   useEffect(() => {
     setLicenseDraft(settings.licenseKey || '');
   }, [settings.licenseKey]);
+
+  useEffect(() => {
+    setBillingEmail(settings.billingEmail || '');
+  }, [settings.billingEmail]);
+
+  useEffect(() => {
+    return () => {
+      pollAbortRef.current += 1;
+    };
+  }, []);
 
   const patch = (partial: Partial<ClientSettings>) => {
     const next = { ...settings, ...partial };
@@ -166,6 +201,175 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
     return nextLicense;
   };
 
+  const rememberEmail = (email: string) => {
+    const trimmed = email.trim();
+    setBillingEmail(trimmed);
+    if (trimmed !== (settings.billingEmail || '')) {
+      patch({ billingEmail: trimmed });
+    }
+  };
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  const pollStripeUntilLicense = async (sessionId: string, gen: number) => {
+    setLicenseMsg(`Waiting for Stripe payment (session ${sessionId.slice(0, 18)}…)…`);
+    for (let i = 0; i < 90; i++) {
+      if (pollAbortRef.current !== gen) return;
+      try {
+        const session = await getCheckoutSession(settings, sessionId);
+        if (session.license?.key) {
+          const next = persistLicense(session.license.key);
+          setPendingStripeSession(null);
+          setCheckoutBusy(null);
+          setLicenseMsg(`Stripe paid — activated ${next.label}.`);
+          return;
+        }
+        setLicenseMsg(
+          `Stripe: ${session.payment_status || session.status || 'pending'} — waiting for license… (${i + 1})`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setLicenseMsg(`Stripe poll: ${msg}`);
+      }
+      await sleep(2500);
+    }
+    setCheckoutBusy(null);
+    setLicenseMsg('Stripe checkout timed out waiting for license. Paste the key from email if needed.');
+  };
+
+  const pollSolanaUntilLicense = async (paymentId: string, gen: number, email: string) => {
+    setLicenseMsg(`Waiting for Solana USDC (payment ${paymentId.slice(0, 12)}…)…`);
+    for (let i = 0; i < 120; i++) {
+      if (pollAbortRef.current !== gen) return;
+      try {
+        let status = await getSolanaPayment(settings, paymentId);
+        if (!status.licenseKey && (status.status === 'pending' || status.status === 'created')) {
+          try {
+            const confirmed = await confirmSolanaPayment(settings, { paymentId, email });
+            if (confirmed.licenseKey) {
+              status = { ...status, licenseKey: confirmed.licenseKey, status: confirmed.status };
+            } else if (confirmed.status) {
+              status = { ...status, status: confirmed.status };
+            }
+          } catch {
+            /* confirm may 400 while pending — keep polling GET */
+          }
+        }
+        if (status.licenseKey) {
+          const next = persistLicense(status.licenseKey);
+          setPendingSolanaId(null);
+          setCheckoutBusy(null);
+          setLicenseMsg(`Solana paid — activated ${next.label}.`);
+          return;
+        }
+        if (status.status === 'expired') {
+          setCheckoutBusy(null);
+          setLicenseMsg('Solana payment expired. Start a new USDC checkout.');
+          return;
+        }
+        setLicenseMsg(`Solana: ${status.status || 'pending'} — waiting for license… (${i + 1})`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setLicenseMsg(`Solana poll: ${msg}`);
+      }
+      await sleep(3000);
+    }
+    setCheckoutBusy(null);
+    setLicenseMsg('Solana checkout timed out waiting for license. Paste the key if email arrived.');
+  };
+
+  const startStripeCheckout = async () => {
+    const email = billingEmail.trim();
+    if (!email || !email.includes('@')) {
+      setLicenseMsg('Enter a receipt email before paying with card.');
+      return;
+    }
+    rememberEmail(email);
+    const gen = ++pollAbortRef.current;
+    setCheckoutBusy('stripe');
+    setLicenseMsg('Creating Stripe checkout…');
+    try {
+      const deviceId = getOrCreateDeviceId();
+      const created = await createStripeCheckout(settings, {
+        plan: billingPlan,
+        seats: billingPlan === 'team_monthly' ? billingSeats : undefined,
+        email,
+        client_reference_id: deviceId,
+      });
+      const sessionId = extractStripeSessionId(created.url);
+      if (sessionId) setPendingStripeSession(sessionId);
+      await openBillingUrl(created.url);
+      if (sessionId) {
+        await pollStripeUntilLicense(sessionId, gen);
+      } else {
+        setCheckoutBusy(null);
+        setLicenseMsg(
+          'Opened Stripe checkout. Could not parse session id — paste your license key after payment.',
+        );
+      }
+    } catch (err) {
+      setCheckoutBusy(null);
+      const msg = err instanceof BillingApiError ? err.message : err instanceof Error ? err.message : String(err);
+      setLicenseMsg(`Stripe error: ${msg}`);
+    }
+  };
+
+  const startSolanaCheckout = async () => {
+    const email = billingEmail.trim();
+    if (email) rememberEmail(email);
+    const gen = ++pollAbortRef.current;
+    setCheckoutBusy('solana');
+    setLicenseMsg('Creating Solana USDC payment…');
+    try {
+      const created = await createSolanaPayment(settings, {
+        plan: billingPlan,
+        seats: billingPlan === 'team_monthly' ? billingSeats : undefined,
+        email: email || undefined,
+      });
+      setPendingSolanaId(created.paymentId);
+      setSolanaPayUrl(created.url);
+      setSolanaAmount(created.amountUsdc);
+      await openBillingUrl(created.url);
+      setLicenseMsg(
+        `Solana pay URL ready (${created.amountUsdc} USDC). Open wallet / copy link, then wait for confirm…`,
+      );
+      await pollSolanaUntilLicense(created.paymentId, gen, email);
+    } catch (err) {
+      setCheckoutBusy(null);
+      const msg = err instanceof BillingApiError ? err.message : err instanceof Error ? err.message : String(err);
+      setLicenseMsg(`Solana error: ${msg}`);
+    }
+  };
+
+  const startRedeem = async () => {
+    const email = billingEmail.trim();
+    const code = redeemCode.trim();
+    if (!email || !email.includes('@')) {
+      setLicenseMsg('Enter email to redeem an access code.');
+      return;
+    }
+    if (!code) {
+      setLicenseMsg('Enter an access code to redeem.');
+      return;
+    }
+    rememberEmail(email);
+    setCheckoutBusy('redeem');
+    setLicenseMsg('Redeeming access code…');
+    try {
+      const deviceId = getOrCreateDeviceId();
+      const result = await redeemAccessCode(settings, { code, email, deviceId });
+      const next = persistLicense(result.licenseKey);
+      setRedeemCode('');
+      setCheckoutBusy(null);
+      setLicenseMsg(
+        `Redeemed — activated ${next.label}${result.loginId ? ` (loginId ${result.loginId})` : ''}.`,
+      );
+    } catch (err) {
+      setCheckoutBusy(null);
+      const msg = err instanceof BillingApiError ? err.message : err instanceof Error ? err.message : String(err);
+      setLicenseMsg(`Redeem error: ${msg}`);
+    }
+  };
 
   const updateMcp = (id: string, partial: Partial<McpServerConfig>) => {
     const next = (settings.mcpServers || []).map((s) => (s.id === id ? { ...s, ...partial } : s));
@@ -893,6 +1097,139 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             <BuiltinTokenMeter license={license} />
           ) : null}
 
+          <FieldLabel label="Email" hint="Receipt email for Stripe / Solana / redeem (stored locally).">
+            <input
+              type="email"
+              value={billingEmail}
+              onChange={(e) => setBillingEmail(e.target.value)}
+              onBlur={() => rememberEmail(billingEmail)}
+              placeholder="you@example.com"
+              className="field font-mono text-[12px]"
+              autoComplete="email"
+            />
+          </FieldLabel>
+
+          <FieldLabel label="Plan" hint="Checkout creates a site-hosted Stripe session or Solana USDC payment — secrets stay on abliterated.app.">
+            <select
+              value={billingPlan}
+              onChange={(e) => setBillingPlan(e.target.value as BillingPlan)}
+              className="field font-mono text-[12px]"
+            >
+              {BILLING_PLANS.map((p) => (
+                <option key={p} value={p}>
+                  {BILLING_PLAN_LABELS[p]}
+                </option>
+              ))}
+            </select>
+          </FieldLabel>
+
+          {billingPlan === 'team_monthly' ? (
+            <FieldLabel label="Seats" hint="Team plan quantity (1–100).">
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={billingSeats}
+                onChange={(e) =>
+                  setBillingSeats(Math.max(1, Math.min(100, Number(e.target.value) || 1)))
+                }
+                className="field font-mono text-[12px] w-24"
+              />
+            </FieldLabel>
+          ) : null}
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-primary h-7 px-3 text-[10px]"
+              disabled={checkoutBusy !== null}
+              onClick={() => void startStripeCheckout()}
+            >
+              {checkoutBusy === 'stripe' ? 'Card…' : 'Pay with card'}
+            </button>
+            <button
+              type="button"
+              className="btn-primary h-7 px-3 text-[10px]"
+              disabled={checkoutBusy !== null}
+              onClick={() => void startSolanaCheckout()}
+            >
+              {checkoutBusy === 'solana' ? 'Solana…' : 'Pay with Solana USDC'}
+            </button>
+            {pendingStripeSession ? (
+              <button
+                type="button"
+                className="btn-ghost h-7 px-2 text-[10px]"
+                disabled={checkoutBusy !== null}
+                onClick={() => {
+                  const gen = ++pollAbortRef.current;
+                  setCheckoutBusy('stripe');
+                  void pollStripeUntilLicense(pendingStripeSession, gen);
+                }}
+              >
+                Resume Stripe poll
+              </button>
+            ) : null}
+            {pendingSolanaId ? (
+              <button
+                type="button"
+                className="btn-ghost h-7 px-2 text-[10px]"
+                disabled={checkoutBusy !== null}
+                onClick={() => {
+                  const gen = ++pollAbortRef.current;
+                  setCheckoutBusy('solana');
+                  void pollSolanaUntilLicense(pendingSolanaId, gen, billingEmail.trim());
+                }}
+              >
+                Resume Solana poll
+              </button>
+            ) : null}
+          </div>
+
+          {solanaPayUrl ? (
+            <div className="rounded border border-border bg-background px-3 py-2 font-mono text-[11px] text-zinc-200">
+              <div className="text-[10px] uppercase text-muted">Solana pay link{solanaAmount ? ` · ${solanaAmount} USDC` : ''}</div>
+              <div className="mt-1 break-all text-sky-300">{solanaPayUrl}</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn-ghost h-7 px-2 text-[10px]"
+                  onClick={() => void openBillingUrl(solanaPayUrl)}
+                >
+                  Open
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost h-7 px-2 text-[10px]"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(solanaPayUrl);
+                    setLicenseMsg('Solana pay URL copied.');
+                  }}
+                >
+                  Copy URL
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          <FieldLabel label="Redeem access code" hint="One-time code from waitlist / promo — bound to this device.">
+            <input
+              value={redeemCode}
+              onChange={(e) => setRedeemCode(e.target.value)}
+              placeholder="ACCESS-…"
+              className="field font-mono text-[12px]"
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </FieldLabel>
+          <button
+            type="button"
+            className="btn-primary h-7 px-3 text-[10px]"
+            disabled={checkoutBusy !== null}
+            onClick={() => void startRedeem()}
+          >
+            {checkoutBusy === 'redeem' ? 'Redeeming…' : 'Redeem code'}
+          </button>
+
           <FieldLabel label="License key" hint="Paste your ABLIT-* license key from checkout or redeem. IDE activates via license key (loginId support later).">
             <input
               value={licenseDraft}
@@ -932,7 +1269,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
           </div>
           {licenseMsg ? <p className="font-mono text-[11px] text-sky-300">{licenseMsg}</p> : null}
           <p className="font-mono text-[10px] text-muted">
-            Offline stub only — real verification will be server-signed after checkout. See docs/PRODUCT.md.
+            In-app checkout calls abliterated.app APIs (Stripe + Solana + redeem). No payment secrets in this client — see docs/PRODUCT.md.
           </p>
         </Section>
 

@@ -16,6 +16,9 @@ interface AblitDesktopApi {
   getLicense: () => Promise<string>;
   setLicense: (key: string) => Promise<boolean>;
   getVersion: () => Promise<string>;
+  openExternal: (url: string) => Promise<boolean>;
+  /** Subscribe to abliterated://license?key=… deep links; returns unsubscribe. */
+  onLicenseDeepLink?: (cb: (key: string) => void) => () => void;
   webSearch: (opts: {
     query: string;
     count?: number;

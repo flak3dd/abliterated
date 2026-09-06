@@ -363,6 +363,10 @@ export interface ClientSettings {
   mcpServers: McpServerConfig[];
   /** Freemium license key (localStorage). Empty = Free tier. */
   licenseKey: string;
+  /** Billing site origin for in-app checkout (default https://abliterated.app). */
+  billingSiteUrl?: string;
+  /** Receipt / redeem email remembered for checkout. */
+  billingEmail?: string;
   /** Discover/follow SKILL.md recipes (default true). */
   skillsEnabled: boolean;
   /** Optional Brave Search API key (X-Subscription-Token). Empty = keyless HTML search. */

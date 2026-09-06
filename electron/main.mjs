@@ -31,7 +31,9 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    const deep = findLicenseDeepLink(argv || []);
+    if (deep) queueLicenseDeepLink(deep);
     if (!mainWindow) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
@@ -56,6 +58,55 @@ function writeStoredLicense(key) {
   const dir = path.dirname(licenseStorePath());
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(licenseStorePath(), JSON.stringify({ key: String(key || '') }, null, 2), 'utf8');
+}
+
+
+const PROTOCOL = 'abliterated';
+
+function findLicenseDeepLink(argv) {
+  for (const arg of argv || []) {
+    if (typeof arg === 'string' && arg.startsWith(`${PROTOCOL}:`)) return arg;
+  }
+  return null;
+}
+
+function parseLicenseKeyFromDeepLink(url) {
+  try {
+    const u = new URL(String(url || ''));
+    if (u.protocol !== `${PROTOCOL}:`) return '';
+    const host = (u.hostname || '').toLowerCase();
+    const pathPart = (u.pathname || '').replace(/^\/+/, '').toLowerCase();
+    if (host !== 'license' && pathPart !== 'license') return '';
+    return (u.searchParams.get('key') || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function applyLicenseDeepLink(url) {
+  const key = parseLicenseKeyFromDeepLink(url);
+  if (!key) return false;
+  writeStoredLicense(key);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('ablit:licenseDeepLink', key);
+  }
+  return true;
+}
+
+function registerProtocolClient() {
+  try {
+    if (process.defaultApp) {
+      if (process.argv.length >= 2) {
+        app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [
+          path.resolve(process.argv[1]),
+        ]);
+      }
+    } else {
+      app.setAsDefaultProtocolClient(PROTOCOL);
+    }
+  } catch (err) {
+    console.warn('[ablit] protocol register failed', err);
+  }
 }
 
 function portFree(port) {
@@ -208,6 +259,18 @@ function registerIpc() {
     return true;
   });
   ipcMain.handle('ablit:getVersion', () => app.getVersion());
+  ipcMain.handle('ablit:openExternal', async (_e, url) => {
+    const s = String(url || '').trim();
+    let parsed;
+    try {
+      parsed = new URL(s);
+    } catch {
+      return false;
+    }
+    if (!['https:', 'http:', 'solana:'].includes(parsed.protocol)) return false;
+    await shell.openExternal(s);
+    return true;
+  });
   ipcMain.handle('ablit:webSearch', async (_e, opts) => {
     const modPath = path.join(APP_ROOT_FS, 'daemon', 'webSearch.js');
     const mod = await import(pathToFileURL(modPath).href);
@@ -216,11 +279,26 @@ function registerIpc() {
 }
 
 if (gotLock) {
+  registerProtocolClient();
+
+  // macOS deep link while running
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    applyLicenseDeepLink(url);
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
   app.whenReady().then(async () => {
     installCsp();
     registerIpc();
     await ensureBridge();
     createWindow();
+    // Cold-start deep link (Windows / Linux argv, or macOS open-url queued)
+    const deep = findLicenseDeepLink(process.argv);
+    if (deep) applyLicenseDeepLink(deep);
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });

@@ -38,7 +38,8 @@
     "test:multi-agent": "node scripts/test-multi-agent.mjs",
     "test:prove-improve": "node scripts/test-prove-improve.mjs",
     "test:eval-fixtures": "node scripts/eval-fixtures.mjs",
-    "test:capability-router": "node scripts/test-capability-router.mjs"
+    "test:capability-router": "node scripts/test-capability-router.mjs",
+    "test:billing": "node scripts/test-billing-api.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",
@@ -106,6 +107,14 @@
     },
     "portable": {
       "artifactName": "${productName}-${version}-${os}-${arch}-portable.${ext}"
-    }
+    },
+    "protocols": [
+      {
+        "name": "Abliterated License",
+        "schemes": [
+          "abliterated"
+        ]
+      }
+    ]
   }
 }
