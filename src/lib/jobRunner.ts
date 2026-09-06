@@ -2,6 +2,7 @@ import { resolveActiveSettings } from "./activeEndpoint";
 import { executeAgentTool } from "./agentTools";
 import { formatSkillsCatalogPrompt, toCatalogEntries } from "./skills";
 import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from "./projectMemory";
+import { formatSessionMemory, mempalaceOpts } from "./mempalace";
 import { bridge } from "./bridgeClient";
 import { applyGrokEdits, parseGrokEdits } from "./grokLayer";
 import { buildJobCompletenessSystemBlock } from "./deepenComplete";
@@ -213,12 +214,20 @@ async function runJob(initial: Job, settings: ClientSettings) {
   let skillsCatalogBlock = "";
   let workspaceSkillsBlock = "";
   let projectMemoryBlock = "";
+  let mempalaceBlock = "";
   if (bridge.connected) {
     try {
       const files = await bridge.readProjectMemory();
       projectMemoryBlock = formatProjectMemoryPrompt(files);
     } catch {
       projectMemoryBlock = "";
+    }
+    if (settings.mempalaceEnabled !== false && settings.mempalaceAutoRecall !== false) {
+      try {
+        mempalaceBlock = await bridge.mempalaceWake(mempalaceOpts(settings, workspaceRoot));
+      } catch {
+        mempalaceBlock = "";
+      }
     }
   }
   if (settings.skillsEnabled !== false && bridge.connected) {
@@ -258,6 +267,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
   const systemParts = [
     settings.systemPrompt || "",
     projectMemoryBlock,
+    mempalaceBlock,
     !jobProfile.compactPrompt ? skillsCatalogBlock : "",
     !jobProfile.compactPrompt ? workspaceSkillsBlock : "",
     taskGraphBlock,
@@ -382,13 +392,17 @@ async function runJob(initial: Job, settings: ClientSettings) {
         }
       }
 
-      if (settings.autoAcceptEdits && bridge.connected) {
+      if (bridge.connected) {
         const source = assistantText || assistantReasoning;
         const edits = parseGrokEdits(source, workspaceRoot);
         if (edits.length) {
-          const applied = await applyGrokEdits(edits, { autoAccept: true, root: workspaceRoot });
+          const applied = await applyGrokEdits(edits, {
+            writeToWorkspace: true,
+            autoAccept: true,
+            root: workspaceRoot,
+          });
           const n = applied.filter((r) => r.status === 'ok').length;
-          job = appendLog(job, `applied ${n}/${applied.length} edit(s)`);
+          job = appendLog(job, `wrote ${n}/${applied.length} file(s) to workspace`);
         }
       }
 
@@ -506,6 +520,27 @@ async function runJob(initial: Job, settings: ClientSettings) {
         endedAt: Date.now(),
         logs: [...job.logs, `[${new Date().toISOString()}] finished (${turns} turn(s))`],
       });
+      if (settings.mempalaceEnabled !== false && settings.mempalaceAutoSave !== false && bridge.connected) {
+        const lastAsst = [...history].reverse().find((m) => m.role === "assistant");
+        const payload = formatSessionMemory(job.prompt || "", lastAsst?.content || "", {
+          model: active.defaultModel,
+          thread: `job ${job.id}`,
+        });
+        if (payload.trim()) {
+          try {
+            await bridge.mempalaceSave(payload, {
+              ...mempalaceOpts(settings, workspaceRoot),
+              room: "abliterated-jobs",
+            });
+            job = appendLog(job, "filed session into MemPalace");
+          } catch (e) {
+            job = appendLog(
+              job,
+              `MemPalace save skipped: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+        }
+      }
     }
   } catch (e) {
     const aborted = e instanceof DOMException && e.name === "AbortError";

@@ -87,6 +87,15 @@ export const MCP_ONE_CLICK_CATALOG: readonly McpCatalogEntry[] = [
     args: ['mcp-server-time'],
     runner: 'uvx',
   },
+  {
+    id: 'mempalace',
+    name: 'mempalace',
+    title: 'MemPalace',
+    blurb: 'Local-first verbatim AI memory (wings / rooms / drawers). uv tool install mempalace.',
+    command: 'uvx',
+    args: ['--from', 'mempalace', 'python', '-m', 'mempalace.mcp_server'],
+    runner: 'uvx',
+  },
 ];
 
 export function catalogToConfig(entry: McpCatalogEntry, id: string): McpServerConfig {

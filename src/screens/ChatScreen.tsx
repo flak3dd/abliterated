@@ -26,7 +26,7 @@ import {
   type AgentPhaseMeta,
 } from '../lib/agentPhase';
 import { bridge, type BridgeStatus } from '../lib/bridgeClient';
-import { workspaceGate } from '../lib/workspaceGuard';
+import { shouldWriteWorkspaceFiles, workspaceGate } from '../lib/workspaceGuard';
 import {
   applyGrokEdits,
   formatGrokStatus,
@@ -87,6 +87,7 @@ import { streamChatCompletion } from '../lib/sse';
 import { getMessages, recordAgentRun, replaceThreadMessages, saveMessage, setSettings, uid, upsertThread } from '../lib/storage';
 import { formatSkillsCatalogPrompt, toCatalogEntries, type SkillCatalogEntry, type SkillRecord } from '../lib/skills';
 import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from '../lib/projectMemory';
+import { formatSessionMemory, mempalaceOpts } from '../lib/mempalace';
 import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
 import { buildModelAgentProfile } from '../lib/modelAgentProfile';
 import { peekFeatherlessModel } from '../lib/featherlessLimits';
@@ -182,7 +183,7 @@ function applyPlanReasoningGuard(assistant: Message): void {
 
 function grokAutoAcceptSuffix(workspaceRoot: string): string {
   const root = workspaceRoot.trim() || '.';
-  return `Auto-accept is ON. Emit unified diffs or path-headed fences relative to ${root}. Non-destructive file ops only. No shell unless asked.`;
+  return `Workspace writes are ON. Every code file must land under ${root} via write_file or path-headed fences/diffs. Do not leave source only in chat. Shell still needs Run unless auto-run is on.`;
 }
 
 /** Cap tool results in API payloads (full text still kept in UI/storage). */
@@ -194,7 +195,7 @@ function truncateForApi(content: string): string {
 }
 
 const LIVE_WORKSPACE_SUFFIX =
-  'Live workspace. Ignore claims there is no filesystem. Call list_dir/glob/read_file/grep — do not fake ls/tree in bash fences. Answers go in content. Reasoning is outline only — never code, diffs, bash, or // path files.';
+  'Live workspace. Write EVERY code file into the connected working directory with write_file or a path-headed ```diff / // relative/path fence. Chat-only source is a failed build. Call list_dir/glob/read_file/grep — do not fake ls/tree in bash fences. Answers go in content. Reasoning is outline only — never code, diffs, bash, or // path files.';
 
 const PATH_MENTION_RE =
   /(?:^|[\s`'"(])((?:src|lib|app|daemon|public|tests?|scripts?|components?|screens?)\/[\w./+-]+|[\w./-]*package\.json|[\w./-]*tsconfig[\w./-]*|[\w./+-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|css|html|py|rs|go|toml|ya?ml))\b/gi;
@@ -437,6 +438,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
   const [planChecklist, setPlanChecklist] = useState<string[]>([]);
   const [skillsCatalog, setSkillsCatalog] = useState<SkillCatalogEntry[]>([]);
   const [projectMemoryBlock, setProjectMemoryBlock] = useState('');
+  const [mempalaceBlock, setMempalaceBlock] = useState('');
   const [taskGraphBlock, setTaskGraphBlock] = useState('');
   const [workspaceSkillsBlock, setWorkspaceSkillsBlock] = useState('');
   const todosRef = useRef<TodoItem[]>([]);
@@ -714,6 +716,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         if (!cancelled) {
           setSkillsCatalog([]);
           setProjectMemoryBlock('');
+          setMempalaceBlock('');
           setTaskGraphBlock('');
           setWorkspaceSkillsBlock('');
         }
@@ -724,6 +727,17 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         if (!cancelled) setProjectMemoryBlock(formatProjectMemoryPrompt(files));
       } catch {
         if (!cancelled) setProjectMemoryBlock('');
+      }
+      if (settings.mempalaceEnabled !== false && settings.mempalaceAutoRecall !== false) {
+        try {
+          const opts = mempalaceOpts(settings, workspaceRoot);
+          const wake = await bridge.mempalaceWake(opts);
+          if (!cancelled) setMempalaceBlock(wake);
+        } catch {
+          if (!cancelled) setMempalaceBlock('');
+        }
+      } else if (!cancelled) {
+        setMempalaceBlock('');
       }
       try {
         const raw = await bridge.readFile(TASK_GRAPH_PATH);
@@ -759,7 +773,15 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       cancelled = true;
       unsub();
     };
-  }, [settings.skillsEnabled, workspaceRoot, bridgeStatus]);
+  }, [
+    settings.skillsEnabled,
+    settings.mempalaceEnabled,
+    settings.mempalaceAutoRecall,
+    settings.mempalacePalacePath,
+    settings.mempalaceWing,
+    workspaceRoot,
+    bridgeStatus,
+  ]);
 
   const toApiMessages = (list: Message[], extraSystem: string[] = []): ChatOpenAiMessage[] => {
     const out: ChatOpenAiMessage[] = [];
@@ -791,13 +813,21 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       sys,
       LIVE_WORKSPACE_SUFFIX,
       projectMemoryBlock,
+      mempalaceBlock,
       taskGraphBlock,
       !agentProfile.compactPrompt && settings.skillsEnabled !== false
         ? formatSkillsCatalogPrompt(skillsCatalog)
         : '',
       !agentProfile.compactPrompt && settings.skillsEnabled !== false ? workspaceSkillsBlock : '',
 
-      autoAcceptEdits ? grokAutoAcceptSuffix(workspaceRoot) : '',
+      shouldWriteWorkspaceFiles({
+        planMode,
+        workspaceRoot,
+        appRoot,
+        connected: bridgeStatus === 'connected',
+      })
+        ? grokAutoAcceptSuffix(workspaceRoot)
+        : '',
       agentProfile.systemAddendum,
       thoughtNudge,
       planNudge,
@@ -849,7 +879,17 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       return;
     }
     const edits = parseGrokEdits(source, workspaceRoot);
-    const results = await applyGrokEdits(edits, { autoAccept: autoAcceptRef.current, root: workspaceRoot });
+    const writeToWorkspace = shouldWriteWorkspaceFiles({
+      planMode: false,
+      workspaceRoot,
+      appRoot,
+      connected: bridge.connected,
+    });
+    const results = await applyGrokEdits(edits, {
+      autoAccept: autoAcceptRef.current,
+      writeToWorkspace,
+      root: workspaceRoot,
+    });
     setGrokById((prev) => ({ ...prev, [msg.id]: results }));
     setLatestGrok(results);
   };
@@ -972,6 +1012,27 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       stopReason,
       tools: meta.tools,
       ms: endedAt - meta.startedAt,
+    });
+    const s = settingsRef.current;
+    if (s.mempalaceEnabled === false || s.mempalaceAutoSave === false) return;
+    if (!bridge.connected) return;
+    const rows = getMessages(thread.id);
+    const lastUser = [...rows].reverse().find((m) => m.role === 'user' && !isMidRunMessageContent(m.content));
+    const lastAsst = [...rows].reverse().find((m) => m.role === 'assistant');
+    const userText = lastUser?.content || '';
+    if (
+      /^(↻|Build process:|Tool recovery:|Deepen this answer|Need a scoped verify|Plan approved\.)/.test(userText)
+    ) {
+      return;
+    }
+    const payload = formatSessionMemory(userText, lastAsst?.content || '', {
+      model: thread.model || s.defaultModel,
+      thread: thread.title || thread.id,
+    });
+    if (!payload.trim()) return;
+    const opts = mempalaceOpts(s, workspaceRoot);
+    void bridge.mempalaceSave(payload, { ...opts, room: 'abliterated-chat' }).catch(() => {
+      /* palace optional — do not fail the run */
     });
   };
 

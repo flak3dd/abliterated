@@ -206,6 +206,34 @@ export function canonicalizeToolName(name: string): string {
   if (lower === 'taskread' || lower === 'read_task') return 'task_read';
   if (lower === 'taskupdate' || lower === 'update_task') return 'task_update';
   if (lower === 'run_verify') return 'verify';
+  if (
+    lower === 'mempalace_search' ||
+    lower === 'memorysearch' ||
+    lower === 'recall' ||
+    lower === 'palace_search'
+  ) {
+    return 'memory_search';
+  }
+  if (
+    lower === 'mempalace_add_drawer' ||
+    lower === 'mempalace_save' ||
+    lower === 'memorysave' ||
+    lower === 'add_drawer'
+  ) {
+    return 'memory_save';
+  }
+  if (lower === 'mempalace_status' || lower === 'memorystatus' || lower === 'palace_status') {
+    return 'memory_status';
+  }
+  if (
+    lower === 'mempalace_wake' ||
+    lower === 'mempalace_wake_up' ||
+    lower === 'mempalace_wakeup' ||
+    lower === 'memorywake' ||
+    lower === 'wake_up'
+  ) {
+    return 'memory_wake';
+  }
   return raw;
 }
 
@@ -263,18 +291,55 @@ export function liftTodoListToContent(content: string, reasoning: string): strin
   return body ? `${block}\n\n${body}` : block;
 }
 
+const PLACEHOLDER_CODE_RE =
+  /not implemented|implement (?:this|me|here|later)|coming soon|placeholder script|FIXME:\s*implement|TODO:\s*implement|throw new Error\(\s*['"]not implemented/i;
+
+/** True when emitted "code" is a stub / placeholder rather than a working product. */
+export function looksLikePlaceholderOutput(text: string): boolean {
+  const t = text || '';
+  if (!PLACEHOLDER_CODE_RE.test(t)) return false;
+  return /```|^\/\/ [\w./+-]+\s*$|^diff --git /m.test(t);
+}
+
+/** Fake todo JSON / verify bash with no real files — not a build. */
+export function looksLikeToolTheaterOutput(text: string): boolean {
+  const t = text || '';
+  const hasRealFile =
+    /```(?:diff|patch|ts|tsx|js|jsx|mjs|cjs|py|go|rs)\b/i.test(t) ||
+    /^diff --git |^--- (a\/|\/dev\/null)|\+\+\+ b\//m.test(t) ||
+    (/^\/\/ [\w./+-]+\s*$/m.test(t) && t.length > 50);
+  if (hasRealFile) return false;
+  if (/"name"\s*:\s*"(todo|write_file|verify|shell)"/i.test(t)) return true;
+  if (/```(?:json)\b[\s\S]{0,400}"items"\s*:/i.test(t)) return true;
+  if (/```bash[\s\S]{0,200}\bverify\s+"/i.test(t)) return true;
+  return false;
+}
+
 /** True when content contains applyable build artifacts (diffs, path fences, code fences). */
 export function looksLikeBuildOutput(text: string): boolean {
   const t = text || '';
-  if (/```(?:diff|patch|bash|ts|tsx|js|jsx|mjs|cjs|py|go|rs|json|css|html|vue|svelte)/i.test(t)) return true;
+  if (looksLikePlaceholderOutput(t)) return false;
+  if (looksLikeToolTheaterOutput(t)) return false;
+  if (/```(?:diff|patch|ts|tsx|js|jsx|mjs|cjs|py|go|rs|css|html|vue|svelte)\b/i.test(t)) return true;
   if (/^diff --git |^--- (a\/|\/dev\/null)|\+\+\+ b\//m.test(t)) return true;
   if (/^\/\/ [\w./+-]+\s*$/m.test(t) && t.length > 50) return true;
+  return false;
+}
+
+/** User asked for copy/a prompt, not a codebase build. */
+export function looksPromptOnlyRequest(userText: string): boolean {
+  const t = (userText || '').trim().toLowerCase();
+  if (!t) return false;
+  if (/\b(implement|scaffold|codebase|pull request|typecheck)\b/.test(t)) return false;
+  if (/\b(write|draft|craft|give|produce|create|make)\b.{0,80}\bprompt\b/.test(t)) return true;
+  if (/\bprompt\b.{0,60}\b(that will|that can|to |for )\b/.test(t)) return true;
   return false;
 }
 
 export function looksBuildIntent(userText: string): boolean {
   const t = (userText || '').trim().toLowerCase();
   if (!t) return false;
+  if (looksPromptOnlyRequest(t)) return false;
   if (/\bfile structure\b|\bfolder structure\b|\bproject skeleton\b|\bscaffold\b/.test(t)) return true;
   if (/\b(build|implement|bootstrap|wire up|set up|setup)\b/.test(t) && t.length >= 24) return true;
   return /\b(create|add|new)\b.{0,48}\b(file|folder|dir(?:ectory)?|module|app|feature|project|structure|layout|tree|skeleton)\b/.test(
@@ -297,7 +362,8 @@ export const BUILD_PROCESS_SECTION =
   '3. Explore with list_dir/glob/grep/semantic_search/read_file — do not invent listings.\n' +
   '4. Emit real ```diff or // relative/path fences in CONTENT and `todo` merge=true to tick items.\n' +
   '5. After a meaningful change, one scoped verify ```bash fence.\n' +
-  'A ToDo or essay with no diffs is a FAILED build. Do not stop at the list. Do not spawn other coding CLIs.';
+  'A ToDo or essay with no diffs is a FAILED build. Do not stop at the list. Do not spawn other coding CLIs.\n' +
+  'HARD LOCK: never write placeholder/stub/"implement here" scripts. Full-length working code only. Write every file into the connected working directory (write_file or path-headed fences). Do not stop until the product works and tests have been run.';
 
 export function buildThoughtModeNudge(): string {
   return (
@@ -327,6 +393,7 @@ export function shouldApplyBuildProcess(
   if (opts.planMode) return false;
   const t = (userText || '').trim();
   if (!t) return false;
+  if (looksPromptOnlyRequest(t)) return false;
   if (looksBuildIntent(t) || looksLargeJob(t)) return true;
   if (!opts.buildMode) return false;
   if (looksMultiStep(t)) return true;
@@ -352,7 +419,15 @@ export function buildBuildModeImplementNudge(): string {
     'Build process: you wrote a ToDo list but did not emit any file diffs or path-headed fences. ' +
     'That is not a build. Now: (1) if new structure is required, create the skeleton first; ' +
     '(2) implement the next unchecked ToDo with a real ```diff or // relative/path file in content; ' +
-    '(3) call `todo` with merge=true to tick finished items. Do not reply with another list only.'
+    '(3) call `todo` with merge=true to tick finished items. Do not reply with another list only. ' +
+    'NEVER emit placeholder/stub/"implement here" code. Write the full working implementation and verify it.'
+  );
+}
+
+export function buildPlaceholderCodeNudge(): string {
+  return (
+    'HARD LOCK: the last turn emitted placeholder/stub/"not implemented" code. That is a failed build. ' +
+    'Replace every stub with full-length, fully functional code now. Typecheck/test it. Do not stop until the product works.'
   );
 }
 
@@ -503,7 +578,7 @@ export function buildPlanModeNudge(): string {
   return (
     '## Plan mode — LOCKED (read-only). Overrides Build. Writes are blocked.\n' +
     'FORBIDDEN in content AND reasoning: unified diffs, ```diff, ```bash, // path files, write/shell/git_commit/create_pr/write_skill, applying patches.\n' +
-    'ALLOWED tools: read_file, grep, glob, list_dir, file_outline, semantic_search, git_status, git_diff, web_fetch, web_search, todo, list_skills, read_skill, suggest_skill.\n' +
+    'ALLOWED tools: read_file, grep, glob, list_dir, file_outline, semantic_search, git_status, git_diff, web_fetch, web_search, todo, list_skills, read_skill, suggest_skill, memory_search, memory_status, memory_wake.\n' +
     'REQUIRED every reply:\n' +
     '1. Reasoning (if Thought is on): Goal / Inspect / numbered steps (why + success). No code.\n' +
     '2. Content MUST start with a checklist (call `todo` or markdown):\n' +

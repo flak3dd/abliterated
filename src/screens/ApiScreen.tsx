@@ -11,12 +11,16 @@ import { setSettings } from '../lib/storage';
 import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
 import { formatFeatherlessProbeReport, probeFeatherlessChat } from '../lib/featherlessDebug';
 import { extractHttpErrorMessage } from '../lib/providerError';
+import { recommendedApiPatch } from '../lib/modelSettingsGuide';
 import type { ClientSettings, ReasoningLevel } from '../types';
 import {
   DEFAULT_FEATHERLESS_MODEL,
   FEATHERLESS_EMPTY_STATE,
+  PINNED_FEATHERLESS_MODELS,
   abliterationGradeFeatherlessPatch,
   filterFeatherlessQwenModels,
+  isPinnedFeatherlessModel,
+  mergePinnedFeatherlessModels,
   resolveFeatherlessModelId,
 } from '../lib/featherlessQwen';
 
@@ -410,8 +414,9 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
         const items = raw
           .map((row) => (row && typeof row.id === 'string' ? { id: row.id } : null))
           .filter((m): m is { id: string } => m != null);
-        const allowed = filterFeatherlessQwenModels(items);
+        const allowed = mergePinnedFeatherlessModels(filterFeatherlessQwenModels(items));
         summary += '\nLarge Qwen filter: ' + String(allowed.length) + ' / ' + String(items.length);
+        summary += '\nPinned 32B abliterated: ' + PINNED_FEATHERLESS_MODELS.length;
         if (!allowed.length) summary += '\n' + FEATHERLESS_EMPTY_STATE;
         else summary += '\n' + allowed.slice(0, 40).map((m) => m.id).join('\n');
       } catch {
@@ -643,13 +648,56 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
             </label>
             <label className="block font-mono text-[10px] uppercase text-muted">
               Featherless model
+              <select
+                value={isPinnedFeatherlessModel(draft.featherlessModel) ? draft.featherlessModel : ''}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  if (!id) return;
+                  patch({ featherlessModel: id, ...recommendedApiPatch(id, draft) });
+                }}
+                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+                aria-label="Pinned Featherless abliterated 32B models"
+              >
+                <option value="">
+                  {isPinnedFeatherlessModel(draft.featherlessModel)
+                    ? 'Pinned 32B abliterated…'
+                    : `Other · ${draft.featherlessModel || DEFAULT_FEATHERLESS_MODEL}`}
+                </option>
+                {PINNED_FEATHERLESS_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label} — {m.id}
+                  </option>
+                ))}
+              </select>
               <input
                 value={draft.featherlessModel}
                 onChange={(e) => patch({ featherlessModel: e.target.value })}
                 placeholder={DEFAULT_FEATHERLESS_MODEL}
                 className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+                aria-label="Featherless model id"
               />
             </label>
+            <div className="flex flex-wrap gap-1">
+              {PINNED_FEATHERLESS_MODELS.map((m) => {
+                const on = draft.featherlessModel === m.id;
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    title={m.id}
+                    onClick={() => patch({ featherlessModel: m.id, ...recommendedApiPatch(m.id, draft) })}
+                    className={
+                      'rounded border px-2 py-0.5 font-mono text-[10px] ' +
+                      (on
+                        ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-200'
+                        : 'border-border text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200')
+                    }
+                  >
+                    {m.label}
+                  </button>
+                );
+              })}
+            </div>
             <label className="block font-mono text-[10px] uppercase text-muted">
               API key
               <input

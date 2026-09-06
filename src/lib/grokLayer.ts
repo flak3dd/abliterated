@@ -141,16 +141,20 @@ function parseFenceHeader(header: string): { lang: string; path: string } {
 }
 
 function addPatch(patchesByFile: Map<string, string[]>, file: string, patch: string) {
-  const key = file || 'workspace/patch.ts';
+  const key = normalizeGrokPath(file);
+  if (!key || key === 'workspace/patch.ts') return;
   const list = patchesByFile.get(key) ?? [];
   list.push(patch);
   patchesByFile.set(key, list);
 }
 
 function ingestDiff(code: string, defaultFile: string, patchesByFile: Map<string, string[]>) {
-  const hunks = parseUnifiedDiff(code, defaultFile || 'workspace/patch.ts');
+  const fallback = defaultFile && defaultFile !== 'workspace/patch.ts' ? defaultFile : '';
+  const hunks = parseUnifiedDiff(code, fallback);
   for (const hunk of hunks) {
-    addPatch(patchesByFile, hunk.file, hunkToPatch(hunk));
+    const file = normalizeGrokPath(hunk.file);
+    if (!file || file === 'workspace/patch.ts') continue;
+    addPatch(patchesByFile, file, hunkToPatch(hunk));
   }
 }
 
@@ -276,7 +280,8 @@ export function parseGrokEdits(text: string, root?: string): GrokEdit[] {
   }
 
   for (const chunk of collectUnfencedDiffs(text, fenceSpans)) {
-    ingestDiff(chunk, pendingPath || 'workspace/patch.ts', patchesByFile);
+    if (!pendingPath) continue;
+    ingestDiff(chunk, pendingPath, patchesByFile);
   }
 
   const covered = new Set([...patchesByFile.keys()].map(normalizeGrokPath));
@@ -290,11 +295,12 @@ export function parseGrokEdits(text: string, root?: string): GrokEdit[] {
 
 export async function applyGrokEdits(
   edits: GrokEdit[],
-  opts: { autoAccept: boolean; root?: string },
+  opts: { autoAccept?: boolean; writeToWorkspace?: boolean; root?: string },
 ): Promise<GrokApplyResult[]> {
   const root = opts.root || bridge.currentRoot;
   const results: GrokApplyResult[] = [];
   const gate = workspaceGate(root, bridge.currentAppRoot);
+  const applyNow = opts.writeToWorkspace === true || opts.autoAccept === true;
 
   for (const edit of edits) {
     if (!gate.ok) {
@@ -309,7 +315,7 @@ export async function applyGrokEdits(
       results.push({ file: edit.file, kind: edit.kind, status: 'error', error: 'path escape blocked' });
       continue;
     }
-    if (!opts.autoAccept) {
+    if (!applyNow) {
       results.push({ file: edit.file, kind: edit.kind, status: 'pending' });
       continue;
     }

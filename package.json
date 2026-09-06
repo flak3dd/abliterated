@@ -8,18 +8,21 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "bridge": "node daemon/bridge.js",
-    "smoke": "node scripts/smoke-agent.mjs && node daemon/search.test.js && node daemon/fsutil.test.js && node daemon/outline.test.js && node daemon/appRoot.test.js && node daemon/pyManaged.test.js && node daemon/webSearch.test.js && node daemon/projectMemory.test.js",
+    "smoke": "node scripts/smoke-agent.mjs && node daemon/search.test.js && node daemon/fsutil.test.js && node daemon/outline.test.js && node daemon/appRoot.test.js && node daemon/pyManaged.test.js && node daemon/webSearch.test.js && node daemon/projectMemory.test.js && node daemon/mempalace.test.js",
     "test:agent": "node scripts/test-agent-response.mjs",
     "test:reasoning": "node scripts/test-reasoning-work.mjs",
     "test:build": "node scripts/test-build-protocol.mjs",
     "test:workspace": "node scripts/test-workspace-guard.mjs",
+    "test:grok-edits": "node scripts/test-grok-edits.mjs",
     "test:memory": "node scripts/test-project-memory.mjs",
+    "test:mempalace": "node scripts/test-mempalace.mjs",
     "test:sse": "node scripts/test-sse-parse.mjs",
     "test:featherless-qwen": "node scripts/test-featherless-qwen.mjs",
     "test:model-guide": "node scripts/test-model-settings-guide.mjs",
     "test:context": "node scripts/test-context-window.mjs",
     "test:model-profile": "node scripts/test-model-agent-profile.mjs",
-    "test": "npm run smoke && npm run test:agent && npm run test:reasoning && npm run test:sse && npm run test:model-guide && npm run test:context && npm run test:model-profile && npm run test:build && npm run test:workspace && npm run test:memory",
+    "test:task-graph": "node scripts/test-task-graph.mjs",
+    "test": "npm run smoke && npm run test:agent && npm run test:reasoning && npm run test:sse && npm run test:model-guide && npm run test:context && npm run test:model-profile && npm run test:task-graph && npm run test:build && npm run test:workspace && npm run test:grok-edits && npm run test:memory && npm run test:mempalace",
     "image:mock": "cd spark-image && ABLITERATED_IMAGE_MOCK=1 ABLITERATED_IMAGE_HOST=127.0.0.1 ABLITERATED_IMAGE_PORT=7860 python3 serve-openai-bridge.py",
     "featherless-oauth": "node featherless-oauth/server.mjs",
     "debug:featherless": "node scripts/debug-featherless.mjs",
@@ -32,7 +35,6 @@
     "dist:win:dir": "npm run build && electron-builder --win dir",
     "test:task": "node scripts/test-task-graph.mjs",
     "test:vdone": "node scripts/test-verify-done.mjs",
-    "test:task-graph": "node scripts/test-task-graph.mjs",
     "test:multi-agent": "node scripts/test-multi-agent.mjs"
   },
   "dependencies": {
@@ -61,7 +63,8 @@
     "appId": "ai.abliteration.ide",
     "productName": "Abliterated",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "dist/**/*",
@@ -74,14 +77,16 @@
       "target": [
         "dir",
         "dmg"
-      ]
+      ],
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": [
         "nsis",
         "portable"
       ],
-      "publisherName": "Abliteration"
+      "publisherName": "Abliteration",
+      "icon": "build/icon.png"
     },
     "asarUnpack": [
       "daemon/**/*",

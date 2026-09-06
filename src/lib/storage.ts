@@ -15,6 +15,7 @@ import {
   PREV4_DEFAULT_TOOLS,
   PREV5_DEFAULT_TOOLS,
   PREV6_DEFAULT_TOOLS,
+  PREV7_DEFAULT_TOOLS,
 } from '../types';
 import {
   AGENT_RUNS_KEEP,
@@ -101,6 +102,11 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   webSearchSearxUrl: '',
   jobWorktreesEnabled: false,
   multiAgentEnabled: false,
+  mempalaceEnabled: true,
+  mempalacePalacePath: '',
+  mempalaceWing: '',
+  mempalaceAutoRecall: true,
+  mempalaceAutoSave: true,
 };
 
 export function isPlaceholderRoot(path: string): boolean {
@@ -264,6 +270,12 @@ export function getSettings(): ClientSettings {
     coalesceReasoningToContent: stored.coalesceReasoningToContent !== false,
     jobWorktreesEnabled: stored.jobWorktreesEnabled === true,
     multiAgentEnabled: stored.multiAgentEnabled === true,
+    mempalaceEnabled: stored.mempalaceEnabled !== false,
+    mempalacePalacePath:
+      typeof stored.mempalacePalacePath === 'string' ? stored.mempalacePalacePath.trim() : '',
+    mempalaceWing: typeof stored.mempalaceWing === 'string' ? stored.mempalaceWing.trim() : '',
+    mempalaceAutoRecall: stored.mempalaceAutoRecall !== false,
+    mempalaceAutoSave: stored.mempalaceAutoSave !== false,
     planModeEnabled: stored.planModeEnabled === true,
     buildModeEnabled: stored.buildModeEnabled !== false,
     fastModel: stored.fastModel?.trim() || '',
@@ -343,6 +355,10 @@ function upgradeEnabledTools(tools: ToolType[] | undefined): ToolType[] {
   if (sameToolSet(tools, PREV4_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
   if (sameToolSet(tools, PREV5_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
   if (sameToolSet(tools, PREV6_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
+  if (sameToolSet(tools, PREV7_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
+  if (!tools.includes('memory_search')) {
+    return [...tools, 'memory_search', 'memory_save', 'memory_status', 'memory_wake'];
+  }
   if (!tools.includes('todo')) return [...tools, 'todo'];
   if (!tools.includes('list_skills')) {
     return [...tools, 'list_skills', 'read_skill', 'suggest_skill', 'write_skill'];

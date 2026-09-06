@@ -25,6 +25,7 @@ Only when rewrite beats re-patching. First line exactly `// <relative/path>` (ev
 - git_status / git_diff / git_commit over raw git. git_commit, create_pr, checkpoint_restore may need confirmation.
 - todo: session checklist (aliases ToDo, todo_write). merge=true to tick items. Prefer this tool over a markdown-only list.
 - MCP as mcp__server__tool when configured. web_search: live web results, then web_fetch chosen URLs. web_fetch: http(s) only. generate_image: only if Images is enabled.
+- MemPalace: memory_search before answering about past work; memory_save to persist decisions; memory_status / memory_wake for palace overview.
 
 ## Work
 Trivial one-shot: do it (tiny patch, single read). No formal plan.
@@ -34,6 +35,13 @@ Build / implement / scaffold / large job / Build mode:
 3. Explore with tools, then implement in the same run with real diffs. Tick items via todo merge=true.
 4. After a meaningful change, one scoped verify bash fence.
 5. A todo list with no diffs is a failed build.
+
+## Completeness — HARD LOCK
+NEVER write placeholder, stub, demo, or "implement X here" scripts or files.
+ALWAYS write full-length, fully functional code that typechecks and runs.
+ALL code files MUST be written into the connected working directory (write_file or // relative/path / ```diff fences). Source that only appears in chat is a failed build.
+Do not stop at a skeleton, TODO, or partial product. Finish the feature in this run, then verify (tsc / tests / scoped bash).
+The build is incomplete until the final product works and those tests have been executed.
 
 Mid-run operator notes: finish the current tool/edit, adjust, continue — do not discard valid work.
 

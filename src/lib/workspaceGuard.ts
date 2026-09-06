@@ -78,3 +78,15 @@ export function workspaceGate(root: string, appRoot = ''): WorkspaceGate {
   }
   return { ok: true, reason: 'ok', message: '' };
 }
+
+/** File writes land in the connected working directory. Plan mode and install-dir stay blocked. Shell stays gated. */
+export function shouldWriteWorkspaceFiles(opts: {
+  planMode?: boolean;
+  workspaceRoot?: string;
+  appRoot?: string;
+  connected?: boolean;
+}): boolean {
+  if (opts.planMode) return false;
+  if (opts.connected === false) return false;
+  return workspaceGate(opts.workspaceRoot || '', opts.appRoot || '').ok;
+}

@@ -93,7 +93,7 @@ All local ports and DEV proxies (Vite 5173/4173, bridge `ws://127.0.0.1:17322`, 
 | **Jobs** | Cmd/Ctrl+4 | Headless single-flight agent queue |
 | **API** | Cmd/Ctrl+5 | Providers, URLs, tokens, remote host |
 | **Images** | Cmd/Ctrl+6 | Image gen + `.ablit/images` library |
-| **Settings** | Cmd/Ctrl+7 | Prompt, agent loop, safety, MCP, wipe, App docs |
+| **Settings** | Cmd/Ctrl+7 | Prompt, agent loop, safety, MemPalace, MCP, wipe, App docs |
 
 Chat overlays from Home. Esc stops a busy agent or returns to sessions.
 
@@ -129,7 +129,8 @@ Stop: `no_tools`, `cap`, `abort`, `error`, `pending_gate`, `deepened`. Max turns
 Auto (bridge): `read_file`, `grep`, `glob`, `list_dir`, `file_outline`, `semantic_search`, `git_status`, `git_diff`, `checkpoint_save`.  
 Auto-accept edits: `git_commit`, `create_pr`, `checkpoint_restore`.  
 Auto-run shell: `shell` (deadly commands refused).  
-`web_fetch` http(s) only. `web_search` keyless (Brave HTML → Bing → Wikipedia; optional Brave API / SearxNG). `generate_image` when Images on. MCP as `mcp__server__tool`.
+`web_fetch` http(s) only. `web_search` keyless (Brave HTML → Bing → Wikipedia; optional Brave API / SearxNG). `generate_image` when Images on. MCP as `mcp__server__tool`.  
+MemPalace (Settings): `memory_search` / `memory_save` / `memory_status` / `memory_wake`. Auto-recall injects wake-up; auto-save files the last turn. Install with `uv tool install mempalace`. Full MCP tools via `uvx --from mempalace python -m mempalace.mcp_server`.
 
 ### Self-deepen / mid-run / footer / status / copy
 - Self-deepen default on (passes 0–5, default 2); `[ANSWER_COMPLETE]` early stop.

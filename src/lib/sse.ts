@@ -110,7 +110,7 @@ export const CHAT_TOOLS = [
     function: {
       name: 'write_file',
       description:
-        'Create or overwrite a whole file in the workspace (relative path). Prefer unified diff fences for surgical edits. Plan mode blocked. Needs Auto-accept edits or click-to-apply.',
+        'Create or overwrite a whole file in the connected working directory (relative path). Use this for new files. Prefer unified diffs for surgical edits. Plan mode blocked. Writes hit disk immediately when a workspace folder is connected.',
       parameters: {
         type: 'object',
         properties: {
@@ -511,11 +511,72 @@ export const CHAT_TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'memory_search',
+      description:
+        'Semantic search of the local MemPalace (verbatim past chats, decisions, project notes). Call this before answering questions about prior work, people, or decisions. Not workspace grep.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Natural-language memory query' },
+          wing: { type: 'string', description: 'Optional wing (project) filter' },
+          room: { type: 'string', description: 'Optional room (topic) filter' },
+          results: { type: 'number', description: 'How many hits (1–20, default 5)' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'memory_save',
+      description:
+        'File verbatim content into MemPalace (wing/room drawer). Use for decisions, prefs, and session facts that should persist.',
+      parameters: {
+        type: 'object',
+        properties: {
+          content: { type: 'string', description: 'Verbatim text to store' },
+          wing: { type: 'string', description: 'Wing (project). Default: workspace basename' },
+          room: { type: 'string', description: 'Room (topic). Default: abliterated-chat' },
+        },
+        required: ['content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'memory_status',
+      description: 'Show MemPalace overview (drawers, wings, rooms). Use on wake-up or when memory seems empty.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'memory_wake',
+      description: 'Load compact L0+L1 MemPalace wake-up context (identity + top memories). Prefer at session start.',
+      parameters: {
+        type: 'object',
+        properties: {
+          wing: { type: 'string', description: 'Optional project wing' },
+        },
+      },
+    },
+  },
 ];
 
 export function filterChatTools(
   enabled?: ToolType[],
-  opts?: { imageGenEnabled?: boolean; skillsEnabled?: boolean; extraTools?: typeof CHAT_TOOLS },
+  opts?: {
+    imageGenEnabled?: boolean;
+    skillsEnabled?: boolean;
+    mempalaceEnabled?: boolean;
+    extraTools?: typeof CHAT_TOOLS;
+  },
 ) {
   let tools = CHAT_TOOLS;
   if (enabled) {
@@ -528,6 +589,10 @@ export function filterChatTools(
   if (opts?.skillsEnabled === false) {
     const skillNames = new Set(['list_skills', 'read_skill', 'suggest_skill', 'write_skill']);
     tools = tools.filter((t) => !skillNames.has(t.function.name));
+  }
+  if (opts?.mempalaceEnabled === false) {
+    const memNames = new Set(['memory_search', 'memory_save', 'memory_status', 'memory_wake']);
+    tools = tools.filter((t) => !memNames.has(t.function.name));
   }
   if (opts?.extraTools?.length) {
     tools = [...tools, ...opts.extraTools];
@@ -729,6 +794,7 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     ? filterChatTools(profile.toolNames as ToolType[], {
         imageGenEnabled: settings.imageGenEnabled === true,
         skillsEnabled: settings.skillsEnabled !== false && !profile.compactPrompt,
+        mempalaceEnabled: settings.mempalaceEnabled !== false,
         extraTools: profile.allowMcp ? extraTools : undefined,
       })
     : [];

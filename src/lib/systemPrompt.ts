@@ -600,6 +600,7 @@ Only when rewrite beats re-patching. First line exactly \`// <relative/path>\` (
 - task_read / task_update: durable .ablit/task.json hierarchical Task Graph v1 (nodes/depends_on/verification; format=flat for legacy) (todo stays the turn checklist).
 - verify: scoped typecheck/lint/test after implement (before declaring done). shell also works.
 - MCP as mcp__server__tool when configured. web_fetch: http(s) only. generate_image: only if Images is enabled.
+- MemPalace: memory_search before answering about past work/people/decisions; memory_save for facts that should persist; memory_status / memory_wake for palace overview. Search-before-answer. Do not guess palace contents.
 
 ## Work
 Trivial one-shot: do it (tiny patch, single read). No formal plan.
@@ -636,12 +637,26 @@ export const PREVIOUS_SYSTEM_PROMPT_V16 = PREVIOUS_SYSTEM_PROMPT_V15.replace(
   '- MCP as mcp__server__tool when configured. web_search: live web results, then web_fetch chosen URLs. web_fetch: http(s) only. generate_image: only if Images is enabled.',
 );
 
-export const SYSTEM_PROMPT = PREVIOUS_SYSTEM_PROMPT_V16.replace(
+export const PREVIOUS_SYSTEM_PROMPT_V17 = PREVIOUS_SYSTEM_PROMPT_V16.replace(
   '- The content channel is the answer. Reasoning is not executed — diffs, bash fences, and `// path` files must be in content.',
   '- The content channel is the answer. Reasoning is outline only (goal, inspect, why) — never code, diffs, bash fences, or // path files. Those belong in content after Plan is approved, or during Build.',
 ).replace(
   '1. Reasoning (if on): goal; what to inspect; each step as #, why, success. After a tool, one line on what changed. Do not restart unless contradicted.',
   '1. Reasoning (if on): goal; inspect; each step as #, why, success. After a tool, one line. Never put code, diffs, bash fences, or // path files in reasoning.',
+);
+
+/** Completeness lock — never ship placeholders. */
+export const COMPLETENESS_HARD_LOCK =
+  '## Completeness — HARD LOCK\n' +
+  'NEVER write placeholder, stub, demo, or "implement X here" scripts or files.\n' +
+  'ALWAYS write full-length, fully functional code that typechecks and runs.\n' +
+  'ALL code files MUST be written into the connected working directory (write_file or // relative/path / ```diff fences). Source that only appears in chat is a failed build.\n' +
+  'Do not stop at a skeleton, TODO, or partial product. Finish the feature in this run, then verify (tsc / tests / scoped bash).\n' +
+  'The build is incomplete until the final product works and those tests have been executed.';
+
+export const SYSTEM_PROMPT = PREVIOUS_SYSTEM_PROMPT_V17.replace(
+  '5. A todo list with no diffs is a failed build.',
+  '5. A todo list with no diffs is a failed build.\n\n' + COMPLETENESS_HARD_LOCK,
 );
 
 /** Prior SYSTEM_PROMPT before compact Work section (dropped Large jobs / Multi-step duplication). */
@@ -751,4 +766,5 @@ export const LEGACY_PROMPTS = [
   PREVIOUS_SYSTEM_PROMPT_V14,
   PREVIOUS_SYSTEM_PROMPT_V15,
   PREVIOUS_SYSTEM_PROMPT_V16,
+  PREVIOUS_SYSTEM_PROMPT_V17,
 ] as const;

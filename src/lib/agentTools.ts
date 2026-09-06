@@ -12,6 +12,7 @@ import {
 } from './agentHelpers';
 import { formatSkillFile, similarSkillExists, slugifySkillId, toCatalogEntries } from './skills';
 import { runWebSearch } from './webSearch';
+import { mempalaceOpts } from './mempalace';
 import {
   TASK_GRAPH_PATH,
   commitTaskUpdate,
@@ -185,10 +186,6 @@ export async function executeAgentTool(
       return err(tool, 'missing content');
     }
     const preview = file + '\n---\n' + content.slice(0, 4000);
-    if (!autoAcceptEdits) {
-      if (mode === 'headless') return softSkip(tool, 'write_file needs Auto-accept edits (headless)');
-      return gated(tool, preview);
-    }
     if (!bridge.connected) return disconnected(tool, preview, autoAcceptEdits, mode);
     try {
       await bridge.writeFile(file, content);
@@ -556,6 +553,48 @@ export async function executeAgentTool(
     try {
       const saved = await bridge.writeSkill({ name: nameArg, description: desc, body, scope });
       return ok(tool, JSON.stringify({ ok: true, id: saved.id, path: saved.path, source: saved.source }, null, 2));
+    } catch (e) {
+      return err(tool, e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  if (name === 'memory_search' || name === 'memory_save' || name === 'memory_status' || name === 'memory_wake') {
+    if (settings.mempalaceEnabled === false) return err(tool, 'MemPalace is disabled in Settings');
+    if (!bridge.connected) return disconnected(tool, name, autoAcceptEdits, mode);
+    const base = mempalaceOpts(settings, opts.workspaceRoot || bridge.currentRoot);
+    try {
+      if (name === 'memory_search') {
+        const query = toolArgString(tool.arguments, ['query', 'q', 'search']);
+        if (!query) return err(tool, 'missing query');
+        const wing = toolArgString(tool.arguments, ['wing']) || base.wing;
+        const room = toolArgString(tool.arguments, ['room']);
+        const nRaw = tool.arguments.results ?? tool.arguments.limit ?? tool.arguments.n;
+        const results = typeof nRaw === 'number' || typeof nRaw === 'string' ? Number(nRaw) : undefined;
+        return ok(
+          tool,
+          await bridge.mempalaceSearch(query, {
+            palacePath: base.palacePath,
+            wing,
+            room,
+            results: Number.isFinite(results) ? results : undefined,
+          }),
+        );
+      }
+      if (name === 'memory_save') {
+        const content = toolArgString(tool.arguments, ['content', 'text', 'body', 'entry']);
+        if (!content) return err(tool, 'missing content');
+        const wing = toolArgString(tool.arguments, ['wing']) || base.wing;
+        const room = toolArgString(tool.arguments, ['room']);
+        return ok(
+          tool,
+          await bridge.mempalaceSave(content, { palacePath: base.palacePath, wing, room }),
+        );
+      }
+      if (name === 'memory_status') {
+        return ok(tool, await bridge.mempalaceStatus({ palacePath: base.palacePath, wing: base.wing }));
+      }
+      const wing = toolArgString(tool.arguments, ['wing']) || base.wing;
+      return ok(tool, await bridge.mempalaceWake({ palacePath: base.palacePath, wing }));
     } catch (e) {
       return err(tool, e instanceof Error ? e.message : String(e));
     }

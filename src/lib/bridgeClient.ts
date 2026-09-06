@@ -578,6 +578,94 @@ export class BridgeClient {
     });
   }
 
+  mempalaceWhich(): Promise<{ ok: boolean; display?: string; error?: string; text: string }> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({ type: 'mempalace_which' }).then((v) => {
+      const msg = v as { ok?: boolean; display?: string; error?: string; text?: string };
+      return {
+        ok: msg.ok === true,
+        display: msg.display,
+        error: msg.error,
+        text: String(msg.text ?? msg.display ?? msg.error ?? ''),
+      };
+    });
+  }
+
+  mempalaceStatus(opts?: { palacePath?: string; wing?: string }): Promise<string> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({ type: 'mempalace_status', palacePath: opts?.palacePath || '', wing: opts?.wing || '' }).then(
+      (v) => {
+        const msg = v as { content?: string; text?: string };
+        return String(msg.text ?? msg.content ?? '');
+      },
+    );
+  }
+
+  mempalaceWake(opts?: { palacePath?: string; wing?: string }): Promise<string> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({ type: 'mempalace_wake', palacePath: opts?.palacePath || '', wing: opts?.wing || '' }).then(
+      (v) => {
+        const msg = v as { content?: string; text?: string };
+        return String(msg.text ?? msg.content ?? '');
+      },
+    );
+  }
+
+  mempalaceSearch(
+    query: string,
+    opts?: { palacePath?: string; wing?: string; room?: string; results?: number },
+  ): Promise<string> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({
+      type: 'mempalace_search',
+      query,
+      palacePath: opts?.palacePath || '',
+      wing: opts?.wing || '',
+      room: opts?.room || '',
+      results: opts?.results,
+    }).then((v) => {
+      const msg = v as { content?: string; text?: string };
+      return String(msg.text ?? msg.content ?? '');
+    });
+  }
+
+  mempalaceSave(
+    content: string,
+    opts?: { palacePath?: string; wing?: string; room?: string },
+  ): Promise<string> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({
+      type: 'mempalace_save',
+      content,
+      palacePath: opts?.palacePath || '',
+      wing: opts?.wing || '',
+      room: opts?.room || '',
+    }).then((v) => {
+      const msg = v as { content?: string; text?: string };
+      return String(msg.text ?? msg.content ?? '');
+    });
+  }
+
+  mempalaceInit(dir?: string, opts?: { palacePath?: string }): Promise<string> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({
+      type: 'mempalace_init',
+      dir: dir || '',
+      palacePath: opts?.palacePath || '',
+    }).then((v) => {
+      const msg = v as { content?: string; text?: string };
+      return String(msg.text ?? msg.content ?? '');
+    });
+  }
+
+  mempalaceInstall(): Promise<string> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({ type: 'mempalace_install' }).then((v) => {
+      const msg = v as { content?: string; text?: string };
+      return String(msg.text ?? msg.content ?? '');
+    });
+  }
+
   mcpCallTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<string> {
     if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
     return this.request({ type: 'mcp_call_tool', id: serverId, toolName, arguments: args }).then((v) => {

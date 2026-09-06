@@ -18,7 +18,10 @@ const {
   isQwen38Abliterated27B,
   migrateFeatherlessModel,
   DEFAULT_FEATHERLESS_MODEL,
+  PINNED_FEATHERLESS_MODELS,
   filterFeatherlessQwenModels,
+  isPinnedFeatherlessModel,
+  mergePinnedFeatherlessModels,
 } = m;
 
 assert.equal(DEFAULT_FEATHERLESS_MODEL, 'Qwen/Qwen3-32B');
@@ -26,6 +29,13 @@ assert.equal(DEFAULT_FEATHERLESS_MODEL, 'Qwen/Qwen3-32B');
 const ADMIT = [
   'Qwen/Qwen3-32B',
   'huihui-ai/Qwen3-32B-abliterated',
+  'huihui-ai/Qwen2.5-32B-Instruct-abliterated',
+  'sci4ai/Qwen2.5-32B-Instruct-Abliterated',
+  'TobiasLogic/Qwen2.5-Coder-32B-abliterated',
+  'huihui-ai/DeepSeek-R1-Distill-Qwen-32B-abliterated',
+  'zetasepic/Qwen2.5-32B-Instruct-abliterated-v2',
+  'roslein/Qwen3-32B-abliterated',
+  'huihui-ai/QwQ-32B-abliterated',
   'Qwen/Qwen2.5-72B-Instruct',
   'huihui-ai/Qwen2.5-72B-Instruct-abliterated',
   'Qwen/Qwen2.5-Coder-32B-Instruct',
@@ -68,6 +78,16 @@ assert.equal(migOk.migrated, false);
 
 const filtered = filterFeatherlessQwenModels([...ADMIT, ...REJECT].map((id) => ({ id })));
 assert.equal(filtered.length, ADMIT.length);
+
+assert.equal(PINNED_FEATHERLESS_MODELS.length, 8);
+for (const p of PINNED_FEATHERLESS_MODELS) {
+  assert.equal(isPinnedFeatherlessModel(p.id), true, 'pinned ' + p.id);
+  assert.equal(isLargeQwenAgentModel(p.id), true, 'admit pinned ' + p.id);
+}
+const merged = mergePinnedFeatherlessModels([{ id: 'Qwen/Qwen3-32B' }]);
+assert.equal(merged[0].id, PINNED_FEATHERLESS_MODELS[0].id);
+assert.ok(merged.some((m) => m.id === 'Qwen/Qwen3-32B'));
+assert.equal(merged.length, PINNED_FEATHERLESS_MODELS.length + 1);
 
 fs.rmSync(outDir, { recursive: true, force: true });
 console.log('test-featherless-qwen: ok');

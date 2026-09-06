@@ -38,6 +38,7 @@ const {
   isUnsetWorkspace,
   joinRoot,
   workspaceGate,
+  shouldWriteWorkspaceFiles,
 } = mod;
 
 assert.equal(isUnsetWorkspace(''), true);
@@ -65,6 +66,31 @@ assert.equal(workspaceGate('/Users/me/abliterated', '/Users/me/abliterated').ok,
 assert.equal(workspaceGate('/Users/me/abliterated', '/Users/me/abliterated').message, APP_ROOT_REFUSED);
 assert.equal(workspaceGate('/Users/me/abliterated/src', '/Users/me/abliterated').reason, 'app_root');
 assert.equal(workspaceGate('/Users/me/project', '/Users/me/abliterated').ok, true);
+
+assert.equal(
+  shouldWriteWorkspaceFiles({
+    workspaceRoot: '/Users/me/project',
+    appRoot: '/Users/me/abliterated',
+    connected: true,
+  }),
+  true,
+);
+assert.equal(
+  shouldWriteWorkspaceFiles({
+    planMode: true,
+    workspaceRoot: '/Users/me/project',
+    appRoot: '/Users/me/abliterated',
+    connected: true,
+  }),
+  false,
+);
+assert.equal(
+  shouldWriteWorkspaceFiles({
+    workspaceRoot: '/Users/me/project',
+    connected: false,
+  }),
+  false,
+);
 
 fs.rmSync(outDir, { recursive: true, force: true });
 console.log('test-workspace-guard.mjs ok');

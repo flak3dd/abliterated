@@ -23,6 +23,7 @@ import {
 } from './pyManaged.js';
 import { searchWeb } from './webSearch.js';
 import { readProjectMemory } from './projectMemory.js';
+import * as mempalace from './mempalace.js';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.ABLIT_PORT || 17322);
@@ -871,6 +872,99 @@ async function handleProjectMemory(ws, msg) {
   }
 }
 
+function mempalaceOpts(msg) {
+  return {
+    palacePath: String(msg.palacePath || msg.palace || '').trim(),
+    wing: String(msg.wing || '').trim() || mempalace.wingFromRoot(ROOT),
+    room: String(msg.room || '').trim(),
+    results: msg.results ?? msg.n ?? msg.limit,
+  };
+}
+
+function sendMempalaceError(ws, runId, err) {
+  send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
+}
+
+async function handleMempalaceWhich(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const which = await mempalace.mempalaceWhich();
+    send(ws, { runId, status: 'ok', ...which, text: which.ok ? which.display : which.error });
+  } catch (err) {
+    sendMempalaceError(ws, runId, err);
+  }
+}
+
+async function handleMempalaceStatus(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const text = await mempalace.mempalaceStatus(mempalaceOpts(msg));
+    send(ws, { runId, status: 'ok', text, content: text });
+  } catch (err) {
+    sendMempalaceError(ws, runId, err);
+  }
+}
+
+async function handleMempalaceWake(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const raw = await mempalace.mempalaceWake(mempalaceOpts(msg));
+    const text = mempalace.formatWakePrompt(raw);
+    send(ws, { runId, status: 'ok', text, content: text || raw });
+  } catch (err) {
+    sendMempalaceError(ws, runId, err);
+  }
+}
+
+async function handleMempalaceSearch(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const query = String(msg.query || msg.q || msg.search || '').trim();
+    const text = await mempalace.mempalaceSearch(query, mempalaceOpts(msg));
+    send(ws, { runId, status: 'ok', text, content: text });
+  } catch (err) {
+    sendMempalaceError(ws, runId, err);
+  }
+}
+
+async function handleMempalaceSave(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const content = String(msg.content || msg.text || msg.body || '').trim();
+    const text = await mempalace.mempalaceSave(content, mempalaceOpts(msg));
+    send(ws, { runId, status: 'ok', text, content: text });
+  } catch (err) {
+    sendMempalaceError(ws, runId, err);
+  }
+}
+
+async function handleMempalaceInit(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const dir = String(msg.dir || msg.path || ROOT || '').trim();
+    const text = await mempalace.mempalaceInit(dir, mempalaceOpts(msg));
+    send(ws, { runId, status: 'ok', text, content: text });
+  } catch (err) {
+    sendMempalaceError(ws, runId, err);
+  }
+}
+
+async function handleMempalaceInstall(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const result = await mempalace.mempalaceInstall();
+    send(ws, {
+      runId,
+      status: 'ok',
+      text: result.output || 'installed',
+      content: result.output || 'installed',
+      which: result.which,
+    });
+  } catch (err) {
+    sendMempalaceError(ws, runId, err);
+  }
+}
+
 async function handleListSkills(ws, msg) {
   const runId = msg.runId;
   try {
@@ -1009,7 +1103,7 @@ wss.on('connection', (ws, req) => {
       || type === 'file_outline' || type === 'semantic_search' || type === 'git_status' || type === 'git_commit'
       || type === 'git_diff' || type === 'create_pr' || type === 'checkpoint_save' || type === 'checkpoint_restore'
       || type === 'checkpoint_list' || type === 'mcp_connect' || type === 'exec' || type === 'apply_patch'
-      || type === 'project_memory'
+      || type === 'project_memory' || type === 'mempalace_init'
       || type === 'write_file' || type === 'delete_file';
     if (needsWorkspace) {
       try {
@@ -1079,6 +1173,34 @@ wss.on('connection', (ws, req) => {
     }
     if (type === 'project_memory') {
       void handleProjectMemory(ws, msg);
+      return;
+    }
+    if (type === 'mempalace_which') {
+      void handleMempalaceWhich(ws, msg);
+      return;
+    }
+    if (type === 'mempalace_status') {
+      void handleMempalaceStatus(ws, msg);
+      return;
+    }
+    if (type === 'mempalace_wake') {
+      void handleMempalaceWake(ws, msg);
+      return;
+    }
+    if (type === 'mempalace_search') {
+      void handleMempalaceSearch(ws, msg);
+      return;
+    }
+    if (type === 'mempalace_save') {
+      void handleMempalaceSave(ws, msg);
+      return;
+    }
+    if (type === 'mempalace_init') {
+      void handleMempalaceInit(ws, msg);
+      return;
+    }
+    if (type === 'mempalace_install') {
+      void handleMempalaceInstall(ws, msg);
       return;
     }
     if (type === 'list_skills') {

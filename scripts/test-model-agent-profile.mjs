@@ -48,6 +48,7 @@ assert.equal(qwen.compactPrompt, false);
 assert.equal(qwen.sendTools, true);
 assert.equal(qwen.useThoughtLock, true);
 assert.ok(qwen.toolNames.includes("shell") || qwen.toolNames.includes("read_file"));
+assert.ok(qwen.toolNames.includes("write_file"));
 assert.ok(qwen.systemAddendum.includes("Thinking model"));
 
 const base = buildModelAgentProfile({

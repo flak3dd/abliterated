@@ -26,6 +26,10 @@ export const ALL_TOOL_TYPES = [
   'read_skill',
   'suggest_skill',
   'write_skill',
+  'memory_search',
+  'memory_save',
+  'memory_status',
+  'memory_wake',
 ] as const;
 export type ToolType = (typeof ALL_TOOL_TYPES)[number];
 /** Exact default lists from older builds — upgradeEnabledTools replaces these with ALL_TOOL_TYPES. */
@@ -143,6 +147,35 @@ export const PREV6_DEFAULT_TOOLS: ToolType[] = [
   'write_skill',
 ];
 
+/** Prior full tool list before MemPalace memory_* tools. */
+export const PREV7_DEFAULT_TOOLS: ToolType[] = [
+  'web_fetch',
+  'web_search',
+  'read_file',
+  'write_file',
+  'shell',
+  'verify',
+  'grep',
+  'glob',
+  'git_status',
+  'git_commit',
+  'git_diff',
+  'create_pr',
+  'checkpoint_save',
+  'checkpoint_restore',
+  'list_dir',
+  'file_outline',
+  'semantic_search',
+  'generate_image',
+  'todo',
+  'task_read',
+  'task_update',
+  'list_skills',
+  'read_skill',
+  'suggest_skill',
+  'write_skill',
+];
+
 export const DEFAULT_ENABLED_TOOLS: ToolType[] = [...ALL_TOOL_TYPES];
 
 /** Read-only tools allowed while Plan mode is on (writes unlock after approve). */
@@ -163,6 +196,9 @@ export const PLAN_MODE_TOOLS: ToolType[] = [
   'list_skills',
   'read_skill',
   'suggest_skill',
+  'memory_search',
+  'memory_status',
+  'memory_wake',
 ];
 
 export type HunkStatus = 'pending' | 'accepted' | 'rejected';
@@ -337,6 +373,16 @@ export interface ClientSettings {
   jobWorktreesEnabled: boolean;
   /** Opt-in multi-agent orchestrator/workers/critic. Default false. */
   multiAgentEnabled: boolean;
+  /** Local MemPalace (verbatim memory palace). Default true; degrades if CLI missing. */
+  mempalaceEnabled: boolean;
+  /** Palace directory. Empty = MemPalace default (~/.mempalace/palace). */
+  mempalacePalacePath: string;
+  /** Wing override. Empty = basename of the connected workspace. */
+  mempalaceWing: string;
+  /** Inject wake-up (L0+L1) into the system prompt. Default true when enabled. */
+  mempalaceAutoRecall: boolean;
+  /** File the last user/assistant turn into the palace after each run. Default true when enabled. */
+  mempalaceAutoSave: boolean;
 }
 
 export type ChatOpenAiToolCall = {

@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 /** Smoke for Build-mode protocol helpers (mirrors src/lib/agentHelpers.ts). */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 function parseTodoBullets(text) {
   const raw = text || '';
@@ -101,17 +104,50 @@ function shouldApplyBuildProcess(userText, opts = {}) {
   if (opts.planMode) return false;
   const t = (userText || '').trim();
   if (!t) return false;
+  if (looksPromptOnlyRequest(t)) return false;
   if (looksBuildIntent(t) || looksLargeJob(t)) return true;
   if (!opts.buildMode) return false;
   if (looksMultiStep(t)) return true;
   return t.length >= 40;
 }
 
+function looksLikePlaceholderOutput(text) {
+  const t = text || '';
+  if (!/not implemented|implement (?:this|me|here|later)|coming soon|placeholder script|FIXME:\s*implement|TODO:\s*implement|throw new Error\(\s*['"]not implemented/i.test(t)) {
+    return false;
+  }
+  return /```|^\/\/ [\w./+-]+\s*$|^diff --git /m.test(t);
+}
+
+function looksLikeToolTheaterOutput(text) {
+  const t = text || '';
+  const hasRealFile =
+    /```(?:diff|patch|ts|tsx|js|jsx|mjs|cjs|py|go|rs)\b/i.test(t) ||
+    /^diff --git |^--- (a\/|\/dev\/null)|\+\+\+ b\//m.test(t) ||
+    (/^\/\/ [\w./+-]+\s*$/m.test(t) && t.length > 50);
+  if (hasRealFile) return false;
+  if (/"name"\s*:\s*"(todo|write_file|verify|shell)"/i.test(t)) return true;
+  if (/```(?:json)\b[\s\S]{0,400}"items"\s*:/i.test(t)) return true;
+  if (/```bash[\s\S]{0,200}\bverify\s+"/i.test(t)) return true;
+  return false;
+}
+
 function looksLikeBuildOutput(text) {
   const t = text || '';
-  if (/```(?:diff|patch|bash|ts|tsx|js|jsx|mjs|cjs|py|go|rs|json|css|html|vue|svelte)/i.test(t)) return true;
+  if (looksLikePlaceholderOutput(t)) return false;
+  if (looksLikeToolTheaterOutput(t)) return false;
+  if (/```(?:diff|patch|ts|tsx|js|jsx|mjs|cjs|py|go|rs|css|html|vue|svelte)\b/i.test(t)) return true;
   if (/^diff --git |^--- (a\/|\/dev\/null)|\+\+\+ b\//m.test(t)) return true;
   if (/^\/\/ [\w./+-]+\s*$/m.test(t) && t.length > 50) return true;
+  return false;
+}
+
+function looksPromptOnlyRequest(userText) {
+  const t = (userText || '').trim().toLowerCase();
+  if (!t) return false;
+  if (/\b(implement|scaffold|codebase|pull request|typecheck)\b/.test(t)) return false;
+  if (/\b(write|draft|craft|give|produce|create|make)\b.{0,80}\bprompt\b/.test(t)) return true;
+  if (/\bprompt\b.{0,60}\b(that will|that can|to |for )\b/.test(t)) return true;
   return false;
 }
 
@@ -126,6 +162,17 @@ assert.equal(shouldApplyBuildProcess('please implement the auth subsystem across
 assert.equal(shouldApplyBuildProcess('hi', { planMode: true }), false);
 assert.equal(shouldApplyBuildProcess('Build a file structure for the new feature module', { planMode: true }), false);
 assert.ok(shouldApplyBuildProcess('Please add the missing tests for the parser module now.', { buildMode: true }));
+assert.equal(
+  looksPromptOnlyRequest('write prompt that will remove all ai artifacts from an image'),
+  true,
+);
+assert.equal(
+  shouldApplyBuildProcess('write prompt that will remove all ai artifacts from an image', { buildMode: true }),
+  false,
+);
+const theater = '```json\n{"name":"todo","arguments":{"items":[{"text":"x","done":true}]}}\n```\n```bash\nverify "python -c psnr"\n```';
+assert.equal(looksLikeToolTheaterOutput(theater), true);
+assert.equal(looksLikeBuildOutput(theater), false);
 
 function canonicalizeToolName(name) {
   const raw = (name || '').trim();
@@ -142,6 +189,18 @@ assert.equal(canonicalizeToolName('read_file'), 'read_file');
 
 assert.equal(looksLikeBuildOutput('ToDo:\n- [ ] a\n- [ ] b'), false);
 assert.ok(looksLikeBuildOutput('```diff\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n```'));
+assert.equal(
+  looksLikeBuildOutput('```ts\nexport function foo() { throw new Error("not implemented"); }\n```'),
+  false,
+);
+assert.ok(looksLikePlaceholderOutput('```ts\nexport function foo() { throw new Error("not implemented"); }\n```'));
+
+const prompt = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src/lib/systemPrompt.ts'),
+  'utf8',
+);
+assert.ok(prompt.includes('Completeness — HARD LOCK'));
+assert.ok(prompt.includes('NEVER write placeholder'));
 
 const lifted = liftTodoListToContent(
   '',

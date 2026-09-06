@@ -3,6 +3,7 @@ import { classifyModel } from './modelSettingsGuide.js';
 
 export const CORE_AGENT_TOOLS = [
   'read_file',
+  'write_file',
   'grep',
   'glob',
   'list_dir',
@@ -10,12 +11,14 @@ export const CORE_AGENT_TOOLS = [
   'todo',
   'git_status',
   'git_diff',
+  'memory_search',
 ] as const;
 
 const FULL_TOOL_NAMES = [
   'web_fetch',
   'web_search',
   'read_file',
+  'write_file',
   'shell',
   'grep',
   'glob',
@@ -33,6 +36,10 @@ const FULL_TOOL_NAMES = [
   'read_skill',
   'suggest_skill',
   'write_skill',
+  'memory_search',
+  'memory_save',
+  'memory_status',
+  'memory_wake',
 ] as const;
 
 const PLAN_TOOL_NAMES = [
@@ -50,6 +57,9 @@ const PLAN_TOOL_NAMES = [
   'list_skills',
   'read_skill',
   'suggest_skill',
+  'memory_search',
+  'memory_status',
+  'memory_wake',
 ] as const;
 
 type ToolName = string;
@@ -132,19 +142,19 @@ function addendum(opts: {
   if (opts.tier === 'none') {
     lines.push(
       'Native function tools are OFF for this checkpoint. Do not emit tool-call JSON or fake tool results.',
-      'Write every file change as ```diff or a // relative/path fence in CONTENT. Thought is prose only.',
-      'If you need a file you do not have, name the path instead of inventing its contents.',
+      'Write every file into the connected working directory as ```diff or a // relative/path fence in CONTENT. Thought is prose only.',
+      'If you need a file you do not have, name the path instead of inventing its contents. Chat-only source is a failed build.',
     );
   } else if (opts.tier === 'core') {
     lines.push(
       'Compact tool set only: ' + CORE_AGENT_TOOLS.join(', ') + '.',
       'One tool at a time. Keep reasoning to a few lines. No skill-catalog essays.',
-      'CODE ONLY IN CONTENT (```diff / // path). Never in thought.',
+      'CODE ONLY IN CONTENT via write_file or ```diff / // path — files must land in the working directory. Never in thought.',
     );
   } else {
     lines.push(
-      'Full native tools are available. Call them instead of inventing listings or file bodies.',
-      'CODE ONLY IN CONTENT (```diff / // path). Never in thought.',
+      'Full native tools are available. Call write_file or emit path-headed diffs so files land in the working directory.',
+      'CODE ONLY IN CONTENT via write_file or ```diff / // path — files must land in the working directory. Never in thought.',
     );
   }
   if (opts.thinking) {

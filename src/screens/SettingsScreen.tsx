@@ -21,6 +21,7 @@ import {
   remainingBuiltinTokens,
 } from '../lib/builtinTokens';
 import { generatePairingCode, setSettings, uid, wipeAll } from '../lib/storage';
+import { MEMPALACE_CATALOG_ENTRY, withMempalaceMcpServer } from '../lib/mempalace';
 import { skillRootHints, toCatalogEntries, type SkillCatalogEntry } from '../lib/skills';
 import type { ClientSettings, McpServerConfig } from '../types';
 
@@ -135,6 +136,8 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   const [licenseMsg, setLicenseMsg] = useState('');
   const [skillRows, setSkillRows] = useState<SkillCatalogEntry[]>([]);
   const [skillsBusy, setSkillsBusy] = useState(false);
+  const [mpHint, setMpHint] = useState('');
+  const [mpBusy, setMpBusy] = useState<'which' | 'install' | 'init' | 'status' | null>(null);
 
   useEffect(() => {
     setLicenseDraft(settings.licenseKey || '');
@@ -470,7 +473,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             label="Auto-accept file edits"
             checked={settings.autoAcceptEdits}
             onChange={(v) => patch({ autoAcceptEdits: v })}
-            help="Apply Abliterated diffs and fenced files via the localhost bridge — no Apply click. Independent of auto-run shell."
+            help="When a working directory is connected, agent code files already write there. This also applies diffs without an extra Apply click. Shell still needs Run unless Auto-run is on."
           />
 
           <SwitchRow
@@ -480,6 +483,172 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             onChange={(v) => patch({ autoRunShell: v })}
             help="Danger: runs model shell tool calls on the localhost daemon without a Run click. Deadly commands are still refused."
           />
+        </Section>
+
+        <Section
+          title="MemPalace"
+          hint="Local-first verbatim memory (wings / rooms / drawers). Official CLI: uv tool install mempalace — docs at mempalaceofficial.com. First-class tools: memory_search, memory_save, memory_status, memory_wake."
+        >
+          <SwitchRow
+            label="Enable MemPalace"
+            checked={settings.mempalaceEnabled !== false}
+            onChange={(v) =>
+              patch({
+                mempalaceEnabled: v,
+                mcpServers: withMempalaceMcpServer(
+                  settings.mcpServers,
+                  v,
+                  settings.mempalacePalacePath,
+                ),
+              })
+            }
+            help="When on, chat/jobs get wake-up context and memory_* tools. MCP server is added as mcp__mempalace__* if uvx is available."
+          />
+          <SwitchRow
+            label="Auto-recall (wake-up)"
+            checked={settings.mempalaceAutoRecall !== false}
+            onChange={(v) => patch({ mempalaceAutoRecall: v })}
+            help="Inject L0+L1 wake-up into the system prompt when the bridge is connected."
+          />
+          <SwitchRow
+            label="Auto-save sessions"
+            checked={settings.mempalaceAutoSave !== false}
+            onChange={(v) => patch({ mempalaceAutoSave: v })}
+            help="After each chat/job run, file the last user/assistant turn into the palace (wing = workspace name)."
+          />
+          <FieldLabel
+            label="Palace path"
+            hint="Empty = MemPalace default (~/.mempalace/palace). Sets MEMPALACE_PALACE_PATH for CLI and MCP."
+          >
+            <input
+              value={settings.mempalacePalacePath}
+              onChange={(e) => patch({ mempalacePalacePath: e.target.value })}
+              placeholder="~/.mempalace/palace"
+              className="field"
+            />
+          </FieldLabel>
+          <FieldLabel
+            label="Wing"
+            hint="Empty = basename of the connected workspace. Used to scope search / save."
+          >
+            <input
+              value={settings.mempalaceWing}
+              onChange={(e) => patch({ mempalaceWing: e.target.value })}
+              placeholder="workspace folder name"
+              className="field"
+            />
+          </FieldLabel>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-ghost h-7 px-2 text-[10px]"
+              disabled={mpBusy !== null}
+              onClick={() => {
+                setMpBusy('which');
+                setMpHint('');
+                void bridge
+                  .waitUntilConnected(4000)
+                  .then((ok) => {
+                    if (!ok) throw new Error('Bridge disconnected — npm run bridge');
+                    return bridge.mempalaceWhich();
+                  })
+                  .then((w) => setMpHint(w.ok ? `CLI: ${w.display}` : w.error || w.text || 'not found'))
+                  .catch((e) => setMpHint(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setMpBusy(null));
+              }}
+            >
+              Detect CLI
+            </button>
+            <button
+              type="button"
+              className="btn-primary h-7 px-2 text-[10px]"
+              disabled={mpBusy !== null}
+              onClick={() => {
+                setMpBusy('install');
+                setMpHint('Installing via uv tool install mempalace…');
+                void bridge
+                  .waitUntilConnected(4000)
+                  .then((ok) => {
+                    if (!ok) throw new Error('Bridge disconnected — npm run bridge');
+                    return bridge.mempalaceInstall();
+                  })
+                  .then((t) => setMpHint(t || 'installed'))
+                  .catch((e) => setMpHint(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setMpBusy(null));
+              }}
+            >
+              Install
+            </button>
+            <button
+              type="button"
+              className="btn-ghost h-7 px-2 text-[10px]"
+              disabled={mpBusy !== null}
+              onClick={() => {
+                setMpBusy('init');
+                setMpHint('Initializing palace from the connected workspace…');
+                void bridge
+                  .waitUntilConnected(4000)
+                  .then((ok) => {
+                    if (!ok) throw new Error('Bridge disconnected — npm run bridge');
+                    return bridge.mempalaceInit(wsRoot || undefined, {
+                      palacePath: settings.mempalacePalacePath,
+                    });
+                  })
+                  .then((t) => setMpHint(t || 'initialized'))
+                  .catch((e) => setMpHint(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setMpBusy(null));
+              }}
+            >
+              Init workspace
+            </button>
+            <button
+              type="button"
+              className="btn-ghost h-7 px-2 text-[10px]"
+              disabled={mpBusy !== null}
+              onClick={() => {
+                setMpBusy('status');
+                setMpHint('');
+                void bridge
+                  .waitUntilConnected(4000)
+                  .then((ok) => {
+                    if (!ok) throw new Error('Bridge disconnected — npm run bridge');
+                    return bridge.mempalaceStatus({
+                      palacePath: settings.mempalacePalacePath,
+                      wing: settings.mempalaceWing,
+                    });
+                  })
+                  .then((t) => setMpHint(t || '(empty)'))
+                  .catch((e) => setMpHint(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setMpBusy(null));
+              }}
+            >
+              Status
+            </button>
+            <button
+              type="button"
+              className="btn-ghost h-7 px-2 text-[10px]"
+              onClick={() => {
+                patch({
+                  mempalaceEnabled: true,
+                  mcpServers: withMempalaceMcpServer(
+                    settings.mcpServers,
+                    true,
+                    settings.mempalacePalacePath,
+                  ),
+                });
+                setMpHint(
+                  `Added MCP ${MEMPALACE_CATALOG_ENTRY.command} ${MEMPALACE_CATALOG_ENTRY.args.join(' ')} — Connect it under MCP servers.`,
+                );
+              }}
+            >
+              Add MCP server
+            </button>
+          </div>
+          {mpHint ? (
+            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-border bg-background px-2 py-1.5 font-mono text-[10px] text-zinc-300">
+              {mpHint}
+            </pre>
+          ) : null}
         </Section>
 
         <Section title="Inference / pairing" hint="Pairing code for the localhost bridge. Inference endpoints live under API.">

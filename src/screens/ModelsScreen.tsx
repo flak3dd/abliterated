@@ -6,13 +6,15 @@ import { coalesceFetch } from '../lib/coalesceFetch';
 import { cn } from '../lib/cn';
 import { setSettings } from '../lib/storage';
 import { ModelFamilyChip, ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
-import { classifyModel } from '../lib/modelSettingsGuide';
+import { classifyModel, recommendedApiPatch } from '../lib/modelSettingsGuide';
 import type { ClientSettings, Tab } from '../types';
 import {
   DEFAULT_FEATHERLESS_MODEL,
   FEATHERLESS_EMPTY_STATE,
   abliterationGradeFeatherlessPatch,
+  PINNED_FEATHERLESS_MODELS,
   filterFeatherlessQwenModels,
+  mergePinnedFeatherlessModels,
 } from '../lib/featherlessQwen';
 
 interface Props {
@@ -213,9 +215,11 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
 
         let next = list.length ? list : [{ id: resolved.defaultModel || 'abliterated-model' }];
         if (resolved.provider === 'featherless') {
-          const filteredLarge = filterFeatherlessQwenModels(list);
-          next = filteredLarge.length ? filteredLarge : (list.length ? [] : [{ id: resolved.defaultModel || DEFAULT_FEATHERLESS_MODEL, owned_by: 'filter' }]);
-          if (!filteredLarge.length && list.length) setError(FEATHERLESS_EMPTY_STATE);
+          next = mergePinnedFeatherlessModels(filterFeatherlessQwenModels(list));
+          if (!next.length) {
+            next = [{ id: resolved.defaultModel || DEFAULT_FEATHERLESS_MODEL, owned_by: 'filter' }];
+            if (list.length) setError(FEATHERLESS_EMPTY_STATE);
+          }
         }
         setPage(pageNum);
         setHasMore(resolved.provider === 'featherless' && list.length >= PER_PAGE);
@@ -272,7 +276,7 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
       settings.inferenceProvider === 'dgx-spark'
         ? { ...settings, sparkModel: id }
         : settings.inferenceProvider === 'featherless'
-          ? { ...settings, featherlessModel: id }
+          ? { ...settings, featherlessModel: id, ...recommendedApiPatch(id, settings) }
           : { ...settings, defaultModel: id };
     setSettings(next);
     onSettingsChange(next);
@@ -360,6 +364,27 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
         <div className="mb-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 font-mono text-[10px] leading-5 text-emerald-100/90">
           Large Qwen only (Abliteration-grade agent path) — dense ≥32B or activated ≥16B; A3B rejected; Qwen3.8-27B abliterated exception.
           <button type="button" className="ml-2 underline text-emerald-300" onClick={() => { const next = { ...settings, ...abliterationGradeFeatherlessPatch() }; setSettings(next); onSettingsChange(next); }}>Apply Abliteration-grade preset</button>
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {PINNED_FEATHERLESS_MODELS.map((m) => {
+              const on = selectedId === m.id;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  title={m.id}
+                  onClick={() => select(m.id)}
+                  className={
+                    'rounded border px-1.5 py-0.5 font-mono text-[10px] ' +
+                    (on
+                      ? 'border-emerald-500/70 bg-emerald-500/15 text-emerald-200'
+                      : 'border-emerald-500/20 text-emerald-100/80 hover:border-emerald-500/50')
+                  }
+                >
+                  {m.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       ) : null}
 
