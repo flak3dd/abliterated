@@ -14,11 +14,12 @@ import { formatSkillFile, similarSkillExists, slugifySkillId, toCatalogEntries }
 import { runWebSearch } from './webSearch';
 import {
   TASK_GRAPH_PATH,
-  applyTaskUpdateArgs,
+  commitTaskUpdate,
   emptyTaskGraph,
   formatTaskGraphPrompt,
+  parseHierarchicalFile,
   parseTaskGraph,
-  stringifyTaskGraph,
+  stringifyHierarchicalTaskGraph,
 } from './taskGraph';
 import type { ClientSettings, ToolCallPayload, ToolCallStatus, ToolType } from '../types';
 
@@ -435,6 +436,10 @@ export async function executeAgentTool(
     if (!bridge.connected) return disconnected(tool, TASK_GRAPH_PATH, autoAcceptEdits, mode);
     try {
       const raw = await bridge.readFile(TASK_GRAPH_PATH);
+      const hierarchical = parseHierarchicalFile(raw);
+      if (hierarchical) {
+        return ok(tool, stringifyHierarchicalTaskGraph(hierarchical).trimEnd());
+      }
       const graph = parseTaskGraph(raw) || emptyTaskGraph();
       return ok(tool, JSON.stringify(graph, null, 2));
     } catch (e) {
@@ -449,16 +454,24 @@ export async function executeAgentTool(
   if (name === 'task_update') {
     if (!bridge.connected) return disconnected(tool, TASK_GRAPH_PATH, autoAcceptEdits, mode);
     try {
-      let base = emptyTaskGraph();
+      let raw = '';
       try {
-        const raw = await bridge.readFile(TASK_GRAPH_PATH);
-        base = parseTaskGraph(raw) || emptyTaskGraph();
+        raw = await bridge.readFile(TASK_GRAPH_PATH);
       } catch {
-        base = emptyTaskGraph();
+        raw = '';
       }
-      const next = applyTaskUpdateArgs(base, tool.arguments || {});
-      await bridge.writeFile(TASK_GRAPH_PATH, stringifyTaskGraph(next));
-      return ok(tool, formatTaskGraphPrompt(next) || JSON.stringify(next, null, 2));
+      const committed = commitTaskUpdate(raw, tool.arguments || {});
+      await bridge.writeFile(TASK_GRAPH_PATH, committed.text);
+      const summary =
+        formatTaskGraphPrompt(committed.flat) ||
+        (committed.hierarchical
+          ? stringifyHierarchicalTaskGraph(committed.hierarchical).trimEnd()
+          : JSON.stringify(committed.flat, null, 2));
+      const header =
+        committed.format === 'hierarchical'
+          ? `(saved hierarchical Task Graph v1 → ${TASK_GRAPH_PATH})\n`
+          : `(saved flat blackboard → ${TASK_GRAPH_PATH})\n`;
+      return ok(tool, header + summary);
     } catch (e) {
       return err(tool, e instanceof Error ? e.message : String(e));
     }

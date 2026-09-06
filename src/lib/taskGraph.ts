@@ -423,3 +423,526 @@ export function formatTaskGraphPrompt(graph: TaskGraph | null | undefined): stri
   if (out.length > MAX_PROMPT_CHARS) out = `${out.slice(0, MAX_PROMPT_CHARS)}\n/* truncated */`;
   return out;
 }
+export function stringifyHierarchicalTaskGraph(graph: HierarchicalTaskGraph): string {
+  return `${JSON.stringify(graph, null, 2)}\n`;
+}
+
+export function rawIsHierarchical(raw: string): boolean {
+  try {
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    return !!data && typeof data === "object" && Array.isArray(data.nodes) && typeof data.original_goal === "string";
+  } catch {
+    return false;
+  }
+}
+
+export function parseHierarchicalFile(raw: string): HierarchicalTaskGraph | null {
+  try {
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    if (!data || typeof data !== "object") return null;
+    if (!Array.isArray(data.nodes) || typeof data.original_goal !== "string") return null;
+    return parseHierarchicalTaskGraphRaw(data);
+  } catch {
+    return null;
+  }
+}
+
+export function flatToHierarchical(flat: TaskGraph): HierarchicalTaskGraph {
+  const criteria = flat.subtasks
+    .map((s) => s.successCriteria)
+    .filter((x): x is string => !!x && !!x.trim());
+  const success_criteria = criteria.length
+    ? [...new Set(criteria)]
+    : flat.goal.trim()
+      ? [flat.goal.trim()]
+      : ["Goal completed"];
+  let h = createTaskGraph({
+    goal: flat.goal.trim() || "Untitled goal",
+    success_criteria,
+  });
+  if (flat.fleetId) {
+    h = { ...h, metadata: { ...(h.metadata || {}), fleetId: flat.fleetId } };
+  }
+  const idMap = new Map<string, string>();
+  for (const s of flat.subtasks) {
+    const deps = (s.blockers || []).map((b) => idMap.get(b) || b).filter(Boolean);
+    const added = addNode(h, {
+      description: s.text,
+      depends_on: deps,
+      role_hint: s.role,
+      detailed_instructions: s.successCriteria,
+      tags: s.lockPath ? ["lock:" + s.lockPath] : [],
+    });
+    h = added.graph;
+    const want = s.id.trim();
+    if (want && want !== added.node.id && !h.nodes.some((n) => n.id === want)) {
+      const oldId = added.node.id;
+      h = {
+        ...h,
+        nodes: h.nodes.map((n) => {
+          if (n.id === oldId) return { ...n, id: want };
+          return {
+            ...n,
+            depends_on: n.depends_on.map((d) => (d === oldId ? want : d)),
+            children: n.children.map((c) => (c === oldId ? want : c)),
+            parent: n.parent === oldId ? want : n.parent,
+          };
+        }),
+      };
+      idMap.set(s.id, want);
+    } else {
+      idMap.set(s.id, added.node.id);
+    }
+  }
+  for (const s of flat.subtasks) {
+    const nid = idMap.get(s.id);
+    if (!nid) continue;
+    if (s.assignee) {
+      h = {
+        ...h,
+        nodes: h.nodes.map((n) =>
+          n.id === nid
+            ? { ...n, assignee: s.assignee!, status: n.status === "pending" ? "assigned" : n.status }
+            : n,
+        ),
+      };
+    }
+    if (s.status === "in_progress") {
+      const at = nowIso();
+      h = {
+        ...h,
+        nodes: h.nodes.map((n) =>
+          n.id === nid ? { ...n, status: "in_progress", started_at: n.started_at || at } : n,
+        ),
+        status: "running",
+      };
+    } else if (s.status === "blocked") {
+      h = {
+        ...h,
+        nodes: h.nodes.map((n) =>
+          n.id === nid
+            ? {
+                ...n,
+                status: "blocked",
+                blockers: n.blockers.length
+                  ? n.blockers
+                  : [
+                      {
+                        reason: "marked blocked",
+                        reported_by: s.assignee || "orchestrator",
+                        reported_at: nowIso(),
+                        resolved: false,
+                      },
+                    ],
+              }
+            : n,
+        ),
+      };
+    } else if (s.status === "done") {
+      try {
+        h = verifyNode(h, nid, {
+          status: "pass",
+          method: "orchestrator",
+          by: s.assignee || "orchestrator",
+          notes: "migrated from flat done",
+        });
+      } catch {
+        h = {
+          ...h,
+          nodes: h.nodes.map((n) =>
+            n.id === nid
+              ? {
+                  ...n,
+                  status: "completed",
+                  completed_at: nowIso(),
+                  verification: {
+                    status: "pass",
+                    method: "orchestrator",
+                    by: s.assignee || "orchestrator",
+                    at: nowIso(),
+                    notes: "migrated from flat done",
+                  },
+                }
+              : n,
+          ),
+        };
+      }
+    }
+    if (s.artifacts?.length) {
+      for (const a of s.artifacts) {
+        try {
+          h = addArtifact(h, nid, {
+            type: "other",
+            summary: a,
+            path: a.includes("/") ? a : undefined,
+            produced_by: s.assignee || "orchestrator",
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+  const checked = safeParseHierarchicalTaskGraph(h);
+  return checked.ok ? checked.data : h;
+}
+
+export function wantsHierarchicalWrite(args: Record<string, unknown>, existingRaw?: string | null): boolean {
+  const fmt = String(args.format || args.schema || "").toLowerCase();
+  if (fmt === "flat" || fmt === "blackboard") return false;
+  if (fmt === "hierarchical" || fmt === "v1" || fmt === "nodes") return true;
+  if (typeof args.action === "string" && args.action.trim()) return true;
+  if (typeof args.original_goal === "string" && args.original_goal.trim()) return true;
+  if (Array.isArray(args.success_criteria)) return true;
+  if (Array.isArray(args.nodes)) return true;
+  if (args.verification && typeof args.verification === "object") return true;
+  if (args.artifact && typeof args.artifact === "object") return true;
+  if (existingRaw && rawIsHierarchical(existingRaw)) return true;
+  if (typeof args.goal === "string" && args.goal.trim()) return true;
+  if (Array.isArray(args.subtasks) || Array.isArray(args.items) || Array.isArray(args.tasks)) return true;
+  return false;
+}
+
+function asStringList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.map((x) => String(x || "").trim()).filter(Boolean);
+}
+
+export function applyHierarchicalTaskUpdateArgs(
+  graph: HierarchicalTaskGraph | null,
+  args: Record<string, unknown>,
+): HierarchicalTaskGraph {
+  const action = String(args.action || "").toLowerCase().trim();
+  const goal =
+    (typeof args.original_goal === "string" && args.original_goal.trim()) ||
+    (typeof args.goal === "string" && args.goal.trim()) ||
+    "";
+  const criteria = asStringList(args.success_criteria);
+  let h: HierarchicalTaskGraph | null = graph;
+
+  if (!h || action === "create" || action === "reset") {
+    h = createTaskGraph({
+      goal: goal || h?.original_goal || "Untitled goal",
+      success_criteria: criteria.length
+        ? criteria
+        : h?.success_criteria?.length
+          ? h.success_criteria
+          : [goal || "Goal completed"],
+      priority: typeof args.priority === "number" ? args.priority : undefined,
+      global_budgets:
+        args.global_budgets && typeof args.global_budgets === "object"
+          ? (args.global_budgets as HierarchicalTaskGraph["global_budgets"])
+          : undefined,
+    });
+  }
+
+  if (goal && goal !== h.original_goal) {
+    h = { ...h, original_goal: goal, updated_at: nowIso() };
+  }
+  if (criteria.length) {
+    h = { ...h, success_criteria: criteria, updated_at: nowIso() };
+  }
+  if (typeof args.fleetId === "string" && args.fleetId.trim()) {
+    h = { ...h, metadata: { ...(h.metadata || {}), fleetId: args.fleetId.trim() } };
+  }
+
+  const merge = args.merge === true || args.merge === "true";
+  const ingestList: Record<string, unknown>[] = [];
+  if (Array.isArray(args.nodes)) {
+    for (const item of args.nodes) {
+      if (item && typeof item === "object") ingestList.push(item as Record<string, unknown>);
+    }
+  }
+  const rawItems = args.subtasks ?? args.items ?? args.tasks;
+  if (Array.isArray(rawItems)) {
+    for (const item of rawItems) {
+      if (typeof item === "string") {
+        const text = item.trim();
+        if (text) ingestList.push({ description: text, text, role_hint: "coder" });
+        continue;
+      }
+      if (!item || typeof item !== "object") continue;
+      const o = item as Record<string, unknown>;
+      ingestList.push({
+        ...o,
+        description: o.description ?? o.text ?? o.content ?? o.title,
+        depends_on: o.depends_on ?? o.blockers,
+        role_hint: o.role_hint ?? o.role,
+      });
+    }
+  }
+
+  if (ingestList.length && (args.replace === true || args.replace === "true" || action === "replace_nodes")) {
+    h = { ...h, nodes: [] };
+  }
+
+  for (const o of ingestList) {
+    const description = String(o.description ?? o.text ?? "").trim();
+    if (!description) continue;
+    const wantId = typeof o.id === "string" ? o.id.trim() : "";
+    const existing: HierarchicalTaskNode | undefined = wantId
+      ? h.nodes.find((n: HierarchicalTaskNode): boolean => n.id === wantId)
+      : h.nodes.find((n: HierarchicalTaskNode): boolean => n.description === description);
+    if (existing && merge) {
+      const depends_on = Array.isArray(o.depends_on)
+        ? o.depends_on.filter((x): x is string => typeof x === "string")
+        : existing.depends_on;
+      const role_hint = typeof o.role_hint === "string" ? o.role_hint : existing.role_hint;
+      h = {
+        ...h,
+        nodes: h.nodes.map((n: HierarchicalTaskNode): HierarchicalTaskNode =>
+          n.id === existing.id
+            ? {
+                ...n,
+                description,
+                depends_on,
+                ...(role_hint ? { role_hint } : {}),
+                ...(typeof o.detailed_instructions === "string"
+                  ? { detailed_instructions: o.detailed_instructions }
+                  : typeof o.successCriteria === "string"
+                    ? { detailed_instructions: o.successCriteria }
+                    : {}),
+              }
+            : n,
+        ),
+        updated_at: nowIso(),
+      };
+      continue;
+    }
+    if (existing && !merge) continue;
+    const depends_on = Array.isArray(o.depends_on)
+      ? o.depends_on.filter((x): x is string => typeof x === "string")
+      : Array.isArray(o.blockers)
+        ? o.blockers.filter((x): x is string => typeof x === "string")
+        : [];
+    const added = addNode(h, {
+      description,
+      parent: typeof o.parent === "string" ? o.parent : null,
+      depends_on,
+      role_hint: typeof o.role_hint === "string" ? o.role_hint : typeof o.role === "string" ? o.role : undefined,
+      detailed_instructions:
+        typeof o.detailed_instructions === "string"
+          ? o.detailed_instructions
+          : typeof o.successCriteria === "string"
+            ? o.successCriteria
+            : undefined,
+      priority: typeof o.priority === "number" ? o.priority : undefined,
+      tags: Array.isArray(o.tags) ? o.tags.filter((x): x is string => typeof x === "string") : undefined,
+      budget: o.budget && typeof o.budget === "object" ? (o.budget as never) : undefined,
+    });
+    h = added.graph;
+    if (wantId && wantId !== added.node.id && !h.nodes.some((n) => n.id === wantId)) {
+      const oldId = added.node.id;
+      h = {
+        ...h,
+        nodes: h.nodes.map((n) => {
+          if (n.id === oldId) return { ...n, id: wantId };
+          return {
+            ...n,
+            depends_on: n.depends_on.map((d) => (d === oldId ? wantId : d)),
+            children: n.children.map((c) => (c === oldId ? wantId : c)),
+            parent: n.parent === oldId ? wantId : n.parent,
+          };
+        }),
+      };
+    }
+  }
+
+  if (action === "add_node") {
+    const description = String(args.description ?? args.text ?? "").trim();
+    if (!description) throw new Error("task_update add_node requires description/text");
+    const added = addNode(h, {
+      description,
+      parent: typeof args.parent === "string" ? args.parent : null,
+      depends_on: asStringList(args.depends_on ?? args.blockers),
+      role_hint: typeof args.role_hint === "string" ? args.role_hint : typeof args.role === "string" ? args.role : undefined,
+      detailed_instructions: typeof args.detailed_instructions === "string" ? args.detailed_instructions : undefined,
+      priority: typeof args.priority === "number" ? args.priority : undefined,
+    });
+    h = added.graph;
+  }
+
+  const nodeId = (
+    typeof args.node_id === "string" ? args.node_id : typeof args.id === "string" ? args.id : ""
+  ).trim();
+
+  if (action === "assign") {
+    if (!nodeId) throw new Error("task_update assign requires id/node_id");
+    const assignee = String(args.assignee || "").trim();
+    if (!assignee) throw new Error("task_update assign requires assignee");
+    try {
+      h = assignNode(h, nodeId, assignee);
+    } catch {
+      h = {
+        ...h,
+        nodes: h.nodes.map((n) =>
+          n.id === nodeId ? { ...n, assignee, status: "assigned", started_at: n.started_at || nowIso() } : n,
+        ),
+        status: "running",
+        updated_at: nowIso(),
+      };
+    }
+  }
+
+  if (action === "start" && nodeId) {
+    h = startNode(h, nodeId);
+  }
+
+  if (action === "verify" || (args.verification && typeof args.verification === "object")) {
+    if (!nodeId) throw new Error("task_update verify requires id/node_id");
+    const v = (
+      args.verification && typeof args.verification === "object"
+        ? (args.verification as Record<string, unknown>)
+        : args
+    ) as Record<string, unknown>;
+    const status = String(v.status || args.verify_status || "pass").toLowerCase();
+    const vs =
+      status === "fail" || status === "failed"
+        ? "fail"
+        : status === "skipped"
+          ? "skipped"
+          : status === "pending"
+            ? "pending"
+            : "pass";
+    h = verifyNode(h, nodeId, {
+      status: vs as "pass" | "fail" | "skipped" | "pending",
+      method: (String(v.method || args.method || "orchestrator") as "orchestrator") || "orchestrator",
+      by: String(v.by || args.by || "orchestrator"),
+      notes: typeof v.notes === "string" ? v.notes : typeof args.notes === "string" ? args.notes : undefined,
+    });
+  }
+
+  if (action === "artifact" || (args.artifact && typeof args.artifact === "object")) {
+    if (!nodeId) throw new Error("task_update artifact requires id/node_id");
+    const a = (
+      args.artifact && typeof args.artifact === "object" ? (args.artifact as Record<string, unknown>) : args
+    ) as Record<string, unknown>;
+    h = addArtifact(h, nodeId, {
+      type: (String(a.type || "other") as "other") || "other",
+      summary: String(a.summary || a.path || "artifact"),
+      path: typeof a.path === "string" ? a.path : undefined,
+      produced_by: String(a.produced_by || args.assignee || "orchestrator"),
+    });
+  }
+
+  if (nodeId && !action) {
+    const markStatus = typeof args.status === "string" ? args.status.toLowerCase() : "";
+    if (markStatus === "done" || markStatus === "completed") {
+      h = verifyNode(h, nodeId, {
+        status: "pass",
+        method: "orchestrator",
+        by: String(args.by || args.assignee || "orchestrator"),
+        notes: typeof args.notes === "string" ? args.notes : "marked done via task_update",
+      });
+    } else if (markStatus === "in_progress" || markStatus === "active") {
+      const at = nowIso();
+      h = {
+        ...h,
+        nodes: h.nodes.map((n) =>
+          n.id === nodeId ? { ...n, status: "in_progress", started_at: n.started_at || at } : n,
+        ),
+        status: "running",
+        updated_at: at,
+      };
+    } else if (markStatus === "blocked") {
+      const at = nowIso();
+      h = {
+        ...h,
+        nodes: h.nodes.map((n) =>
+          n.id === nodeId
+            ? {
+                ...n,
+                status: "blocked",
+                blockers: [
+                  ...n.blockers,
+                  {
+                    reason: typeof args.notes === "string" ? args.notes : "blocked via task_update",
+                    reported_by: String(args.by || args.assignee || "orchestrator"),
+                    reported_at: at,
+                    resolved: false,
+                  },
+                ],
+              }
+            : n,
+        ),
+        status: "blocked",
+        updated_at: at,
+      };
+    } else if (markStatus === "pending") {
+      h = {
+        ...h,
+        nodes: h.nodes.map((n) => (n.id === nodeId ? { ...n, status: "pending" } : n)),
+        updated_at: nowIso(),
+      };
+    }
+    if (args.heartbeat === true || args.heartbeat === "true") {
+      const at = nowIso();
+      h = {
+        ...h,
+        nodes: h.nodes.map((n) =>
+          n.id === nodeId
+            ? {
+                ...n,
+                started_at: n.started_at || at,
+                status: n.status === "pending" || n.status === "ready" ? "in_progress" : n.status,
+              }
+            : n,
+        ),
+        updated_at: at,
+      };
+    }
+    if (typeof args.assignee === "string" && args.assignee.trim()) {
+      const assignee = args.assignee.trim();
+      h = {
+        ...h,
+        nodes: h.nodes.map((n) => (n.id === nodeId ? { ...n, assignee } : n)),
+        updated_at: nowIso(),
+      };
+    }
+  }
+
+  h = refreshGraphStatus(h);
+  const checked = safeParseHierarchicalTaskGraph(h);
+  if (!checked.ok) throw new Error(checked.error);
+  return checked.data;
+}
+
+export type TaskUpdateCommit = {
+  text: string;
+  flat: TaskGraph;
+  hierarchical: HierarchicalTaskGraph | null;
+  format: "hierarchical" | "flat";
+};
+
+export function commitTaskUpdate(existingRaw: string | null | undefined, args: Record<string, unknown>): TaskUpdateCommit {
+  const raw = existingRaw || "";
+  const hierarchical = wantsHierarchicalWrite(args, raw || null);
+  if (!hierarchical) {
+    const base = (raw && parseTaskGraph(raw)) || emptyTaskGraph();
+    const next = applyTaskUpdateArgs(base, args);
+    return { text: stringifyTaskGraph(next), flat: next, hierarchical: null, format: "flat" };
+  }
+
+  let h = raw ? parseHierarchicalFile(raw) : null;
+  if (!h && raw) {
+    const flat = parseTaskGraph(raw);
+    if (flat && (flat.goal || flat.subtasks.length)) h = flatToHierarchical(flat);
+  }
+  h = applyHierarchicalTaskUpdateArgs(h, args);
+  const flat = hierarchicalToFlat(h);
+  return {
+    text: stringifyHierarchicalTaskGraph(h),
+    flat,
+    hierarchical: h,
+    format: "hierarchical",
+  };
+}
+
+export function stringifyTaskGraphAsHierarchical(flat: TaskGraph): string {
+  return stringifyHierarchicalTaskGraph(flatToHierarchical(flat));
+}
+
+export function formatHierarchicalTaskGraphPrompt(h: HierarchicalTaskGraph | null | undefined): string {
+  if (!h) return "";
+  return formatTaskGraphPrompt(hierarchicalToFlat(h));
+}

@@ -364,7 +364,7 @@ export const CHAT_TOOLS = [
     function: {
       name: 'task_read',
       description:
-        'Read the persistent task graph from .ablit/task.json (goal + subtasks). Use for long multi-step work that must survive context fit.',
+        'Read .ablit/task.json. Returns hierarchical Task Graph v1 when stored that way; otherwise flat goal+subtasks. Use for long multi-step work that must survive context fit.',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -373,11 +373,16 @@ export const CHAT_TOOLS = [
     function: {
       name: 'task_update',
       description:
-        'Create or update .ablit/task.json. Pass goal and/or subtasks. merge=true updates by id/text; omit merge to replace subtasks. todo remains the turn checklist.',
+        'Create or update .ablit/task.json. Defaults to hierarchical Task Graph v1 (nodes, depends_on, verification). Pass format=flat for legacy blackboard. Actions: create|add_node|assign|start|verify|artifact. merge=true updates by id/text. todo remains the turn checklist.',
       parameters: {
         type: 'object',
         properties: {
-          goal: { type: 'string', description: 'Overall durable goal' },
+          goal: { type: 'string', description: 'Overall durable goal (maps to original_goal)' },
+          format: { type: 'string', description: 'hierarchical (default for new/goal writes) | flat' },
+          action: { type: 'string', description: 'create|reset|add_node|assign|start|verify|artifact|replace_nodes' },
+          original_goal: { type: 'string', description: 'Alias for goal in hierarchical schema' },
+          success_criteria: { type: 'array', items: { type: 'string' }, description: 'Hierarchical success criteria' },
+          nodes: { type: 'array', description: 'Hierarchical nodes {id,description,depends_on,role_hint,...}', items: { type: 'object' } },
           subtasks: {
             type: 'array',
             description: 'Subtasks as strings or {id,text,status,blockers}',
@@ -398,8 +403,18 @@ export const CHAT_TOOLS = [
           },
           items: { type: 'array', description: 'Alias for subtasks' },
           merge: { type: 'boolean', description: 'Merge/update instead of replace' },
-          id: { type: 'string', description: 'Optional single subtask id to mark' },
+          id: { type: 'string', description: 'Node/subtask id for status/assign/verify/heartbeat' },
+          node_id: { type: 'string', description: 'Alias for id' },
           status: { type: 'string', description: 'Status for id: pending|in_progress|done|blocked' },
+          assignee: { type: 'string' },
+          description: { type: 'string', description: 'For action=add_node' },
+          depends_on: { type: 'array', items: { type: 'string' } },
+          role_hint: { type: 'string' },
+          verification: { type: 'object', description: '{status,method,by,notes}' },
+          artifact: { type: 'object', description: '{type,path,summary,produced_by}' },
+          heartbeat: { type: 'boolean' },
+          fleetId: { type: 'string' },
+          replace: { type: 'boolean', description: 'Replace all nodes when ingesting lists' },
         },
       },
     },

@@ -13,7 +13,7 @@ import {
   emptyTaskGraph,
   formatTaskGraphPrompt,
   parseTaskGraph,
-  stringifyTaskGraph,
+  stringifyTaskGraphAsHierarchical,
   touchHeartbeat,
   type AgentRole,
   type TaskGraph,
@@ -53,7 +53,7 @@ async function readGraph(): Promise<TaskGraph> {
 
 async function writeGraph(graph: TaskGraph): Promise<void> {
   if (!bridge.connected) return;
-  await bridge.writeFile(TASK_GRAPH_PATH, stringifyTaskGraph(graph));
+  await bridge.writeFile(TASK_GRAPH_PATH, stringifyTaskGraphAsHierarchical(graph));
 }
 
 async function appendBus(ev: BusEvent): Promise<void> {
