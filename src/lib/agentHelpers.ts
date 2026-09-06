@@ -48,7 +48,8 @@ export function clampSelfDeepenPasses(n: unknown): number {
 }
 
 export function isAnswerCompleteMarker(content: string): boolean {
-  return /^\s*\[ANSWER_COMPLETE\]\s*$/.test(content);
+  // Anywhere in the reply counts — models often mix prose + the stop token.
+  return /\[ANSWER_COMPLETE\]/.test(content || '');
 }
 
 export function stripAnswerCompleteMarker(content: string): string {
@@ -276,7 +277,8 @@ export function looksBuildIntent(userText: string): boolean {
   const t = (userText || '').trim().toLowerCase();
   if (!t) return false;
   if (/\bfile structure\b|\bfolder structure\b|\bproject skeleton\b|\bscaffold\b/.test(t)) return true;
-  if (/\b(build|implement|bootstrap|wire up|set up|setup)\b/.test(t) && t.length >= 24) return true;
+  // Clear build/implement asks (incl. short "build a web crawler") — not length-gated at 40.
+  if (/\b(build|implement|bootstrap|wire\s+up|set\s+up|setup)\b/.test(t) && t.length >= 12) return true;
   return /\b(create|add|new)\b.{0,48}\b(file|folder|dir(?:ectory)?|module|app|feature|project|structure|layout|tree|skeleton)\b/.test(
     t,
   );
@@ -319,6 +321,80 @@ export function buildBuildModeAlwaysNudge(): string {
   );
 }
 
+/**
+ * Read-only / control prompts must never trip Build lock — even when Build mode is on
+ * and the text is long. Covers git_status, summarize, list, status, "run app", short inspect.
+ */
+export function looksReadOnlyOrControlPrompt(userText: string): boolean {
+  const t = (userText || '').trim();
+  if (!t) return true;
+  const lower = t.toLowerCase();
+  // Explicit build verbs win over inspect heuristics.
+  if (
+    /\b(build|implement|scaffold|refactor|migrate|rewrite|overhaul|bootstrap|wire\s+up|create\s+.+\s+app)\b/.test(
+      lower,
+    ) ||
+    looksBuildIntent(t)
+  ) {
+    return false;
+  }
+  if (
+    /\bgit[_\s-]?status\b/.test(lower) ||
+    /\b(git\s+status|show\s+status|repo\s+status|working\s+tree\s+status)\b/.test(lower)
+  ) {
+    return true;
+  }
+  if (/\b(run|start|launch|open)\s+(the\s+)?(app|server|dev\s*server|project)\b/.test(lower)) {
+    return true;
+  }
+  if (
+    /\b(summarize|summary|summarise)\b/.test(lower) ||
+    /\b(list|show|print|dump)\s+(the\s+)?(files?|dirs?|directories|tree|contents?|status)\b/.test(lower) ||
+    /^(list|ls|status|pwd|whoami|help)\b/.test(lower)
+  ) {
+    return true;
+  }
+  // Short inspect / control — never treat as a build solely because Build mode is on.
+  if (t.length < 40) {
+    if (/\b(read|check|inspect|look|what|where|which|how|why|status|diff|log)\b/.test(lower)) {
+      return true;
+    }
+    if (!/\b(build|create|add|fix|write|edit|delete|remove)\b/.test(lower)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Unfinished markdown fence (odd ``` count) — often a truncated stream. */
+export function hasUnfinishedCodeFence(content: string): boolean {
+  const marks = (content || '').match(/```/g);
+  return !!marks && marks.length % 2 === 1;
+}
+
+/**
+ * Junk / failed turns must not self-deepen: empty, error status, very short,
+ * network-ish errors, or truncated unfinished ```diff fences.
+ */
+export function shouldSkipSelfDeepen(
+  content: string,
+  opts: { status?: string } = {},
+): boolean {
+  if (opts.status === 'error') return true;
+  const t = (content || '').trim();
+  if (!t) return true;
+  if (t.length < 40) return true;
+  if (hasUnfinishedCodeFence(t) && /```(?:diff|patch)\b/i.test(t)) return true;
+  if (
+    /\b(network\s+error|ECONNRESET|ETIMEDOUT|fetch failed|Chat request failed|socket hang up)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /** True for an actual build request (not every multi-step chat). Plan mode never builds. */
 export function shouldApplyBuildProcess(
   userText: string,
@@ -327,10 +403,12 @@ export function shouldApplyBuildProcess(
   if (opts.planMode) return false;
   const t = (userText || '').trim();
   if (!t) return false;
+  if (looksReadOnlyOrControlPrompt(t)) return false;
   if (looksBuildIntent(t) || looksLargeJob(t)) return true;
   if (!opts.buildMode) return false;
+  // Build mode on: require multi-step / build signals — NEVER length alone.
   if (looksMultiStep(t)) return true;
-  return t.length >= 40;
+  return false;
 }
 
 export function buildReasoningThenBuildNudge(): string {

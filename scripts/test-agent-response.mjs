@@ -78,7 +78,7 @@ function clampSelfDeepenPasses(n) {
 }
 
 function isAnswerCompleteMarker(content) {
-  return /^\s*\[ANSWER_COMPLETE\]\s*$/.test(content);
+  return /\[ANSWER_COMPLETE\]/.test(content || '');
 }
 
 function stripAnswerCompleteMarker(content) {
@@ -258,19 +258,36 @@ function isSpuriousReviewCommit(commandOrText) {
 function parseCompletionFooter(content) {
   const raw = content ?? '';
   if (!raw.trim()) return null;
-  const re =
+  const strict =
     /(?:^|\n)---\s*\n\*\*Done:\*\*[ \t]*([^\n]*(?:\n(?!\*\*Continue:\*\*)[^\n]*)*)\n\*\*Continue:\*\*\s*\n\s*1\.\s*(.+)\n\s*2\.\s*(.+)\n\s*3\.\s*(.+)\s*$/;
-  const m = raw.match(re);
-  if (!m) return null;
-
-  const summary = (m[1] || '').trim();
-  const o1 = (m[2] || '').trim();
-  const o2 = (m[3] || '').trim();
-  const o3 = (m[4] || '').trim();
-  if (!summary || !o1 || !o2 || !o3) return null;
-
-  const body = raw.slice(0, m.index).replace(/\s+$/, '');
-  return { body, summary, options: [o1, o2, o3] };
+  const m = raw.match(strict);
+  if (m) {
+    const summary = (m[1] || '').trim();
+    const o1 = (m[2] || '').trim();
+    const o2 = (m[3] || '').trim();
+    const o3 = (m[4] || '').trim();
+    if (summary && o1 && o2 && o3) {
+      const body = raw.slice(0, m.index).replace(/\s+$/, '');
+      return { body, summary, options: [o1, o2, o3] };
+    }
+  }
+  const loose =
+    /(?:^|\n)(?:---+\s*\n)?(?:\*\*)?Done:?\*?\*?[ \t]*([^\n]*(?:\n(?!(?:\*\*)?Continue:?\*?\*?)[^\n]*)*)\n(?:\*\*)?Continue:?\*?\*?\s*\n((?:\s*\d+[.)]\s*.+\n?){3,})\s*$/i;
+  const looseMatch = raw.match(loose);
+  if (!looseMatch) return null;
+  const summary = (looseMatch[1] || '').trim();
+  const listBlock = looseMatch[2] || '';
+  const opts = [];
+  for (const line of listBlock.split(/\n/)) {
+    const om = line.match(/^\s*\d+[.)]\s*(.+?)\s*$/);
+    if (!om) continue;
+    const item = (om[1] || '').trim();
+    if (item) opts.push(item);
+    if (opts.length >= 3) break;
+  }
+  if (!summary || opts.length < 3) return null;
+  const body = raw.slice(0, looseMatch.index).replace(/\s+$/, '');
+  return { body, summary, options: [opts[0], opts[1], opts[2]] };
 }
 
 function hasValidCompletionFooter(content) {
@@ -468,7 +485,8 @@ await test('clampSelfDeepenPasses limits', () => {
 await test('isAnswerCompleteMarker & stripAnswerCompleteMarker', () => {
   assert.equal(isAnswerCompleteMarker('[ANSWER_COMPLETE]'), true);
   assert.equal(isAnswerCompleteMarker('  [ANSWER_COMPLETE]\n  '), true);
-  assert.equal(isAnswerCompleteMarker('I am finished. [ANSWER_COMPLETE]'), false);
+  assert.equal(isAnswerCompleteMarker('I am finished. [ANSWER_COMPLETE]'), true);
+  assert.equal(isAnswerCompleteMarker('No marker here'), false);
 
   const stripped = stripAnswerCompleteMarker('All done!\n\n[ANSWER_COMPLETE]');
   assert.equal(stripped, 'All done!');
@@ -567,6 +585,23 @@ await test('parseCompletionFooter rejects invalid or incomplete footers', () => 
 3. Option C`;
   assert.equal(parseCompletionFooter(badContent2), null);
   assert.equal(hasValidCompletionFooter(badContent2), false);
+});
+
+await test('parseCompletionFooter accepts messy Done + 3 Continue lines', () => {
+  const messy = `Shipped the fix.
+
+Done: Patched the harness stop path.
+Continue:
+1. Add more fixtures
+2. Wire daemon grep swap
+3. Document the Qwen profile
+4. Extra fourth option ignored for UI`;
+  const parsed = parseCompletionFooter(messy);
+  assert.ok(parsed !== null);
+  assert.equal(parsed.summary, 'Patched the harness stop path.');
+  assert.equal(parsed.options[0], 'Add more fixtures');
+  assert.equal(parsed.options[2], 'Document the Qwen profile');
+  assert.equal(hasValidCompletionFooter(messy), true);
 });
 
 // 5. Pin & Gating Logic

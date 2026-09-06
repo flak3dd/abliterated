@@ -100,16 +100,53 @@ function isForbiddenGitMessage(message) {
   return false;
 }
 
+function stripWorkspacePrefix(relOrAbs) {
+  const raw = String(relOrAbs || '').trim();
+  if (!raw) return raw;
+  const norm = raw.replace(/\\/g, '/');
+  const rootNorm = String(ROOT || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!rootNorm) return raw;
+  if (norm === rootNorm) return '.';
+  if (norm.toLowerCase().startsWith(rootNorm.toLowerCase() + '/')) {
+    return norm.slice(rootNorm.length + 1) || '.';
+  }
+  return raw;
+}
+
 function resolveInside(relOrAbs) {
-  if (!isInsideRoot(relOrAbs)) throw new Error('path escapes workspace root');
-  const abs = path.resolve(ROOT, relOrAbs);
-  if (!isInsideRoot(abs)) throw new Error('path escapes workspace root');
+  const stripped = stripWorkspacePrefix(relOrAbs);
+  if (String(stripped).split(/[\\/]/).includes('..')) {
+    throw new Error(
+      'path escapes workspace root (".." not allowed). Use a path relative to the working directory.',
+    );
+  }
+  if (!isInsideRoot(stripped)) {
+    throw new Error(
+      `path escapes workspace root: ${String(relOrAbs)}. Stay under ${ROOT} with a relative path.`,
+    );
+  }
+  const abs = path.resolve(ROOT, stripped);
+  if (!isInsideRoot(abs)) {
+    throw new Error(
+      `path escapes workspace root: ${String(relOrAbs)}. Stay under ${ROOT} with a relative path.`,
+    );
+  }
   return abs;
 }
 
 async function resolveInsideAsync(relOrAbs) {
-  const abs = path.resolve(ROOT, relOrAbs);
-  if (!(await isInsideRootAsync(ROOT, abs))) throw new Error('path escapes workspace root');
+  const stripped = stripWorkspacePrefix(relOrAbs);
+  if (String(stripped).split(/[\\/]/).includes('..')) {
+    throw new Error(
+      'path escapes workspace root (".." not allowed). Use a path relative to the working directory.',
+    );
+  }
+  const abs = path.resolve(ROOT, stripped);
+  if (!(await isInsideRootAsync(ROOT, abs))) {
+    throw new Error(
+      `path escapes workspace root: ${String(relOrAbs)}. Stay under ${ROOT} with a relative path.`,
+    );
+  }
   return abs;
 }
 
@@ -485,9 +522,19 @@ function isBinaryBuf(buf) {
 async function handleGrep(ws, msg) {
   const runId = msg.runId;
   try {
-    const pattern = String(msg.pattern ?? '');
+    let pattern = String(msg.pattern ?? '').trim();
     if (!pattern) throw new Error('missing pattern');
-    const rel = String(msg.path || '.').trim() || '.';
+    let rel = String(msg.path || '.').trim() || '.';
+    const flagRe = /^-[a-zA-Z]+$/;
+    if (flagRe.test(pattern) && rel && rel !== '.' && !flagRe.test(rel)) {
+      // Swapped argv: pattern was a flag, path was the query.
+      pattern = rel;
+      rel = '.';
+    } else if (flagRe.test(pattern)) {
+      throw new Error(
+        `grep pattern looks like a flag (${pattern}). Pass the search string as pattern and an optional relative path.`,
+      );
+    }
     const abs = resolveInside(rel);
     const globPat = msg.glob != null && String(msg.glob).trim() ? String(msg.glob).trim() : '';
     let cap = Number(msg.maxMatches);

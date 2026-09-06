@@ -67,10 +67,49 @@ function looksBuildIntent(userText) {
   const t = (userText || '').trim().toLowerCase();
   if (!t) return false;
   if (/\bfile structure\b|\bfolder structure\b|\bproject skeleton\b|\bscaffold\b/.test(t)) return true;
-  if (/\b(build|implement|bootstrap|wire up|set up|setup)\b/.test(t) && t.length >= 24) return true;
+  if (/\b(build|implement|bootstrap|wire\s+up|set\s+up|setup)\b/.test(t) && t.length >= 12) return true;
   return /\b(create|add|new)\b.{0,48}\b(file|folder|dir(?:ectory)?|module|app|feature|project|structure|layout|tree|skeleton)\b/.test(
     t,
   );
+}
+
+function looksReadOnlyOrControlPrompt(userText) {
+  const t = (userText || '').trim();
+  if (!t) return true;
+  const lower = t.toLowerCase();
+  if (
+    /\b(build|implement|scaffold|refactor|migrate|rewrite|overhaul|bootstrap|wire\s+up|create\s+.+\s+app)\b/.test(
+      lower,
+    ) ||
+    looksBuildIntent(t)
+  ) {
+    return false;
+  }
+  if (
+    /\bgit[_\s-]?status\b/.test(lower) ||
+    /\b(git\s+status|show\s+status|repo\s+status|working\s+tree\s+status)\b/.test(lower)
+  ) {
+    return true;
+  }
+  if (/\b(run|start|launch|open)\s+(the\s+)?(app|server|dev\s*server|project)\b/.test(lower)) {
+    return true;
+  }
+  if (
+    /\b(summarize|summary|summarise)\b/.test(lower) ||
+    /\b(list|show|print|dump)\s+(the\s+)?(files?|dirs?|directories|tree|contents?|status)\b/.test(lower) ||
+    /^(list|ls|status|pwd|whoami|help)\b/.test(lower)
+  ) {
+    return true;
+  }
+  if (t.length < 40) {
+    if (/\b(read|check|inspect|look|what|where|which|how|why|status|diff|log)\b/.test(lower)) {
+      return true;
+    }
+    if (!/\b(build|create|add|fix|write|edit|delete|remove)\b/.test(lower)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function looksLargeJob(userText) {
@@ -101,10 +140,11 @@ function shouldApplyBuildProcess(userText, opts = {}) {
   if (opts.planMode) return false;
   const t = (userText || '').trim();
   if (!t) return false;
+  if (looksReadOnlyOrControlPrompt(t)) return false;
   if (looksBuildIntent(t) || looksLargeJob(t)) return true;
   if (!opts.buildMode) return false;
   if (looksMultiStep(t)) return true;
-  return t.length >= 40;
+  return false;
 }
 
 function looksLikeBuildOutput(text) {
@@ -126,6 +166,22 @@ assert.equal(shouldApplyBuildProcess('please implement the auth subsystem across
 assert.equal(shouldApplyBuildProcess('hi', { planMode: true }), false);
 assert.equal(shouldApplyBuildProcess('Build a file structure for the new feature module', { planMode: true }), false);
 assert.ok(shouldApplyBuildProcess('Please add the missing tests for the parser module now.', { buildMode: true }));
+
+// Read-only / inspect must stay false even when Build mode is on (never length-alone).
+assert.equal(shouldApplyBuildProcess('git_status', { buildMode: true }), false);
+assert.equal(shouldApplyBuildProcess('Run git_status and summarize the working tree.', { buildMode: true }), false);
+assert.equal(shouldApplyBuildProcess('run app', { buildMode: true }), false);
+assert.equal(shouldApplyBuildProcess('please run the app now', { buildMode: true }), false);
+assert.equal(shouldApplyBuildProcess('short summarize', { buildMode: true }), false);
+assert.equal(shouldApplyBuildProcess('summarize the current module briefly for me', { buildMode: true }), false);
+assert.equal(shouldApplyBuildProcess('list the files in src', { buildMode: true }), false);
+assert.equal(shouldApplyBuildProcess('status', { buildMode: true }), false);
+assert.equal(looksReadOnlyOrControlPrompt('git_status'), true);
+assert.equal(looksReadOnlyOrControlPrompt('run app'), true);
+// Real build asks still trip the gate.
+assert.equal(shouldApplyBuildProcess('build a web crawler', { buildMode: true }), true);
+assert.equal(shouldApplyBuildProcess('Build a web crawler that scrapes product pages'), true);
+
 
 function canonicalizeToolName(name) {
   const raw = (name || '').trim();
