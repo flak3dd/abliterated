@@ -28,6 +28,7 @@ const BADGE: Record<JobStatus, string> = {
   running: 'text-amber-300 bg-amber-950/80 border-amber-800/60 shadow-[0_0_8px_rgba(245,158,11,0.2)]',
   done: 'text-emerald-300 bg-emerald-950/80 border-emerald-800/60',
   error: 'text-rose-300 bg-rose-950/80 border-rose-800/60',
+  incomplete: 'text-orange-300 bg-orange-950/80 border-orange-800/60',
 };
 
 const PROMPT_EXAMPLES = [
@@ -56,12 +57,13 @@ function relativeTime(ts: number, now: number): string {
   return `${d}d ago`;
 }
 
-type FilterTab = 'all' | 'active' | 'done' | 'error';
+type FilterTab = 'all' | 'active' | 'done' | 'error' | 'incomplete';
 
 export function JobsScreen({ jobs, onJobsChange, onSettingsChange }: Props) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [multiAgent, setMultiAgent] = useState(false);
   const [error, setError] = useState('');
   const [flash, setFlash] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -86,9 +88,11 @@ export function JobsScreen({ jobs, onJobsChange, onSettingsChange }: Props) {
   const run = () => {
     setError('');
     try {
-      const job = enqueueJob({ title: title.trim() || undefined, prompt });
+      const settings = getSettings();
+      const job = enqueueJob({ title: title.trim() || undefined, prompt, multiAgent: multiAgent && settings.multiAgentEnabled === true });
       setPrompt('');
       setTitle('');
+      setMultiAgent(false);
       setOpenId(job.id);
       setFlash('Job enqueued');
     } catch (e) {
@@ -119,6 +123,7 @@ export function JobsScreen({ jobs, onJobsChange, onSettingsChange }: Props) {
     if (statusFilter === 'active') return jobs.filter((j) => j.status === 'running' || j.status === 'queued');
     if (statusFilter === 'done') return jobs.filter((j) => j.status === 'done');
     if (statusFilter === 'error') return jobs.filter((j) => j.status === 'error');
+    if (statusFilter === 'incomplete') return jobs.filter((j) => j.status === 'incomplete');
     return jobs;
   }, [jobs, statusFilter]);
 
@@ -135,7 +140,7 @@ export function JobsScreen({ jobs, onJobsChange, onSettingsChange }: Props) {
         <div className="flex items-center gap-3">
           <div className="font-mono text-xs font-semibold tracking-wider text-zinc-100">JOBS RUNNER</div>
           <div className="flex items-center gap-1 rounded bg-surface-raised p-0.5 border border-border/80">
-            {(['all', 'active', 'done', 'error'] as const).map((tab) => (
+            {(['all', 'active', 'done', 'incomplete', 'error'] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -224,11 +229,21 @@ export function JobsScreen({ jobs, onJobsChange, onSettingsChange }: Props) {
           <div className="mt-2 font-mono text-[11px] text-amber-300">{jobWorkspace.message}</div>
         ) : null}
 
-        <div className="mt-3 flex items-center justify-between">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <label className="flex items-center gap-2 font-mono text-[10px] text-zinc-400">
+            <input
+              type="checkbox"
+              checked={multiAgent}
+              disabled={getSettings().multiAgentEnabled !== true}
+              onChange={(e) => setMultiAgent(e.target.checked)}
+            />
+            Multi-agent fleet
+            {getSettings().multiAgentEnabled !== true ? ' (enable in Settings)' : ''}
+          </label>
           <button type="button" onClick={run} disabled={!canRun} className="btn-primary">
             <Plus size={12} /> Run background job
           </button>
-          <p className="font-mono text-[10px] text-muted">
+          <p className="w-full font-mono text-[10px] text-muted">
             Background agent queue (concurrency from Settings → Max concurrent Jobs). Runs headlessly.
           </p>
         </div>
@@ -274,6 +289,8 @@ export function JobsScreen({ jobs, onJobsChange, onSettingsChange }: Props) {
                   >
                     {job.status === 'running' ? <Loader2 size={10} className="spin-slow text-amber-400" /> : null}
                     {job.status}
+                    {job.multiAgent ? ' · MA' : ''}
+                    {job.role ? ` · ${job.role}` : ''}
                   </span>
                   <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-zinc-200">
                     {job.title}
@@ -365,9 +382,15 @@ export function JobsScreen({ jobs, onJobsChange, onSettingsChange }: Props) {
                     </div>
                   ) : null}
 
+                  {job.stopReason ? (
+                    <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+                      stopReason: {job.stopReason}
+                      {job.status === 'incomplete' ? ' (not done)' : ''}
+                    </div>
+                  ) : null}
                   {job.error ? (
                     <div className="mb-2.5 rounded bg-rose-950/50 border border-rose-800/50 p-2 font-mono text-[11px] text-rose-300">
-                      Error: {job.error}
+                      {job.status === 'incomplete' ? 'Incomplete' : 'Error'}: {job.error}
                     </div>
                   ) : null}
 

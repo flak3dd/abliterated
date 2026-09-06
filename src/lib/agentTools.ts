@@ -12,6 +12,14 @@ import {
 } from './agentHelpers';
 import { formatSkillFile, similarSkillExists, slugifySkillId, toCatalogEntries } from './skills';
 import { runWebSearch } from './webSearch';
+import {
+  TASK_GRAPH_PATH,
+  applyTaskUpdateArgs,
+  emptyTaskGraph,
+  formatTaskGraphPrompt,
+  parseTaskGraph,
+  stringifyTaskGraph,
+} from './taskGraph';
 import type { ClientSettings, ToolCallPayload, ToolCallStatus, ToolType } from '../types';
 
 export function toolArgString(args: Record<string, unknown>, keys: string[]): string {
@@ -129,7 +137,7 @@ export async function executeAgentTool(
   if (canonical !== tool.name) {
     tool = { ...tool, name: canonical };
   }
-  const allowed = enabledTools.includes(name) || name === 'todo';
+  const allowed = enabledTools.includes(name) || name === 'todo' || name === 'task_read' || name === 'task_update';
   if (!allowed) {
     return denied(tool, `tool ${tool.name} is not enabled`);
   }
@@ -137,6 +145,7 @@ export async function executeAgentTool(
   const workspaceGateHit = workspaceGate(opts.workspaceRoot || bridge.currentRoot, bridge.currentAppRoot);
   const needsWorkspace =
     name === 'read_file' ||
+    name === 'write_file' ||
     name === 'grep' ||
     name === 'glob' ||
     name === 'list_dir' ||
@@ -148,7 +157,10 @@ export async function executeAgentTool(
     name === 'create_pr' ||
     name === 'checkpoint_save' ||
     name === 'checkpoint_restore' ||
-    name === 'shell';
+    name === 'shell' ||
+    name === 'verify' ||
+    name === 'task_read' ||
+    name === 'task_update';
   if (needsWorkspace && !workspaceGateHit.ok) {
     return err(tool, workspaceGateHit.message);
   }
@@ -159,6 +171,27 @@ export async function executeAgentTool(
     if (!bridge.connected) return disconnected(tool, file, autoAcceptEdits, mode);
     try {
       return ok(tool, await bridge.readFile(file));
+    } catch (e) {
+      return err(tool, e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  if (name === 'write_file') {
+    const file = toolArgString(tool.arguments, ['path', 'file', 'target']);
+    const content = toolArgString(tool.arguments, ['content', 'text', 'body']);
+    if (!file) return err(tool, 'missing path');
+    if (content === '' && tool.arguments.content == null && tool.arguments.text == null && tool.arguments.body == null) {
+      return err(tool, 'missing content');
+    }
+    const preview = file + '\n---\n' + content.slice(0, 4000);
+    if (!autoAcceptEdits) {
+      if (mode === 'headless') return softSkip(tool, 'write_file needs Auto-accept edits (headless)');
+      return gated(tool, preview);
+    }
+    if (!bridge.connected) return disconnected(tool, preview, autoAcceptEdits, mode);
+    try {
+      await bridge.writeFile(file, content);
+      return ok(tool, 'wrote ' + file + ' (' + content.length + ' chars)');
     } catch (e) {
       return err(tool, e instanceof Error ? e.message : String(e));
     }
@@ -340,6 +373,27 @@ export async function executeAgentTool(
     return gated(tool, payload);
   }
 
+  if (name === 'verify') {
+    const command = toolArgString(tool.arguments, ['command', 'cmd', 'script']);
+    const payload = command || JSON.stringify(tool.arguments, null, 2);
+    if (!command) return err(tool, 'missing command');
+    if (isDeadlyCommand(command)) return err(tool, 'refused: deadly command');
+    if (autoRunShell && bridge.connected) {
+      try {
+        const { out, code } = await runShellCapture(command);
+        const result = `[verify] exit ${code}\n${out}${out && !out.endsWith('\n') ? '\n' : ''}`;
+        return ok(tool, result);
+      } catch (e) {
+        return err(tool, e instanceof Error ? e.message : String(e));
+      }
+    }
+    if (mode === 'headless') {
+      if (!autoRunShell) return softSkip(tool, 'verify requires Auto-run shell (headless)');
+      if (!bridge.connected) return err(tool, 'bridge disconnected');
+    }
+    return gated(tool, payload);
+  }
+
   if (name === 'generate_image') {
     const prompt = toolArgString(tool.arguments, ['prompt', 'text', 'description']);
     const size = toolArgString(tool.arguments, ['size']) || '1024x1024';
@@ -375,6 +429,39 @@ export async function executeAgentTool(
     }
     opts.onTodos?.(next);
     return ok(tool, formatTodoBlock(next));
+  }
+
+  if (name === 'task_read') {
+    if (!bridge.connected) return disconnected(tool, TASK_GRAPH_PATH, autoAcceptEdits, mode);
+    try {
+      const raw = await bridge.readFile(TASK_GRAPH_PATH);
+      const graph = parseTaskGraph(raw) || emptyTaskGraph();
+      return ok(tool, JSON.stringify(graph, null, 2));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/not found|enoent|no such file/i.test(msg)) {
+        return ok(tool, JSON.stringify(emptyTaskGraph(), null, 2) + '\n(no file yet)');
+      }
+      return err(tool, msg);
+    }
+  }
+
+  if (name === 'task_update') {
+    if (!bridge.connected) return disconnected(tool, TASK_GRAPH_PATH, autoAcceptEdits, mode);
+    try {
+      let base = emptyTaskGraph();
+      try {
+        const raw = await bridge.readFile(TASK_GRAPH_PATH);
+        base = parseTaskGraph(raw) || emptyTaskGraph();
+      } catch {
+        base = emptyTaskGraph();
+      }
+      const next = applyTaskUpdateArgs(base, tool.arguments || {});
+      await bridge.writeFile(TASK_GRAPH_PATH, stringifyTaskGraph(next));
+      return ok(tool, formatTaskGraphPrompt(next) || JSON.stringify(next, null, 2));
+    } catch (e) {
+      return err(tool, e instanceof Error ? e.message : String(e));
+    }
   }
 
 

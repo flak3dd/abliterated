@@ -594,8 +594,11 @@ Only when rewrite beats re-patching. First line exactly \`// <relative/path>\` (
 
 ## Tools
 - Explore: list_dir, glob, grep, semantic_search, file_outline, read_file.
+- write_file: whole-file create/overwrite (Auto-accept; Plan mode blocked). Prefer diffs for surgical edits.
 - git_status / git_diff / git_commit over raw git. git_commit, create_pr, checkpoint_restore may need confirmation.
 - todo: session checklist (aliases ToDo, todo_write). merge=true to tick items. Prefer this tool over a markdown-only list.
+- task_read / task_update: durable .ablit/task.json goal+subtasks for long runs (todo stays the turn checklist).
+- verify: scoped typecheck/lint/test after implement (before declaring done). shell also works.
 - MCP as mcp__server__tool when configured. web_fetch: http(s) only. generate_image: only if Images is enabled.
 
 ## Work

@@ -1,3 +1,4 @@
+export { looksLikeVerifyEvidence, buildVerifyBeforeDoneNudge, buildIncompleteCapNote } from './verifyDone';
 import type { ToolType } from '../types';
 import { PLAN_MODE_TOOLS } from '../types';
 import { withCompletenessChecklist } from './deepenComplete';
@@ -201,6 +202,10 @@ export function canonicalizeToolName(name: string): string {
   const lower = raw.toLowerCase();
   if (TODO_TOOL_ALIASES.has(lower)) return 'todo';
   if (WEB_SEARCH_ALIASES.has(lower)) return 'web_search';
+  if (lower === 'writefile' || lower === 'write-file' || lower === 'create_file') return 'write_file';
+  if (lower === 'taskread' || lower === 'read_task') return 'task_read';
+  if (lower === 'taskupdate' || lower === 'update_task') return 'task_update';
+  if (lower === 'run_verify') return 'verify';
   return raw;
 }
 
@@ -412,6 +417,7 @@ export function extractSearchTokens(text: string, max = 4): string[] {
 
 export function formatIdleSubtitle(stopReason: AgentStopReason | null | undefined, base = 'idle'): string {
   if (!stopReason) return base;
+  if (stopReason === 'cap') return `${base} · incomplete (turn cap)`;
   return `${base} · stopped: ${stopReason}`;
 }
 

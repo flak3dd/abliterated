@@ -108,6 +108,23 @@ export const CHAT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'write_file',
+      description:
+        'Create or overwrite a whole file in the workspace (relative path). Prefer unified diff fences for surgical edits. Plan mode blocked. Needs Auto-accept edits or click-to-apply.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Path relative to the workspace root' },
+          file: { type: 'string', description: 'Alias for path' },
+          content: { type: 'string', description: 'Full file contents to write' },
+        },
+        required: ['content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'grep',
       description: 'Search file contents under the workspace root. Returns path:line:content like ripgrep.',
       parameters: {
@@ -285,6 +302,22 @@ export const CHAT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'verify',
+      description:
+        'Run a scoped verification command (typecheck, lint, focused test). Preferred after implement before declaring done. Same gate as shell (Auto-run or click).',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'Verification shell command' },
+          cmd: { type: 'string', description: 'Alias for command' },
+        },
+        required: ['command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'generate_image',
       description:
         'Generate an image via the optional local OpenAI-compatible image endpoint (not api.abliteration.ai). Requires image gen enabled in settings.',
@@ -322,6 +355,51 @@ export const CHAT_TOOLS = [
           },
           todos: { type: 'array', description: 'Alias for items' },
           merge: { type: 'boolean', description: 'If true, merge/update by item text instead of replacing' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'task_read',
+      description:
+        'Read the persistent task graph from .ablit/task.json (goal + subtasks). Use for long multi-step work that must survive context fit.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'task_update',
+      description:
+        'Create or update .ablit/task.json. Pass goal and/or subtasks. merge=true updates by id/text; omit merge to replace subtasks. todo remains the turn checklist.',
+      parameters: {
+        type: 'object',
+        properties: {
+          goal: { type: 'string', description: 'Overall durable goal' },
+          subtasks: {
+            type: 'array',
+            description: 'Subtasks as strings or {id,text,status,blockers}',
+            items: {
+              anyOf: [
+                { type: 'string' },
+                {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    text: { type: 'string' },
+                    status: { type: 'string' },
+                    blockers: { type: 'array', items: { type: 'string' } },
+                  },
+                },
+              ],
+            },
+          },
+          items: { type: 'array', description: 'Alias for subtasks' },
+          merge: { type: 'boolean', description: 'Merge/update instead of replace' },
+          id: { type: 'string', description: 'Optional single subtask id to mark' },
+          status: { type: 'string', description: 'Status for id: pending|in_progress|done|blocked' },
         },
       },
     },

@@ -370,6 +370,20 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
           />
 
           <SwitchRow
+            label="Job worktrees (experimental)"
+            checked={settings.jobWorktreesEnabled === true}
+            onChange={(v) => patch({ jobWorktreesEnabled: v })}
+            help="When on, Jobs prepare .ablit/worktrees/<jobId> (git worktree when possible). Bridge still uses a shared ROOT — isolation stub until multi-root."
+          />
+
+          <SwitchRow
+            label="Multi-agent fleets (experimental)"
+            checked={settings.multiAgentEnabled === true}
+            onChange={(v) => patch({ multiAgentEnabled: v })}
+            help="Orchestrator + coder/tester/verifier over .ablit/task.json blackboard. Default off. Pair with Job worktrees for isolation."
+          />
+
+          <SwitchRow
             label="Completion footer chips"
             checked={settings.completionFooterEnabled !== false}
             onChange={(v) => patch({ completionFooterEnabled: v })}

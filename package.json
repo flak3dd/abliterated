@@ -29,7 +29,9 @@
     "desktop:dev": "ABLITERATED_ELECTRON_DEV=1 electron .",
     "dist:mac": "npm run build && electron-builder --mac dir dmg",
     "dist:win": "npm run build && electron-builder --win nsis portable",
-    "dist:win:dir": "npm run build && electron-builder --win dir"
+    "dist:win:dir": "npm run build && electron-builder --win dir",
+    "test:task": "node scripts/test-task-graph.mjs",
+    "test:vdone": "node scripts/test-verify-done.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

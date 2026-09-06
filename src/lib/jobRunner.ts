@@ -12,6 +12,8 @@ import {
   buildThoughtModeNudge,
   buildPlanModeNudge,
   buildBuildModeImplementNudge,
+  buildVerifyBeforeDoneNudge,
+  looksLikeVerifyEvidence,
   clampMaxAgentTurns,
   EMPTY_CONTENT_REPLY_NOTE,
   isMissingContentAnswer,
@@ -29,6 +31,9 @@ import { buildModelAgentProfile } from "./modelAgentProfile";
 import { peekFeatherlessModel } from "./featherlessLimits";
 import { getJobs, getSettings, getWorkspace, setJobs, uid, upsertJob } from "./storage";
 import { workspaceGate } from "./workspaceGuard";
+import { TASK_GRAPH_PATH, formatTaskGraphPrompt, parseTaskGraph } from "./taskGraph";
+import { prepareJobWorktree } from "./jobWorktree";
+import { runMultiAgentFleet, shouldRunMultiAgent } from "./multiAgentRunner";
 import type { ChatOpenAiMessage, ClientSettings, Job, ToolType } from "../types";
 import { DEFAULT_ENABLED_TOOLS } from "../types";
 import { clampJobsByLicense, getLicenseState } from './license';
@@ -73,6 +78,7 @@ export function enqueueJob(input: {
   title?: string;
   threadId?: string;
   projectName?: string;
+  multiAgent?: boolean;
 }): Job {
   const ws = getWorkspace();
   const root = bridge.validWorkspaceRoot || ws.rootPath || "";
@@ -90,6 +96,7 @@ export function enqueueJob(input: {
     status: "queued",
     logs: [`[${new Date().toISOString()}] queued`],
     createdAt: Date.now(),
+    multiAgent: input.multiAgent === true || undefined,
   };
   persist(job);
   void pumpQueue();
@@ -124,7 +131,7 @@ export function deleteJob(id: string): void {
 }
 
 export function clearFinishedJobs(): void {
-  setJobs(getJobs().filter((j) => j.status === "queued" || j.status === "running"));
+  setJobs(getJobs().filter((j) => j.status === "queued" || j.status === "running")); // clears done/error/incomplete
   notify();
 }
 
@@ -176,6 +183,24 @@ async function runJob(initial: Job, settings: ClientSettings) {
     abortById.delete(job.id);
     return;
   }
+  if (settings.jobWorktreesEnabled === true && bridge.connected) {
+    try {
+      const prep = await prepareJobWorktree({
+        enabled: true,
+        jobId: job.id,
+        workspaceRoot,
+        run: async (command) => {
+          let out = "";
+          const code = await bridge.runCommand(command, (c) => { out += c; });
+          return { out, code };
+        },
+      });
+      job = appendLog(job, `worktree: ${prep.note} (${prep.path})`);
+    } catch (e) {
+      job = appendLog(job, `worktree stub error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   const turnCap = clampMaxAgentTurns(settings.maxAgentTurns);
   const enabledTools: ToolType[] = [...DEFAULT_ENABLED_TOOLS];
   const active = resolveActiveSettings(settings);
@@ -210,6 +235,15 @@ async function runJob(initial: Job, settings: ClientSettings) {
   const deepenCompletenessBlock = buildJobCompletenessSystemBlock({
     deepenCompleteness: settings.deepenCompleteness !== false,
   });
+  let taskGraphBlock = "";
+  if (bridge.connected) {
+    try {
+      const raw = await bridge.readFile(TASK_GRAPH_PATH);
+      taskGraphBlock = formatTaskGraphPrompt(parseTaskGraph(raw));
+    } catch {
+      taskGraphBlock = "";
+    }
+  }
   const jobPeek = peekFeatherlessModel(active.defaultModel);
   const jobProfile = buildModelAgentProfile({
     model: active.defaultModel,
@@ -226,6 +260,8 @@ async function runJob(initial: Job, settings: ClientSettings) {
     projectMemoryBlock,
     !jobProfile.compactPrompt ? skillsCatalogBlock : "",
     !jobProfile.compactPrompt ? workspaceSkillsBlock : "",
+    taskGraphBlock,
+
     workspaceRoot
       ? `Workspace root: ${workspaceRoot}. Prefer relative paths. You are running as a headless background job.`
       : "No workspace root set. Connect the bridge Workspace before relying on file tools.",
@@ -259,10 +295,39 @@ async function runJob(initial: Job, settings: ClientSettings) {
     job = appendLog(job, "large job protocol: ToDo → explore codebase → implement");
   }
 
+  if (shouldRunMultiAgent(job, settings)) {
+    try {
+      job = await runMultiAgentFleet({
+        job,
+        settings,
+        persist,
+        appendLog,
+        abortSignal: ac.signal,
+        workspaceRoot,
+      });
+    } catch (e) {
+      const aborted = e instanceof DOMException && e.name === "AbortError";
+      const msg = aborted ? "cancelled" : e instanceof Error ? e.message : String(e);
+      job = persist({
+        ...job,
+        status: "error",
+        stopReason: aborted ? "abort" : "error",
+        error: msg,
+        endedAt: Date.now(),
+        logs: [...job.logs, `[${new Date().toISOString()}] multi-agent ${aborted ? "cancelled" : "error: " + msg}`],
+      });
+    } finally {
+      abortById.delete(job.id);
+    }
+    return;
+  }
+
   const history: ChatOpenAiMessage[] = [{ role: "user", content: job.prompt }];
   let turns = 0;
   let buildImplementNudgeUsed = false;
+  let buildVerifyNudgeUsed = false;
   let hitCap = false;
+  const toolsUsed: string[] = [];
 
   try {
     for (let turn = 1; turn <= turnCap; turn++) {
@@ -366,12 +431,24 @@ async function runJob(initial: Job, settings: ClientSettings) {
           job = appendLog(job, "build process: ToDo without diffs — implement nudge");
           continue;
         }
+        if (
+          (buildProcess || large) &&
+          !buildVerifyNudgeUsed &&
+          looksLikeBuildOutput(assistantText) &&
+          !looksLikeVerifyEvidence(assistantText, toolsUsed)
+        ) {
+          buildVerifyNudgeUsed = true;
+          history.push({ role: "user", content: buildVerifyBeforeDoneNudge() });
+          job = appendLog(job, "verify-before-done: implement without verify — nudge");
+          continue;
+        }
         job = appendLog(job, "no tool calls — done");
         break;
       }
 
       for (const tc of toolCalls) {
         if (ac.signal.aborted) throw new DOMException("Aborted", "AbortError");
+        toolsUsed.push(tc.name);
         job = appendLog(job, `tool ${tc.name} ${JSON.stringify(tc.arguments).slice(0, 200)}`);
         const exec = await executeAgentTool(tc, {
           enabledTools,
@@ -412,13 +489,13 @@ async function runJob(initial: Job, settings: ClientSettings) {
     if (hitCap) {
       job = persist({
         ...job,
-        status: "error",
+        status: "incomplete",
         stopReason: "cap",
         error: `hit max agent turns (${turnCap})`,
         endedAt: Date.now(),
         logs: [
           ...job.logs,
-          `[${new Date().toISOString()}] stopped: max agent turns (${turns}/${turnCap})`,
+          `[${new Date().toISOString()}] incomplete: max agent turns (${turns}/${turnCap})`,
         ],
       });
     } else {

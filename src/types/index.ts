@@ -4,7 +4,9 @@ export const ALL_TOOL_TYPES = [
   'web_fetch',
   'web_search',
   'read_file',
+  'write_file',
   'shell',
+  'verify',
   'grep',
   'glob',
   'git_status',
@@ -18,6 +20,8 @@ export const ALL_TOOL_TYPES = [
   'semantic_search',
   'generate_image',
   'todo',
+  'task_read',
+  'task_update',
   'list_skills',
   'read_skill',
   'suggest_skill',
@@ -114,6 +118,31 @@ export const PREV5_DEFAULT_TOOLS: ToolType[] = [
   'write_skill',
 ];
 
+/** Prior full tool list before write_file / verify / task_read / task_update. */
+export const PREV6_DEFAULT_TOOLS: ToolType[] = [
+  'web_fetch',
+  'web_search',
+  'read_file',
+  'shell',
+  'grep',
+  'glob',
+  'git_status',
+  'git_commit',
+  'git_diff',
+  'create_pr',
+  'checkpoint_save',
+  'checkpoint_restore',
+  'list_dir',
+  'file_outline',
+  'semantic_search',
+  'generate_image',
+  'todo',
+  'list_skills',
+  'read_skill',
+  'suggest_skill',
+  'write_skill',
+];
+
 export const DEFAULT_ENABLED_TOOLS: ToolType[] = [...ALL_TOOL_TYPES];
 
 /** Read-only tools allowed while Plan mode is on (writes unlock after approve). */
@@ -129,6 +158,8 @@ export const PLAN_MODE_TOOLS: ToolType[] = [
   'web_fetch',
   'web_search',
   'todo',
+  'task_read',
+  'task_update',
   'list_skills',
   'read_skill',
   'suggest_skill',
@@ -185,7 +216,7 @@ export interface Thread {
   updatedAt: number;
 }
 
-export type JobStatus = 'queued' | 'running' | 'done' | 'error';
+export type JobStatus = 'queued' | 'running' | 'done' | 'error' | 'incomplete';
 
 export interface Job {
   id: string;
@@ -203,6 +234,11 @@ export interface Job {
   error?: string;
   /** Why the job stopped: cap | abort | error | no_tools (optional). */
   stopReason?: 'cap' | 'abort' | 'error' | 'no_tools' | 'done';
+  /** Multi-agent fleet job. */
+  multiAgent?: boolean;
+  fleetId?: string;
+  /** Active role when multi-agent. */
+  role?: 'orchestrator' | 'coder' | 'researcher' | 'tester' | 'verifier';
 }
 
 export interface WorkspaceContext {
@@ -297,6 +333,10 @@ export interface ClientSettings {
   webSearchBraveKey: string;
   /** Optional SearxNG base URL (JSON format). Empty = unused. */
   webSearchSearxUrl: string;
+  /** Opt-in: per-Job git worktree under .ablit/worktrees/<jobId>. Default false (bridge single-ROOT stub). */
+  jobWorktreesEnabled: boolean;
+  /** Opt-in multi-agent orchestrator/workers/critic. Default false. */
+  multiAgentEnabled: boolean;
 }
 
 export type ChatOpenAiToolCall = {

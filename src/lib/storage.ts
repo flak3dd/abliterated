@@ -14,6 +14,7 @@ import {
   PREV3_DEFAULT_TOOLS,
   PREV4_DEFAULT_TOOLS,
   PREV5_DEFAULT_TOOLS,
+  PREV6_DEFAULT_TOOLS,
 } from '../types';
 import {
   AGENT_RUNS_KEEP,
@@ -98,6 +99,8 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   licenseKey: import.meta.env.DEV ? 'ABLIT-ADMIN' : '',
   webSearchBraveKey: '',
   webSearchSearxUrl: '',
+  jobWorktreesEnabled: false,
+  multiAgentEnabled: false,
 };
 
 export function isPlaceholderRoot(path: string): boolean {
@@ -259,6 +262,8 @@ export function getSettings(): ClientSettings {
     midRunInjectEnabled: stored.midRunInjectEnabled !== false,
     completionFooterEnabled: stored.completionFooterEnabled !== false,
     coalesceReasoningToContent: stored.coalesceReasoningToContent !== false,
+    jobWorktreesEnabled: stored.jobWorktreesEnabled === true,
+    multiAgentEnabled: stored.multiAgentEnabled === true,
     planModeEnabled: stored.planModeEnabled === true,
     buildModeEnabled: stored.buildModeEnabled !== false,
     fastModel: stored.fastModel?.trim() || '',
@@ -337,6 +342,7 @@ function upgradeEnabledTools(tools: ToolType[] | undefined): ToolType[] {
   if (sameToolSet(tools, PREV3_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
   if (sameToolSet(tools, PREV4_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
   if (sameToolSet(tools, PREV5_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
+  if (sameToolSet(tools, PREV6_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
   if (!tools.includes('todo')) return [...tools, 'todo'];
   if (!tools.includes('list_skills')) {
     return [...tools, 'list_skills', 'read_skill', 'suggest_skill', 'write_skill'];

@@ -44,6 +44,9 @@ import {
   extractAtPins,
   extractSearchTokens,
   formatIdleSubtitle,
+  buildVerifyBeforeDoneNudge,
+  looksLikeVerifyEvidence,
+  buildIncompleteCapNote,
   isAnswerCompleteMarker,
   isMissingContentAnswer,
   isMidRunMessageContent,
@@ -87,7 +90,9 @@ import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from '../lib/
 import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
 import { buildModelAgentProfile } from '../lib/modelAgentProfile';
 import { peekFeatherlessModel } from '../lib/featherlessLimits';
+import { TASK_GRAPH_PATH, formatTaskGraphPrompt, parseTaskGraph } from '../lib/taskGraph';
 import type { ChatOpenAiMessage, ClientSettings, Message, Tab, Thread, ToolCallPayload } from '../types';
+
 import { PLAN_MODE_TOOLS } from '../types';
 
 /** Render at most this many newest messages; older ones load on demand. */
@@ -432,6 +437,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
   const [planChecklist, setPlanChecklist] = useState<string[]>([]);
   const [skillsCatalog, setSkillsCatalog] = useState<SkillCatalogEntry[]>([]);
   const [projectMemoryBlock, setProjectMemoryBlock] = useState('');
+  const [taskGraphBlock, setTaskGraphBlock] = useState('');
   const [workspaceSkillsBlock, setWorkspaceSkillsBlock] = useState('');
   const todosRef = useRef<TodoItem[]>([]);
 
@@ -708,6 +714,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         if (!cancelled) {
           setSkillsCatalog([]);
           setProjectMemoryBlock('');
+          setTaskGraphBlock('');
           setWorkspaceSkillsBlock('');
         }
         return;
@@ -717,6 +724,12 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         if (!cancelled) setProjectMemoryBlock(formatProjectMemoryPrompt(files));
       } catch {
         if (!cancelled) setProjectMemoryBlock('');
+      }
+      try {
+        const raw = await bridge.readFile(TASK_GRAPH_PATH);
+        if (!cancelled) setTaskGraphBlock(formatTaskGraphPrompt(parseTaskGraph(raw)));
+      } catch {
+        if (!cancelled) setTaskGraphBlock('');
       }
       if (settings.skillsEnabled === false) {
         if (!cancelled) {
@@ -778,10 +791,12 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       sys,
       LIVE_WORKSPACE_SUFFIX,
       projectMemoryBlock,
+      taskGraphBlock,
       !agentProfile.compactPrompt && settings.skillsEnabled !== false
         ? formatSkillsCatalogPrompt(skillsCatalog)
         : '',
       !agentProfile.compactPrompt && settings.skillsEnabled !== false ? workspaceSkillsBlock : '',
+
       autoAcceptEdits ? grokAutoAcceptSuffix(workspaceRoot) : '',
       agentProfile.systemAddendum,
       thoughtNudge,
@@ -982,6 +997,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     let fakeToolRetryUsed = false;
     let buildTodoNudgeUsed = false;
     let buildImplementNudgeUsed = false;
+    let buildVerifyNudgeUsed = false;
     let stopReason: AgentStopReason = 'no_tools';
     let turnCap = clampMaxAgentTurns(settingsRef.current.maxAgentTurns);
     const deepenCap = clampSelfDeepenPasses(settingsRef.current.selfDeepenPasses);
@@ -1263,6 +1279,31 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                 }
               }
 
+              if (
+                grokBuildProcess &&
+                !buildVerifyNudgeUsed &&
+                looksLikeBuildOutput(content) &&
+                !looksLikeVerifyEvidence(content, toolsUsed) &&
+                !isAnswerCompleteMarker(content)
+              ) {
+                buildVerifyNudgeUsed = true;
+                setPhase(
+                  'self_deepen',
+                  { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+                  turn,
+                );
+                const nudge: Message = {
+                  id: uid('msg'),
+                  threadId: thread.id,
+                  role: 'user',
+                  content: buildVerifyBeforeDoneNudge(),
+                  createdAt: Date.now(),
+                  status: 'complete',
+                };
+                current = persist(nudge);
+                continue;
+              }
+
               const liveDeepen = settingsRef.current;
               const deepenPasses = clampSelfDeepenPasses(liveDeepen.selfDeepenPasses);
               const deepenOn =
@@ -1387,12 +1428,24 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         }
       }
       finishRun(stopReason, { startedAt, turns: turnsDone, tools: [...new Set(toolsUsed)] });
+      if (stopReason === 'cap') {
+        persist({
+          id: uid('msg'),
+          threadId: thread.id,
+          role: 'assistant',
+          content: buildIncompleteCapNote(turnCap),
+          createdAt: Date.now(),
+          status: 'complete',
+        });
+      }
       // Compact idle monitor remembers last stop phase briefly.
       const endPhase: AgentPhase =
         stopReason === 'abort'
           ? 'stopped'
           : stopReason === 'error'
             ? 'error'
+            : stopReason === 'cap'
+              ? 'stopped'
             : stopReason === 'pending_gate'
               ? 'waiting_gate'
               : 'idle';
