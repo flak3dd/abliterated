@@ -316,14 +316,30 @@ export function looksLikeToolTheaterOutput(text: string): boolean {
   return false;
 }
 
-/** True when content contains applyable build artifacts (diffs, path fences, code fences). */
-export function looksLikeBuildOutput(text: string): boolean {
+/** Tool names that count as successful build file writes. */
+export const BUILD_FILE_WRITE_TOOLS = [
+  'write_file',
+  'apply_patch',
+  'search_replace',
+  'edit_file',
+  'str_replace',
+] as const;
+
+export function hasBuildFileWrites(toolsUsed?: string[]): boolean {
+  if (!toolsUsed || !toolsUsed.length) return false;
+  const set = new Set(BUILD_FILE_WRITE_TOOLS.map((t) => t.toLowerCase()));
+  return toolsUsed.some((t) => set.has(String(t || '').toLowerCase()));
+}
+
+/** True when content contains applyable build artifacts, or a write/edit tool already ran. */
+export function looksLikeBuildOutput(text: string, toolsUsed?: string[]): boolean {
+  if (hasBuildFileWrites(toolsUsed)) return true;
   const t = text || '';
   if (looksLikePlaceholderOutput(t)) return false;
   if (looksLikeToolTheaterOutput(t)) return false;
   if (/```(?:diff|patch|ts|tsx|js|jsx|mjs|cjs|py|go|rs|css|html|vue|svelte)\b/i.test(t)) return true;
   if (/^diff --git |^--- (a\/|\/dev\/null)|\+\+\+ b\//m.test(t)) return true;
-  if (/^\/\/ [\w./+-]+\s*$/m.test(t) && t.length > 50) return true;
+  if (/^\/\/ [\w.\/+-]+\s*$/m.test(t) && t.length > 50) return true;
   return false;
 }
 
@@ -335,6 +351,20 @@ export function looksPromptOnlyRequest(userText: string): boolean {
   if (/\b(write|draft|craft|give|produce|create|make)\b.{0,80}\bprompt\b/.test(t)) return true;
   if (/\bprompt\b.{0,60}\b(that will|that can|to |for )\b/.test(t)) return true;
   return false;
+}
+
+/** Short single-area edit/fix — not a full scaffold/build. */
+export function looksTrivialFileEdit(userText: string): boolean {
+  const t = (userText || '').trim();
+  if (!t || t.length >= 120) return false;
+  const lower = t.toLowerCase();
+  if (/\b(scaffold|bootstrap|multi[- ]?file|whole\s+app|entire\s+(app|project)|project\s+skeleton|file\s+structure|folder\s+structure)\b/.test(lower)) {
+    return false;
+  }
+  if (/\b(build\s+(a|an|the|me)\s+(app|project|website|site|system)|create\s+(a|an|the)\s+(app|project))\b/.test(lower)) {
+    return false;
+  }
+  return /\b(edit|fix|wire|change|update|patch|typo|rename)\b/.test(lower);
 }
 
 export function looksBuildIntent(userText: string): boolean {
@@ -474,6 +504,7 @@ export function shouldApplyBuildProcess(
   if (looksBuildIntent(t) || looksLargeJob(t)) return true;
   if (!opts.buildMode) return false;
   // Build mode on: require multi-step / build signals — NEVER length alone.
+  if (looksTrivialFileEdit(t)) return false;
   if (looksMultiStep(t)) return true;
   return false;
 }
@@ -494,9 +525,9 @@ export function buildBuildModeTodoNudge(): string {
 
 export function buildBuildModeImplementNudge(): string {
   return (
-    'Build process: you wrote a ToDo list but did not emit any file diffs or path-headed fences. ' +
+    'Build process: you wrote a ToDo list but did not emit a real ```diff / // path fence OR call write_file. ' +
     'That is not a build. Now: (1) if new structure is required, create the skeleton first; ' +
-    '(2) implement the next unchecked ToDo with a real ```diff or // relative/path file in content; ' +
+    '(2) implement the next unchecked ToDo with a real ```diff or // relative/path fence in content, OR call write_file; ' +
     '(3) call `todo` with merge=true to tick finished items. Do not reply with another list only. ' +
     'NEVER emit placeholder/stub/"implement here" code. Write the full working implementation and verify it.'
   );

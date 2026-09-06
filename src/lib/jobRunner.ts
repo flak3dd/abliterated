@@ -24,6 +24,7 @@ import {
   parseTodoBullets,
   shouldApplyBuildProcess,
 } from "./agentHelpers";
+import { looksLikeProvenImprovement, buildProveImproveNudge, looksReadOnlyOrControlPrompt } from './proveImprove';
 import { finalizeReasoningChannel } from "./agentPhase";
 import { enforceThoughtNoCode } from "./reasoningWork";
 import { executeMcpToolCall } from "./mcpClient";
@@ -335,6 +336,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
   const history: ChatOpenAiMessage[] = [{ role: "user", content: job.prompt }];
   let turns = 0;
   let buildImplementNudgeUsed = false;
+  let proveImproveNudgeUsed = false;
   let buildVerifyNudgeUsed = false;
   let hitCap = false;
   const toolsUsed: string[] = [];
@@ -438,7 +440,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
           buildProcess &&
           !buildImplementNudgeUsed &&
           parseTodoBullets(assistantText).length > 0 &&
-          !looksLikeBuildOutput(assistantText)
+          !looksLikeBuildOutput(assistantText, toolsUsed)
         ) {
           buildImplementNudgeUsed = true;
           history.push({ role: "user", content: buildBuildModeImplementNudge() });
@@ -448,12 +450,23 @@ async function runJob(initial: Job, settings: ClientSettings) {
         if (
           (buildProcess || large) &&
           !buildVerifyNudgeUsed &&
-          looksLikeBuildOutput(assistantText) &&
+          looksLikeBuildOutput(assistantText, toolsUsed) &&
           !looksLikeVerifyEvidence(assistantText, toolsUsed)
         ) {
           buildVerifyNudgeUsed = true;
           history.push({ role: "user", content: buildVerifyBeforeDoneNudge() });
           job = appendLog(job, "verify-before-done: implement without verify — nudge");
+          continue;
+        }
+        if (
+          !settings.planModeEnabled &&
+          !proveImproveNudgeUsed &&
+          !looksReadOnlyOrControlPrompt(job.prompt) &&
+          !looksLikeProvenImprovement(assistantText, toolsUsed)
+        ) {
+          proveImproveNudgeUsed = true;
+          history.push({ role: "user", content: buildProveImproveNudge() });
+          job = appendLog(job, "prove-improve: no evidence — nudge");
           continue;
         }
         job = appendLog(job, "no tool calls — done");

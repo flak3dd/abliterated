@@ -289,7 +289,7 @@ export const CHAT_TOOLS = [
     function: {
       name: 'shell',
       description:
-        'Run a shell command in the workspace root. Prefer list_dir/glob/read_file/grep for inspection; use shell for builds/tests/scripts. pip install against Homebrew/system Python hits PEP 668 (externally-managed-environment) — the bridge reroutes those to workspace .venv. Output comes back as a tool result only if executed (click-to-run or auto-run) — emitting ls/tree in a markdown bash fence does not run and gives no data.',
+        'Run a shell command in the workspace root. Prefer list_dir/glob/read_file/grep for inspection; use shell for builds/tests/scripts. Any python/python3/pip/pip3 command is auto-routed through workspace .venv (created if missing). Output comes back as a tool result only if executed (click-to-run or auto-run) — emitting ls/tree in a markdown bash fence does not run and gives no data.',
       parameters: {
         type: 'object',
         properties: {
