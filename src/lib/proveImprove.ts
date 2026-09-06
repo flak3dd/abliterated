@@ -36,7 +36,7 @@ export function looksLikeProvenImprovement(content: string, toolsUsed?: string[]
   }
   if (hasTool(toolsUsed, EXPLORE_TOOLS)) {
     const c = (content || '').trim();
-    if (c.length > 80 && !/\b(i'll|i will look|let me (check|look|search)|going to (read|check))\b/i.test(c)) return true;
+    if (c.length > 80 && !/\b(i('ll| will)\s+look|let me (check|look|search)|going to (read|check))\b/i.test(c)) return true;
   }
   return false;
 }
