@@ -9,6 +9,7 @@ Cross-links:
 
 | Doc / code | Role |
 | --- | --- |
+| [`docs/HIERARCHICAL-ORCHESTRATOR.md`](./HIERARCHICAL-ORCHESTRATOR.md) | Hierarchical Task Graph v1 + orchestrator design |
 | [`docs/FEATHERLESS-QWEN-BUILD.md`](./FEATHERLESS-QWEN-BUILD.md) | Featherless large-Qwen harness (other agent) |
 | [`docs/OPTIMIZATION-NOTES-2026-09-06.md`](./OPTIMIZATION-NOTES-2026-09-06.md) | Cap already maps Jobs to error + stopReason cap |
 | [`docs/PARALLEL-GROK-CLI.md`](./PARALLEL-GROK-CLI.md) | Manual worktree pattern |

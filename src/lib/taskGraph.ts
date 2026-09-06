@@ -1,4 +1,98 @@
-/** Persistent task graph under .ablit/task.json — shared blackboard foundation. */
+/** Persistent task graph under .ablit/task.json — flat blackboard + hierarchical Task Graph v1. */
+
+import {
+  parseTaskGraph as parseHierarchicalTaskGraph,
+  safeParseTaskGraph as safeParseHierarchicalTaskGraph,
+  createTaskGraph,
+  addNode,
+  assignNode,
+  startNode,
+  addArtifact,
+  verifyNode,
+  refreshGraphStatus,
+  consumeBudget,
+  readyNodes,
+  nodeCanStart,
+  detectCycle,
+  isVerifiedComplete,
+  isGraphId,
+  nowIso,
+  newGraphId,
+  newNodeId,
+  TASK_GRAPH_VERSION,
+  GRAPH_STATUSES,
+  NODE_STATUSES,
+  ARTIFACT_TYPES,
+  VERIFICATION_STATUSES,
+  VERIFICATION_METHODS,
+  HISTORY_ACTIONS,
+} from "./hierarchicalTaskGraph";
+import type {
+  TaskGraph as HierarchicalTaskGraph,
+  TaskNode as HierarchicalTaskNode,
+  AgentRole as HierarchicalAgentRole,
+  GraphStatus,
+  NodeStatus,
+  ArtifactType,
+  VerificationStatus,
+  VerificationMethod,
+  HistoryAction,
+  Artifact,
+  Verification,
+  Blocker,
+  Budget,
+  Consumed,
+  HistoryEntry,
+  TaskNode,
+  ParseResult,
+} from "./hierarchicalTaskGraph";
+
+export {
+  parseHierarchicalTaskGraph,
+  safeParseHierarchicalTaskGraph,
+  createTaskGraph,
+  addNode,
+  assignNode,
+  startNode,
+  addArtifact,
+  verifyNode,
+  refreshGraphStatus,
+  consumeBudget,
+  readyNodes,
+  nodeCanStart,
+  detectCycle,
+  isVerifiedComplete,
+  isGraphId,
+  nowIso,
+  newGraphId,
+  newNodeId,
+  TASK_GRAPH_VERSION,
+  GRAPH_STATUSES,
+  NODE_STATUSES,
+  ARTIFACT_TYPES,
+  VERIFICATION_STATUSES,
+  VERIFICATION_METHODS,
+  HISTORY_ACTIONS,
+};
+export type {
+  HierarchicalTaskGraph,
+  HierarchicalTaskNode,
+  HierarchicalAgentRole,
+  GraphStatus,
+  NodeStatus,
+  ArtifactType,
+  VerificationStatus,
+  VerificationMethod,
+  HistoryAction,
+  Artifact,
+  Verification,
+  Blocker,
+  Budget,
+  Consumed,
+  HistoryEntry,
+  TaskNode,
+  ParseResult,
+};
 
 export const TASK_GRAPH_PATH = ".ablit/task.json";
 
@@ -49,10 +143,86 @@ function asRole(v: unknown): AgentRole | undefined {
   return undefined;
 }
 
+
+function mapHierarchicalRole(hint: unknown): AgentRole | undefined {
+  const s = String(hint || "");
+  if (s === "orchestrator" || s === "coder" || s === "researcher" || s === "tester" || s === "verifier") return s;
+  if (s === "critic") return "verifier";
+  if (s === "integrator") return "coder";
+  return undefined;
+}
+
+function hierarchicalNodeToSubStatus(st: string): TaskSubStatus {
+  if (st === "completed") return "done";
+  if (st === "blocked" || st === "failed") return "blocked";
+  if (
+    st === "in_progress" ||
+    st === "assigned" ||
+    st === "ready" ||
+    st === "verification_pending"
+  ) {
+    return "in_progress";
+  }
+  return "pending";
+}
+
+/** Project hierarchical Task Graph v1 onto the flat blackboard shape used by tools / multi-agent. */
+export function hierarchicalToFlat(h: HierarchicalTaskGraph): TaskGraph {
+  const subtasks: TaskSubtask[] = (h.nodes || []).map((n: HierarchicalTaskNode) => {
+    const artifacts = (n.artifacts || [])
+      .map((a) => (String(a.path || a.summary || "").trim()))
+      .filter(Boolean);
+    let lastBeatAt: number | undefined;
+    if (n.started_at) {
+      const t = Date.parse(n.started_at);
+      if (Number.isFinite(t)) lastBeatAt = t;
+    }
+    const openBlockers = (n.blockers || []).filter((b) => !b.resolved);
+    let status = hierarchicalNodeToSubStatus(n.status);
+    if (openBlockers.length && status !== "done") status = "blocked";
+    return {
+      id: n.id,
+      text: n.description,
+      status,
+      blockers: n.depends_on?.length ? [...n.depends_on] : undefined,
+      role: mapHierarchicalRole(n.role_hint),
+      assignee: n.assignee || undefined,
+      lastBeatAt,
+      artifacts: artifacts.length ? artifacts : undefined,
+      lockPath: typeof n.metadata?.lockPath === "string" ? (n.metadata.lockPath as string) : undefined,
+    };
+  });
+  const meta = h.metadata || {};
+  const fleetId = typeof meta.fleetId === "string" ? meta.fleetId : undefined;
+  const updatedAt =
+    (h.updated_at && Date.parse(h.updated_at)) ||
+    (h.created_at && Date.parse(h.created_at)) ||
+    Date.now();
+  return {
+    version: 1,
+    goal: h.original_goal || "",
+    subtasks,
+    updatedAt: Number.isFinite(updatedAt as number) ? (updatedAt as number) : Date.now(),
+    fleetId,
+  };
+}
+
+function parseHierarchicalTaskGraphRaw(data: Record<string, unknown>): HierarchicalTaskGraph | null {
+  const result = safeParseHierarchicalTaskGraph(data);
+  return result.ok ? result.data : null;
+}
+
 export function parseTaskGraph(raw: string): TaskGraph | null {
   try {
-    const data = JSON.parse(raw) as Partial<TaskGraph>;
+    const data = JSON.parse(raw) as Record<string, unknown>;
     if (!data || typeof data !== "object") return null;
+
+    // Hierarchical Task Graph v1 → flat blackboard projection for tools / fleets
+    if (Array.isArray(data.nodes) && typeof data.original_goal === "string") {
+      const parsed = parseHierarchicalTaskGraphRaw(data);
+      if (parsed) return hierarchicalToFlat(parsed);
+    }
+
     const goal = typeof data.goal === "string" ? data.goal : "";
     const subtasks: TaskSubtask[] = [];
     if (Array.isArray(data.subtasks)) {
@@ -232,7 +402,7 @@ export function formatTaskGraphPrompt(graph: TaskGraph | null | undefined): stri
   if (!graph.goal.trim() && graph.subtasks.length === 0) return "";
   const lines: string[] = [
     "## Persistent task graph (.ablit/task.json)",
-    "Shared blackboard for long runs / multi-agent. Prefer task_update. todo = turn checklist; this graph keeps the goal.",
+    "Shared blackboard for long runs / multi-agent. Prefer task_update. todo = turn checklist; this graph keeps the goal. Hierarchical graphs (nodes/original_goal) are projected here.",
   ];
   if (graph.fleetId) lines.push(`Fleet: ${graph.fleetId}`);
   if (graph.goal.trim()) lines.push(`**Goal:** ${graph.goal.trim()}`);
