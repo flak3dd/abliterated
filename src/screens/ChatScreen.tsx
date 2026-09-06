@@ -7,8 +7,13 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, ArrowDown, RotateCcw, Send, Square } from 'lucide-react';
+import { ArrowLeft, ArrowDown, RotateCcw, Send, Square, ListChecks } from 'lucide-react';
 import { cn } from '../lib/cn';
+import {
+  buildDeepenNowPrompt,
+  DEEPEN_COMPLETENESS_CHAT_LABEL,
+  DEEPEN_COMPLETENESS_TOOLTIP,
+} from '../lib/deepenComplete';
 import { MessageBubble } from '../components/chat/MessageBubble';
 import { AgentStatusMonitor } from '../components/chat/AgentStatusMonitor';
 import { WorkingDirPrompt } from '../components/chat/WorkingDirPrompt';
@@ -73,7 +78,7 @@ import { executeMcpToolCall, listConnectedMcpTools, mcpToolsToOpenAi, isMcpToolN
 import { buildFakeToolNudge, looksLikeFakeToolTheater, parseFakeToolCalls } from '../lib/fakeToolCalls';
 import { detokenizeArtifacts } from '../lib/detokenizeArtifacts';
 import { streamChatCompletion } from '../lib/sse';
-import { getMessages, recordAgentRun, replaceThreadMessages, saveMessage, uid, upsertThread } from '../lib/storage';
+import { getMessages, recordAgentRun, replaceThreadMessages, saveMessage, setSettings, uid, upsertThread } from '../lib/storage';
 import { formatSkillsCatalogPrompt, toCatalogEntries, type SkillCatalogEntry, type SkillRecord } from '../lib/skills';
 import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from '../lib/projectMemory';
 import type { ChatOpenAiMessage, ClientSettings, Message, Thread, ToolCallPayload } from '../types';
@@ -107,6 +112,8 @@ interface Props {
   onTogglePlanMode?: () => void;
   onToggleBuildMode?: () => void;
   onApprovePlan?: () => void;
+  /** Persist ClientSettings patches (Completeness toggle syncs with Settings/Jobs). */
+  onSettingsChange?: (s: ClientSettings) => void;
 }
 
 /** Named hard clamp; effective turns come from settings.maxAgentTurns. */
@@ -374,6 +381,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     buildMode = false,
     onTogglePlanMode,
     onApprovePlan,
+    onSettingsChange,
   },
   ref,
 ) {
@@ -1251,7 +1259,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                   id: uid('msg'),
                   threadId: thread.id,
                   role: 'user',
-                  content: buildSelfDeepenNudge(),
+                  content: buildSelfDeepenNudge({
+                    completeness: liveDeepen.deepenCompleteness !== false,
+                  }),
                   createdAt: Date.now(),
                   status: 'complete',
                 };
@@ -1538,6 +1548,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
   const needsWorkingDir = !workspaceOk.ok || (messages.length === 0 && !dirConfirmed);
   const modKey = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K';
   const midRunOn = settings.midRunInjectEnabled !== false;
+  const completenessOn = settings.deepenCompleteness !== false;
   const placeholder = needsWorkingDir
     ? 'Choose a working directory first'
     : busy
@@ -1545,6 +1556,18 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       ? 'Send to adjust mid-run…'
       : 'Agent busy — Stop to cancel'
     : `Message · @src/foo.ts pin · ${modKey} commands · Enter send`;
+
+  const patchDeepenCompleteness = (next: boolean) => {
+    const merged = { ...settingsRef.current, deepenCompleteness: next };
+    setSettings(merged);
+    onSettingsChange?.(merged);
+  };
+
+  const deepenThisAnswerNow = () => {
+    // Keep Chat/Settings/Jobs agreed when the user asks for a one-shot deepen.
+    if (!completenessOn) patchDeepenCompleteness(true);
+    void sendTextRef.current(buildDeepenNowPrompt());
+  };
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -1555,13 +1578,43 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         <div className="min-w-0 flex-1">
           <div className="truncate font-mono text-xs text-zinc-100">{thread.title}</div>
           <div className="font-mono text-[10px] text-muted">
-            {resolveActiveSettings(settings).label} · {planMode ? 'PLAN · ' : ''}tools {(planMode ? effectiveTools : thread.enabledTools).join(', ') || 'none'} · {statusLabel}
+            {resolveActiveSettings(settings).label} · {planMode ? 'PLAN · ' : ''}
+            {completenessOn ? 'COMPLETE · ' : ''}tools {(planMode ? effectiveTools : thread.enabledTools).join(', ') || 'none'} · {statusLabel}
           </div>
           <div className="truncate font-mono text-[10px] text-zinc-500">
             {grokHeader}
             {workspaceRoot ? ` · ${workspaceRoot}` : ''}
           </div>
         </div>
+        <label
+          className={
+            'flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded border px-2 py-1 font-mono text-[10px] ' +
+            (completenessOn
+              ? 'border-emerald-600/70 bg-emerald-950/40 text-emerald-300'
+              : 'border-border bg-background text-muted')
+          }
+          title={DEEPEN_COMPLETENESS_TOOLTIP}
+        >
+          <input
+            type="checkbox"
+            role="switch"
+            aria-checked={completenessOn}
+            aria-label={DEEPEN_COMPLETENESS_CHAT_LABEL}
+            checked={completenessOn}
+            onChange={() => patchDeepenCompleteness(!completenessOn)}
+            className="h-3 w-3 accent-emerald-400"
+          />
+          {DEEPEN_COMPLETENESS_CHAT_LABEL}
+        </label>
+        <button
+          type="button"
+          onClick={deepenThisAnswerNow}
+          disabled={needsWorkingDir || (busy && !midRunOn) || messages.length === 0}
+          className="inline-flex shrink-0 items-center gap-1 rounded border border-border bg-background px-2 py-1 font-mono text-[10px] text-zinc-300 transition-colors hover:border-emerald-600/50 hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500 disabled:opacity-40"
+          title={`${DEEPEN_COMPLETENESS_TOOLTIP}. Queues mid-run inject when busy, otherwise sends a follow-up.`}
+        >
+          <ListChecks size={11} /> Deepen now
+        </button>
         <button type="button" onClick={() => void retry()} disabled={busy} className="rounded p-1 text-muted transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500 disabled:opacity-40">
           <RotateCcw size={14} />
         </button>
@@ -1759,6 +1812,26 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             disabled={needsWorkingDir}
             className="field max-h-32 flex-1 resize-none"
           />
+          <label
+            className={
+              'flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded border px-2 py-1 font-mono text-[10px] ' +
+              (completenessOn
+                ? 'border-emerald-600/70 bg-emerald-950/40 text-emerald-300'
+                : 'border-border bg-background text-muted')
+            }
+            title={DEEPEN_COMPLETENESS_TOOLTIP}
+          >
+            <input
+              type="checkbox"
+              role="switch"
+              aria-checked={completenessOn}
+              aria-label={DEEPEN_COMPLETENESS_CHAT_LABEL}
+              checked={completenessOn}
+              onChange={() => patchDeepenCompleteness(!completenessOn)}
+              className="h-3 w-3 accent-emerald-400"
+            />
+            {DEEPEN_COMPLETENESS_CHAT_LABEL}
+          </label>
           {onTogglePlanMode ? (
             <label
               className={

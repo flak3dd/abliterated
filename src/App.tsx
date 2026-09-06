@@ -694,7 +694,7 @@ export default function App() {
             ) : null}
             {visitedTabs.has('jobs') ? (
               <div className={panelClass('jobs')}>
-                <JobsScreen jobs={jobs} onJobsChange={setJobs} />
+                <JobsScreen jobs={jobs} onJobsChange={setJobs} onSettingsChange={applySettings} />
               </div>
             ) : null}
             {visitedTabs.has('api') ? (
@@ -766,6 +766,7 @@ export default function App() {
                     'Plan approved. Build mode is on. After reasoning emit ToDo: steps. If new file/folder structure is required, scaffold it first, then work the list. Write tools are unlocked.',
                   );
                 }}
+                onSettingsChange={applySettings}
               />
             </div>
           ) : null}

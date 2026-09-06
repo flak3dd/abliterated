@@ -54,12 +54,14 @@ export function stripAnswerCompleteMarker(content: string): string {
   return content.replace(/\s*\[ANSWER_COMPLETE\]\s*/g, '').trim();
 }
 
-export function buildSelfDeepenNudge(): string {
-  return withCompletenessChecklist(
+export function buildSelfDeepenNudge(opts?: { completeness?: boolean }): string {
+  const base =
     '↻ Self-review: Re-read your last answer. Expand thin/missing parts with concrete detail ' +
-      '(and tools if needed). If the answer already fully solves the user request, reply with ONLY ' +
-      'the token [ANSWER_COMPLETE].',
-  );
+    '(and tools if needed). If the answer already fully solves the user request, reply with ONLY ' +
+    'the token [ANSWER_COMPLETE].';
+  // Completeness checklist is opt-in via deepenCompleteness (Chat/Settings/Jobs).
+  if (opts?.completeness) return withCompletenessChecklist(base);
+  return base;
 }
 
 /** True when the assistant left the user-visible content channel empty (whitespace counts as empty). */

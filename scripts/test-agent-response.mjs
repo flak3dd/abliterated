@@ -85,11 +85,12 @@ function stripAnswerCompleteMarker(content) {
   return content.replace(/\s*\[ANSWER_COMPLETE\]\s*/g, '').trim();
 }
 
-function buildSelfDeepenNudge() {
+function buildSelfDeepenNudge(opts) {
   const base =
     '↻ Self-review: Re-read your last answer. Expand thin/missing parts with concrete detail ' +
     '(and tools if needed). If the answer already fully solves the user request, reply with ONLY ' +
     'the token [ANSWER_COMPLETE].';
+  if (!opts || !opts.completeness) return base;
   return (
     base +
     '\n\n## Deepen for completeness (Abliterated-only)\n' +
@@ -474,10 +475,16 @@ await test('isAnswerCompleteMarker & stripAnswerCompleteMarker', () => {
 });
 
 await test('buildSelfDeepenNudge contains guidance token', () => {
-  const nudge = buildSelfDeepenNudge();
-  assert.ok(nudge.includes('[ANSWER_COMPLETE]'));
-  assert.ok(nudge.includes('Self-review'));
-  assert.ok(nudge.includes('Abliterated-only'));
+  const base = buildSelfDeepenNudge();
+  assert.ok(base.includes('[ANSWER_COMPLETE]'));
+  assert.ok(base.includes('Self-review'));
+  assert.equal(base.includes('Abliterated-only'), false);
+
+  const full = buildSelfDeepenNudge({ completeness: true });
+  assert.ok(full.includes('[ANSWER_COMPLETE]'));
+  assert.ok(full.includes('Self-review'));
+  assert.ok(full.includes('Abliterated-only'));
+  assert.ok(full.includes('completeness'));
 });
 
 // 3. Multi-Step & Large Job Heuristics

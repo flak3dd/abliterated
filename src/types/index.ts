@@ -246,6 +246,11 @@ export interface ClientSettings {
   selfDeepenEnabled: boolean;
   /** Max deepen passes per run (0–5). Default 2; 0 disables even if enabled. */
   selfDeepenPasses: number;
+  /**
+   * When true, self-deepen / Jobs inject Abliterated-only completeness checklist
+   * from deepenComplete.ts. Default matches self-deepen (on unless stored off).
+   */
+  deepenCompleteness: boolean;
   /** When true (default), user can queue messages while the agent is busy (mid-run barge-in). */
   midRunInjectEnabled: boolean;
   /** When true (default), parse/show completion footer Continue chips; prompt still asks for the footer when on. */

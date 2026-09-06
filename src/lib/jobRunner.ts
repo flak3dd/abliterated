@@ -202,7 +202,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
   }
 
   const deepenCompletenessBlock = buildJobCompletenessSystemBlock({
-    selfDeepenEnabled: settings.selfDeepenEnabled !== false,
+    deepenCompleteness: settings.deepenCompleteness !== false,
   });
   const systemParts = [
     settings.systemPrompt || "",

@@ -9,9 +9,9 @@ import {
 } from '../lib/jobRunner';
 import { cn } from '../lib/cn';
 import { bridge } from '../lib/bridgeClient';
-import { getWorkspace } from '../lib/storage';
+import { getSettings, getWorkspace, setSettings } from '../lib/storage';
 import { workspaceGate } from '../lib/workspaceGuard';
-import type { Job, JobStatus } from '../types';
+import type { ClientSettings, Job, JobStatus } from '../types';
 import {
   DEEPEN_COMPLETENESS_JOB_PROMPT,
   DEEPEN_COMPLETENESS_PRESET_LABEL,
@@ -20,6 +20,7 @@ import {
 interface Props {
   jobs: Job[];
   onJobsChange: (jobs: Job[]) => void;
+  onSettingsChange?: (s: ClientSettings) => void;
 }
 
 const BADGE: Record<JobStatus, string> = {
@@ -57,7 +58,7 @@ function relativeTime(ts: number, now: number): string {
 
 type FilterTab = 'all' | 'active' | 'done' | 'error';
 
-export function JobsScreen({ jobs, onJobsChange }: Props) {
+export function JobsScreen({ jobs, onJobsChange, onSettingsChange }: Props) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
@@ -193,17 +194,29 @@ export function JobsScreen({ jobs, onJobsChange }: Props) {
         </div>
 
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {PROMPT_EXAMPLES.map((ex, i) => (
-            <button
-              key={PROMPT_EXAMPLE_LABELS[i] || ex}
-              type="button"
-              onClick={() => setPrompt(ex)}
-              className="chip max-w-full truncate hover:border-sky-500/40 hover:text-sky-200"
-              title={ex}
-            >
-              {PROMPT_EXAMPLE_LABELS[i] || ex}
-            </button>
-          ))}
+          {PROMPT_EXAMPLES.map((ex, i) => {
+            const label = PROMPT_EXAMPLE_LABELS[i] || ex;
+            const isCompleteness = ex === DEEPEN_COMPLETENESS_JOB_PROMPT;
+            return (
+              <button
+                key={label}
+                type="button"
+                onClick={() => {
+                  setPrompt(ex);
+                  if (isCompleteness) {
+                    const next = { ...getSettings(), deepenCompleteness: true };
+                    setSettings(next);
+                    onSettingsChange?.(next);
+                    setFlash('Completeness deepen enabled (synced with Chat/Settings)');
+                  }
+                }}
+                className="chip max-w-full truncate hover:border-sky-500/40 hover:text-sky-200"
+                title={ex}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
 
         {error ? <div className="mt-2 font-mono text-[11px] text-rose-400">{error}</div> : null}

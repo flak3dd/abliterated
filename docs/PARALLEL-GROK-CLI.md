@@ -51,11 +51,12 @@ Tips:
 
 When the user wants a fuller functional response **without** calling external censored CLIs:
 
-1. Enable **Settings → Self-deepen answers** (passes ≥ 1). Completeness checklist is included automatically.
-2. Or invoke the bundled skill **Deepen complete response** (`skills/deepen-complete-response`).
-3. Or queue a Job with the preset **Deepen for completeness (Abliterated-only)**.
+1. Toggle **Completeness** in the Chat header/composer (persists as `deepenCompleteness`), or enable **Settings → Deepen for completeness (Abliterated-only)** — keep **Self-deepen answers** on with passes ≥ 1 for automatic passes.
+2. Or use Chat **Deepen now** (mid-run inject / follow-up) without hunting Settings.
+3. Or invoke the bundled skill **Deepen complete response** (`skills/deepen-complete-response`).
+4. Or enqueue a Job with the preset **Deepen for completeness (Abliterated-only)** (also turns `deepenCompleteness` on).
 
-Helpers live in `src/lib/deepenComplete.ts` (wired into self-deepen nudges and optional Jobs system text). Extra deepen API turns run **only** when self-deepen is on — turning deepen off does not silently spend tokens.
+Helpers live in `src/lib/deepenComplete.ts` (wired into self-deepen nudges and optional Jobs system text). Extra deepen API turns run **only** when self-deepen is on; the completeness checklist injects when `deepenCompleteness` is on. Optional parallel Grok stays docs-only / worktree manual — never auto-launched.
 
 ---
 
@@ -64,4 +65,4 @@ Helpers live in `src/lib/deepenComplete.ts` (wired into self-deepen nudges and o
 - [ ] Unrestricted answer path = Abliterated model only
 - [ ] Optional Grok = separate worktree, structural commits only
 - [ ] No refusal-shaped merges into unrestricted content
-- [ ] Completeness deepen = Abliterated self-deepen / skill / Jobs preset — no Grok call
+- [ ] Completeness deepen = Chat Completeness toggle / Deepen now / Settings / skill / Jobs preset — no Grok call

@@ -337,7 +337,14 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             label="Self-deepen answers"
             checked={settings.selfDeepenEnabled !== false}
             onChange={(v) => patch({ selfDeepenEnabled: v })}
-            help="After a text-only answer, nudge the model to expand thin spots and run a completeness checklist (Abliterated-only — does not call Grok). Stops early on [ANSWER_COMPLETE]."
+            help="After a text-only answer, nudge the model to expand thin/missing spots. Stops early on [ANSWER_COMPLETE]. Pair with Completeness below for the Abliterated-only checklist (does not call Grok)."
+          />
+
+          <SwitchRow
+            label="Deepen for completeness (Abliterated-only)"
+            checked={settings.deepenCompleteness !== false}
+            onChange={(v) => patch({ deepenCompleteness: v })}
+            help="When self-deepen runs (or Jobs enqueue with the Completeness chip), inject the completeness checklist from deepenComplete.ts. Chat header/composer toggle stays in sync. No Grok/censored CLI path."
           />
 
           <FieldLabel label="Self-deepen passes (0–5)" hint="0 turns deepen off even if the toggle is on.">

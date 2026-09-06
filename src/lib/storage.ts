@@ -68,6 +68,7 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   maxAgentTurns: DEFAULT_MAX_AGENT_TURNS,
   selfDeepenEnabled: true,
   selfDeepenPasses: DEFAULT_SELF_DEEPEN_PASSES,
+  deepenCompleteness: true,
   midRunInjectEnabled: true,
   completionFooterEnabled: true,
   coalesceReasoningToContent: true,
@@ -249,6 +250,11 @@ export function getSettings(): ClientSettings {
       }
       return passes;
     })(),
+    // Prefer matching self-deepen when the dedicated flag was never stored.
+    deepenCompleteness:
+      typeof stored.deepenCompleteness === 'boolean'
+        ? stored.deepenCompleteness
+        : stored.selfDeepenEnabled !== false,
     midRunInjectEnabled: stored.midRunInjectEnabled !== false,
     completionFooterEnabled: stored.completionFooterEnabled !== false,
     coalesceReasoningToContent: stored.coalesceReasoningToContent !== false,
