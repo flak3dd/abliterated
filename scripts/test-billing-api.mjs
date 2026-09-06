@@ -37,6 +37,7 @@ const mod = await import(pathToFileURL(path.join(outDir, 'billingApi.js')).href)
 const {
   DEFAULT_BILLING_SITE,
   BILLING_PLANS,
+  FALLBACK_CREDIT_PACKS,
   billingSiteBase,
   billingApiUrl,
   extractStripeSessionId,
@@ -96,6 +97,48 @@ assert.ok(BILLING_PLANS.includes('pro_monthly'));
 assert.ok(BILLING_PLANS.includes('pro_yearly'));
 assert.ok(BILLING_PLANS.includes('team_monthly'));
 assert.equal(BILLING_PLANS.length, 4);
+
+
+assert.equal(
+  billingApiUrl(null, '/api/billing/portal'),
+  'https://abliterated.app/api/billing/portal',
+);
+assert.equal(
+  billingApiUrl({ billingSiteUrl: 'https://x.test' }, '/api/billing/setup-card'),
+  'https://x.test/api/billing/setup-card',
+);
+assert.equal(
+  billingApiUrl(null, '/api/checkout/crypto'),
+  'https://abliterated.app/api/checkout/crypto',
+);
+assert.ok(
+  billingApiUrl(null, `/api/checkout/crypto?invoiceId=${encodeURIComponent('inv_abc')}`).includes(
+    'invoiceId=inv_abc',
+  ),
+);
+assert.equal(
+  billingApiUrl(null, '/api/checkout/crypto/confirm'),
+  'https://abliterated.app/api/checkout/crypto/confirm',
+);
+assert.equal(
+  billingApiUrl(null, `/checkout/crypto?invoiceId=${encodeURIComponent('inv_1')}`),
+  'https://abliterated.app/checkout/crypto?invoiceId=inv_1',
+);
+
+assert.equal(FALLBACK_CREDIT_PACKS.length, 3);
+assert.ok(FALLBACK_CREDIT_PACKS.some((p) => p.id === 'credits_5m'));
+assert.ok(FALLBACK_CREDIT_PACKS.some((p) => p.id === 'credits_20m'));
+assert.ok(FALLBACK_CREDIT_PACKS.some((p) => p.id === 'credits_50m'));
+assert.ok(typeof FALLBACK_CREDIT_PACKS[0].label === 'string');
+assert.ok(FALLBACK_CREDIT_PACKS[0].tokens > 0);
+assert.ok(FALLBACK_CREDIT_PACKS[0].usd > 0);
+
+assert.equal(typeof mod.openCustomerPortal, 'function');
+assert.equal(typeof mod.setupCard, 'function');
+assert.equal(typeof mod.listCryptoCheckout, 'function');
+assert.equal(typeof mod.createCryptoInvoice, 'function');
+assert.equal(typeof mod.getCryptoInvoice, 'function');
+assert.equal(typeof mod.confirmCryptoInvoice, 'function');
 
 fs.rmSync(outDir, { recursive: true, force: true });
 console.log('test-billing-api: ok');

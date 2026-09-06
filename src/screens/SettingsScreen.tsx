@@ -19,16 +19,25 @@ import {
   BILLING_PLAN_LABELS,
   BILLING_PLANS,
   BillingApiError,
+  FALLBACK_CREDIT_PACKS,
+  confirmCryptoInvoice,
   confirmSolanaPayment,
+  createCryptoInvoice,
   createSolanaPayment,
   createStripeCheckout,
   extractStripeSessionId,
   getCheckoutSession,
+  getCryptoInvoice,
   getOrCreateDeviceId,
   getSolanaPayment,
+  listCryptoCheckout,
   openBillingUrl,
+  openCustomerPortal,
   redeemAccessCode,
+  setupCard,
   type BillingPlan,
+  type CreditPack,
+  type CreditPackId,
 } from '../lib/billingApi';
 import {
   AuthApiError,
@@ -169,12 +178,26 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   const [billingPlan, setBillingPlan] = useState<BillingPlan>('pro_monthly');
   const [billingSeats, setBillingSeats] = useState(1);
   const [redeemCode, setRedeemCode] = useState('');
-  const [checkoutBusy, setCheckoutBusy] = useState<'stripe' | 'solana' | 'redeem' | null>(null);
+  const [planBusy, setPlanBusy] = useState<'stripe' | 'solana' | null>(null);
+  const [planMsg, setPlanMsg] = useState('');
+  const [cardsBusy, setCardsBusy] = useState<'setup' | 'portal' | null>(null);
+  const [cardsMsg, setCardsMsg] = useState('');
+  const [redeemBusy, setRedeemBusy] = useState(false);
   const [pendingStripeSession, setPendingStripeSession] = useState<string | null>(null);
   const [pendingSolanaId, setPendingSolanaId] = useState<string | null>(null);
   const [solanaPayUrl, setSolanaPayUrl] = useState('');
   const [solanaAmount, setSolanaAmount] = useState('');
   const pollAbortRef = useRef(0);
+  const cryptoPollAbortRef = useRef(0);
+  const [cryptoBusy, setCryptoBusy] = useState<'load' | 'create' | 'poll' | null>(null);
+  const [cryptoMsg, setCryptoMsg] = useState('');
+  const [creditPacks, setCreditPacks] = useState<CreditPack[]>([...FALLBACK_CREDIT_PACKS]);
+  const [creditPackId, setCreditPackId] = useState<CreditPackId>('credits_20m');
+  const [cryptoAsset, setCryptoAsset] = useState('usdc_sol');
+  const [pendingCryptoId, setPendingCryptoId] = useState<string | null>(null);
+  const [cryptoPayUrl, setCryptoPayUrl] = useState('');
+  const [cryptoPayUri, setCryptoPayUri] = useState('');
+  const [cryptoAmountLabel, setCryptoAmountLabel] = useState('');
   const [skillRows, setSkillRows] = useState<SkillCatalogEntry[]>([]);
   const [skillsBusy, setSkillsBusy] = useState(false);
   const [mpHint, setMpHint] = useState('');
@@ -227,8 +250,40 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   useEffect(() => {
     return () => {
       pollAbortRef.current += 1;
+      cryptoPollAbortRef.current += 1;
     };
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setCryptoBusy('load');
+      try {
+        const meta = await listCryptoCheckout(settings);
+        if (!alive) return;
+        const packs = meta.packs.length ? meta.packs : [...FALLBACK_CREDIT_PACKS];
+        setCreditPacks(packs);
+        setCreditPackId((prev) => (packs.some((p) => p.id === prev) ? prev : packs[0]?.id || 'credits_20m'));
+        setCryptoMsg(
+          meta.facilitator
+            ? `Loaded ${packs.length} packs (${meta.facilitator}). Prepaid crypto — no auto-renew.`
+            : `Loaded ${packs.length} packs. Prepaid crypto — no auto-renew.`,
+        );
+      } catch (err) {
+        if (!alive) return;
+        setCreditPacks([...FALLBACK_CREDIT_PACKS]);
+        const msg =
+          err instanceof BillingApiError ? err.message : err instanceof Error ? err.message : String(err);
+        setCryptoMsg(`Using static packs (catalog unavailable: ${msg}). Prepaid — no auto-renew.`);
+      } finally {
+        if (alive) setCryptoBusy((b) => (b === 'load' ? null : b));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- catalog on site base change
+  }, [settings.billingSiteUrl]);
 
   const patch = (partial: Partial<ClientSettings>) => {
     const next = { ...settings, ...partial };
@@ -413,7 +468,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   const pollStripeUntilLicense = async (sessionId: string, gen: number) => {
-    setLicenseMsg(`Waiting for Stripe payment (session ${sessionId.slice(0, 18)}…)…`);
+    setPlanMsg(`Waiting for Stripe payment (session ${sessionId.slice(0, 18)}…)…`);
     for (let i = 0; i < 90; i++) {
       if (pollAbortRef.current !== gen) return;
       try {
@@ -421,25 +476,25 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
         if (session.license?.key) {
           const next = persistLicense(session.license.key);
           setPendingStripeSession(null);
-          setCheckoutBusy(null);
-          setLicenseMsg(`Stripe paid — activated ${next.label}.`);
+          setPlanBusy(null);
+          setPlanMsg(`Stripe paid — activated ${next.label}.`);
           return;
         }
-        setLicenseMsg(
+        setPlanMsg(
           `Stripe: ${session.payment_status || session.status || 'pending'} — waiting for license… (${i + 1})`,
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setLicenseMsg(`Stripe poll: ${msg}`);
+        setPlanMsg(`Stripe poll: ${msg}`);
       }
       await sleep(2500);
     }
-    setCheckoutBusy(null);
-    setLicenseMsg('Stripe checkout timed out waiting for license. Paste the key from email if needed.');
+    setPlanBusy(null);
+    setPlanMsg('Stripe checkout timed out waiting for license. Paste the key from email if needed.');
   };
 
   const pollSolanaUntilLicense = async (paymentId: string, gen: number, email: string) => {
-    setLicenseMsg(`Waiting for Solana USDC (payment ${paymentId.slice(0, 12)}…)…`);
+    setPlanMsg(`Waiting for Solana USDC (payment ${paymentId.slice(0, 12)}…)…`);
     for (let i = 0; i < 120; i++) {
       if (pollAbortRef.current !== gen) return;
       try {
@@ -459,36 +514,36 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
         if (status.licenseKey) {
           const next = persistLicense(status.licenseKey);
           setPendingSolanaId(null);
-          setCheckoutBusy(null);
-          setLicenseMsg(`Solana paid — activated ${next.label}.`);
+          setPlanBusy(null);
+          setPlanMsg(`Solana paid — activated ${next.label}.`);
           return;
         }
         if (status.status === 'expired') {
-          setCheckoutBusy(null);
-          setLicenseMsg('Solana payment expired. Start a new USDC checkout.');
+          setPlanBusy(null);
+          setPlanMsg('Solana payment expired. Start a new USDC checkout.');
           return;
         }
-        setLicenseMsg(`Solana: ${status.status || 'pending'} — waiting for license… (${i + 1})`);
+        setPlanMsg(`Solana: ${status.status || 'pending'} — waiting for license… (${i + 1})`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setLicenseMsg(`Solana poll: ${msg}`);
+        setPlanMsg(`Solana poll: ${msg}`);
       }
       await sleep(3000);
     }
-    setCheckoutBusy(null);
-    setLicenseMsg('Solana checkout timed out waiting for license. Paste the key if email arrived.');
+    setPlanBusy(null);
+    setPlanMsg('Solana checkout timed out waiting for license. Paste the key if email arrived.');
   };
 
   const startStripeCheckout = async () => {
     const email = effectiveBillingEmail();
     if (!email || !email.includes('@')) {
-      setLicenseMsg('Enter a receipt email before paying with card.');
+      setPlanMsg('Enter a receipt email before paying with card.');
       return;
     }
     rememberEmail(email);
     const gen = ++pollAbortRef.current;
-    setCheckoutBusy('stripe');
-    setLicenseMsg('Creating Stripe checkout…');
+    setPlanBusy('stripe');
+    setPlanMsg('Creating Stripe checkout…');
     try {
       const deviceId = getOrCreateDeviceId(settings.deviceId);
       const created = await createStripeCheckout(settings, {
@@ -503,15 +558,15 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
       if (sessionId) {
         await pollStripeUntilLicense(sessionId, gen);
       } else {
-        setCheckoutBusy(null);
-        setLicenseMsg(
+        setPlanBusy(null);
+        setPlanMsg(
           'Opened Stripe checkout. Could not parse session id — paste your license key after payment.',
         );
       }
     } catch (err) {
-      setCheckoutBusy(null);
+      setPlanBusy(null);
       const msg = err instanceof BillingApiError ? err.message : err instanceof Error ? err.message : String(err);
-      setLicenseMsg(`Stripe error: ${msg}`);
+      setPlanMsg(`Stripe error: ${msg}`);
     }
   };
 
@@ -519,8 +574,8 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
     const email = effectiveBillingEmail();
     if (email) rememberEmail(email);
     const gen = ++pollAbortRef.current;
-    setCheckoutBusy('solana');
-    setLicenseMsg('Creating Solana USDC payment…');
+    setPlanBusy('solana');
+    setPlanMsg('Creating Solana USDC payment…');
     try {
       const created = await createSolanaPayment(settings, {
         plan: billingPlan,
@@ -531,14 +586,180 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
       setSolanaPayUrl(created.url);
       setSolanaAmount(created.amountUsdc);
       await openBillingUrl(created.url);
-      setLicenseMsg(
+      setPlanMsg(
         `Solana pay URL ready (${created.amountUsdc} USDC). Open wallet / copy link, then wait for confirm…`,
       );
       await pollSolanaUntilLicense(created.paymentId, gen, email);
     } catch (err) {
-      setCheckoutBusy(null);
+      setPlanBusy(null);
       const msg = err instanceof BillingApiError ? err.message : err instanceof Error ? err.message : String(err);
-      setLicenseMsg(`Solana error: ${msg}`);
+      setPlanMsg(`Solana error: ${msg}`);
+    }
+  };
+
+  const startSaveCard = async () => {
+    const email = effectiveBillingEmail();
+    if (!email || !email.includes('@')) {
+      setCardsMsg('Enter an email before saving a card.');
+      return;
+    }
+    rememberEmail(email);
+    setCardsBusy('setup');
+    setCardsMsg('Opening Stripe card setup…');
+    try {
+      const created = await setupCard(settings, { email });
+      await openBillingUrl(created.url);
+      setCardsMsg('Opened Stripe setup — save a card for future automated payments.');
+    } catch (err) {
+      const msg = err instanceof BillingApiError ? err.message : err instanceof Error ? err.message : String(err);
+      setCardsMsg(`Save card error: ${msg}`);
+    } finally {
+      setCardsBusy(null);
+    }
+  };
+
+  const startCustomerPortal = async () => {
+    const email = effectiveBillingEmail();
+    if (!email || !email.includes('@')) {
+      setCardsMsg('Enter an email before opening the billing portal.');
+      return;
+    }
+    rememberEmail(email);
+    setCardsBusy('portal');
+    setCardsMsg('Opening Stripe customer portal…');
+    try {
+      const created = await openCustomerPortal(settings, { email });
+      await openBillingUrl(created.url);
+      setCardsMsg('Opened customer portal — manage subscription and saved cards.');
+    } catch (err) {
+      const msg = err instanceof BillingApiError ? err.message : err instanceof Error ? err.message : String(err);
+      setCardsMsg(`Portal error: ${msg}`);
+    } finally {
+      setCardsBusy(null);
+    }
+  };
+
+  const loadCryptoCatalog = async () => {
+    setCryptoBusy('load');
+    setCryptoMsg('Loading credit packs…');
+    try {
+      const meta = await listCryptoCheckout(settings);
+      const packs = meta.packs.length ? meta.packs : [...FALLBACK_CREDIT_PACKS];
+      setCreditPacks(packs);
+      if (!packs.some((p) => p.id === creditPackId) && packs[0]) {
+        setCreditPackId(packs[0].id);
+      }
+      const usdc = meta.assets.find((a) => a.id === 'usdc_sol');
+      if (usdc) setCryptoAsset('usdc_sol');
+      setCryptoMsg(
+        meta.facilitator
+          ? `Loaded ${packs.length} packs (${meta.facilitator}). Prepaid crypto — no auto-renew.`
+          : `Loaded ${packs.length} packs. Prepaid crypto — no auto-renew.`,
+      );
+    } catch (err) {
+      setCreditPacks([...FALLBACK_CREDIT_PACKS]);
+      const msg = err instanceof BillingApiError ? err.message : err instanceof Error ? err.message : String(err);
+      setCryptoMsg(`Using static packs (catalog unavailable: ${msg}). Prepaid — no auto-renew.`);
+    } finally {
+      setCryptoBusy((b) => (b === 'load' ? null : b));
+    }
+  };
+
+  const pollCryptoUntilPaid = async (invoiceId: string, gen: number, email: string) => {
+    setCryptoMsg(`Waiting for crypto payment (invoice ${invoiceId.slice(0, 12)}…)…`);
+    for (let i = 0; i < 120; i++) {
+      if (cryptoPollAbortRef.current !== gen) return;
+      try {
+        let inv = await getCryptoInvoice(settings, invoiceId);
+        const paid =
+          inv.status === 'confirmed' ||
+          Boolean(inv.creditsLedgerId) ||
+          Boolean(inv.licenseKey);
+        if (!paid && (inv.status === 'pending' || inv.status === 'created' || !inv.status)) {
+          try {
+            const confirmed = await confirmCryptoInvoice(settings, { invoiceId, email: email || undefined });
+            if (confirmed.status === 'confirmed' || confirmed.creditsLedgerId || confirmed.licenseKey) {
+              inv = {
+                ...inv,
+                status: confirmed.status || inv.status,
+                creditsLedgerId: confirmed.creditsLedgerId || inv.creditsLedgerId,
+                creditsTokens: confirmed.creditsTokens ?? inv.creditsTokens,
+                licenseKey: confirmed.licenseKey || inv.licenseKey,
+              };
+            } else if (confirmed.status) {
+              inv = { ...inv, status: confirmed.status };
+            }
+          } catch {
+            /* confirm may fail while pending */
+          }
+        }
+        if (inv.licenseKey) {
+          const next = persistLicense(inv.licenseKey);
+          setPendingCryptoId(null);
+          setCryptoBusy(null);
+          setCryptoMsg(`Crypto paid — activated ${next.label}.`);
+          return;
+        }
+        if (inv.status === 'confirmed' || inv.creditsLedgerId) {
+          setPendingCryptoId(null);
+          setCryptoBusy(null);
+          const tokens = inv.creditsTokens ? ` (${inv.creditsTokens.toLocaleString()} tokens)` : '';
+          setCryptoMsg(`Crypto paid — credits credited${tokens}. Prepaid pack — no auto-renew.`);
+          return;
+        }
+        if (inv.status === 'expired') {
+          setCryptoBusy(null);
+          setCryptoMsg('Crypto invoice expired. Create a new invoice.');
+          return;
+        }
+        setCryptoMsg(`Crypto: ${inv.status || 'pending'} — waiting for payment… (${i + 1})`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setCryptoMsg(`Crypto poll: ${msg}`);
+      }
+      await sleep(3000);
+    }
+    setCryptoBusy(null);
+    setCryptoMsg('Crypto checkout timed out. Credits appear after chain confirm — retry poll if needed.');
+  };
+
+  const startCryptoCheckout = async () => {
+    const email = effectiveBillingEmail();
+    if (!email || !email.includes('@')) {
+      setCryptoMsg('Enter an email before buying credits with crypto.');
+      return;
+    }
+    rememberEmail(email);
+    const gen = ++cryptoPollAbortRef.current;
+    setCryptoBusy('create');
+    setCryptoMsg('Creating crypto invoice…');
+    try {
+      const created = await createCryptoInvoice(settings, {
+        creditPackId,
+        email,
+        asset: cryptoAsset || 'usdc_sol',
+      });
+      setPendingCryptoId(created.invoiceId);
+      setCryptoPayUrl(created.url);
+      setCryptoPayUri(created.uri || '');
+      const amt =
+        created.amountCrypto && created.symbol
+          ? `${created.amountCrypto} ${created.symbol}`
+          : created.amountUsd != null
+            ? `$${created.amountUsd}`
+            : '';
+      setCryptoAmountLabel(amt);
+      await openBillingUrl(created.url);
+      setCryptoMsg(
+        created.note ||
+          `Invoice ready${amt ? ` (${amt})` : ''}. Pay the exact amount — prepaid credits, no auto-renew.`,
+      );
+      setCryptoBusy('poll');
+      await pollCryptoUntilPaid(created.invoiceId, gen, email);
+    } catch (err) {
+      setCryptoBusy(null);
+      const msg = err instanceof BillingApiError ? err.message : err instanceof Error ? err.message : String(err);
+      setCryptoMsg(`Crypto error: ${msg}`);
     }
   };
 
@@ -554,7 +775,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
       return;
     }
     rememberEmail(email);
-    setCheckoutBusy('redeem');
+    setRedeemBusy(true);
     setLicenseMsg('Redeeming access code…');
     try {
       const deviceId = getOrCreateDeviceId(settings.deviceId);
@@ -590,12 +811,12 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
         /* ignore */
       }
       setRedeemCode('');
-      setCheckoutBusy(null);
+      setRedeemBusy(false);
       setLicenseMsg(
         `Redeemed — activated ${nextLicense.label}${result.loginId ? ` (loginId ${result.loginId})` : ''}.`,
       );
     } catch (err) {
-      setCheckoutBusy(null);
+      setRedeemBusy(false);
       const msg = err instanceof BillingApiError ? err.message : err instanceof Error ? err.message : String(err);
       setLicenseMsg(`Redeem error: ${msg}`);
     }
@@ -1402,12 +1623,17 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
         </Section>
 
         <Section
-          title="License / Plan"
+          title="Plan & upgrades"
           hint={`Starter $${PRICING_HINT.starterMonthly}/mo · Pro $${PRICING_HINT.proMonthly}/mo or $${PRICING_HINT.proYearly}/yr · Team $${PRICING_HINT.teamMonthlySeat}/mo seat.`}
         >
           <div className="rounded border border-border bg-background px-3 py-2">
             <div className="font-mono text-[10px] uppercase text-muted">Current plan</div>
-            <div className="mt-1 font-mono text-lg text-zinc-100">{license.label}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-sky-700/60 bg-sky-950/40 px-2 py-0.5 font-mono text-[11px] text-sky-200">
+                {license.label}
+              </span>
+              <span className="font-mono text-lg text-zinc-100">{license.tier}</span>
+            </div>
             {license.features.showWatermark ? (
               <p className="mt-1 font-mono text-[11px] text-amber-400/90">Free watermark on — upgrade to remove.</p>
             ) : (
@@ -1441,11 +1667,11 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
           ) : null}
 
           <FieldLabel
-            label="Email"
+            label="Billing email"
             hint={
               settings.accountEmail
-                ? 'Prefers account email when set; used for Stripe / Solana / redeem receipts.'
-                : 'Receipt email for Stripe / Solana / redeem (stored locally). Sign in above to sync.'
+                ? 'Uses accountEmail when set (else billingEmail) for Stripe / Solana / portal / crypto.'
+                : 'Receipt email for checkout (stored locally). Sign in above to sync accountEmail.'
             }
           >
             <input
@@ -1459,7 +1685,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             />
           </FieldLabel>
 
-          <FieldLabel label="Plan" hint="Checkout creates a site-hosted Stripe session or Solana USDC payment — secrets stay on abliterated.app.">
+          <FieldLabel label="Plan" hint="Card or Solana USDC checkout — secrets stay on abliterated.app.">
             <select
               value={billingPlan}
               onChange={(e) => setBillingPlan(e.target.value as BillingPlan)}
@@ -1492,27 +1718,27 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             <button
               type="button"
               className="btn-primary h-7 px-3 text-[10px]"
-              disabled={checkoutBusy !== null}
+              disabled={planBusy === 'stripe'}
               onClick={() => void startStripeCheckout()}
             >
-              {checkoutBusy === 'stripe' ? 'Card…' : 'Pay with card'}
+              {planBusy === 'stripe' ? 'Card…' : 'Pay with card'}
             </button>
             <button
               type="button"
               className="btn-primary h-7 px-3 text-[10px]"
-              disabled={checkoutBusy !== null}
+              disabled={planBusy === 'solana'}
               onClick={() => void startSolanaCheckout()}
             >
-              {checkoutBusy === 'solana' ? 'Solana…' : 'Pay with Solana USDC'}
+              {planBusy === 'solana' ? 'Solana…' : 'Pay plan with Solana USDC'}
             </button>
             {pendingStripeSession ? (
               <button
                 type="button"
                 className="btn-ghost h-7 px-2 text-[10px]"
-                disabled={checkoutBusy !== null}
+                disabled={planBusy === 'stripe'}
                 onClick={() => {
                   const gen = ++pollAbortRef.current;
-                  setCheckoutBusy('stripe');
+                  setPlanBusy('stripe');
                   void pollStripeUntilLicense(pendingStripeSession, gen);
                 }}
               >
@@ -1523,10 +1749,10 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
               <button
                 type="button"
                 className="btn-ghost h-7 px-2 text-[10px]"
-                disabled={checkoutBusy !== null}
+                disabled={planBusy === 'solana'}
                 onClick={() => {
                   const gen = ++pollAbortRef.current;
-                  setCheckoutBusy('solana');
+                  setPlanBusy('solana');
                   void pollSolanaUntilLicense(pendingSolanaId, gen, effectiveBillingEmail());
                 }}
               >
@@ -1552,7 +1778,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
                   className="btn-ghost h-7 px-2 text-[10px]"
                   onClick={() => {
                     void navigator.clipboard?.writeText(solanaPayUrl);
-                    setLicenseMsg('Solana pay URL copied.');
+                    setPlanMsg('Solana pay URL copied.');
                   }}
                 >
                   Copy URL
@@ -1561,6 +1787,194 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             </div>
           ) : null}
 
+          {planMsg ? <p className="font-mono text-[11px] text-sky-300">{planMsg}</p> : null}
+        </Section>
+
+        <Section
+          title="Cards & billing"
+          hint="Save a card (Stripe setup mode) or open the Customer Portal to manage subscription and payment methods."
+        >
+          <FieldLabel
+            label="Billing email"
+            hint="Required for portal and card setup. Prefers accountEmail || billingEmail."
+          >
+            <input
+              type="email"
+              value={billingEmail}
+              onChange={(e) => setBillingEmail(e.target.value)}
+              onBlur={() => rememberEmail(billingEmail)}
+              placeholder="you@example.com"
+              className="field font-mono text-[12px]"
+              autoComplete="email"
+            />
+          </FieldLabel>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-primary h-7 px-3 text-[10px]"
+              disabled={cardsBusy === 'setup'}
+              onClick={() => void startSaveCard()}
+            >
+              {cardsBusy === 'setup' ? 'Opening…' : 'Save a card'}
+            </button>
+            <button
+              type="button"
+              className="btn-primary h-7 px-3 text-[10px]"
+              disabled={cardsBusy === 'portal'}
+              onClick={() => void startCustomerPortal()}
+            >
+              {cardsBusy === 'portal' ? 'Opening…' : 'Manage subscription & cards'}
+            </button>
+          </div>
+          {cardsMsg ? (
+            <p className={`font-mono text-[11px] ${cardsMsg.includes('error') || cardsMsg.includes('Error') ? 'text-amber-400' : 'text-sky-300'}`}>
+              {cardsMsg}
+            </p>
+          ) : null}
+        </Section>
+
+        <Section
+          title="Credits / crypto"
+          hint="Prepaid app-credit packs via crypto (default USDC on Solana). Does not auto-renew."
+        >
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-ghost h-7 px-2 text-[10px]"
+              disabled={cryptoBusy === 'load'}
+              onClick={() => void loadCryptoCatalog()}
+            >
+              {cryptoBusy === 'load' ? 'Loading…' : 'Refresh packs'}
+            </button>
+          </div>
+
+          <FieldLabel label="Credit pack" hint="Loaded from GET /api/checkout/crypto (fallback: 5M / 20M / 50M).">
+            <select
+              value={creditPackId}
+              onChange={(e) => setCreditPackId(e.target.value as CreditPackId)}
+              className="field font-mono text-[12px]"
+            >
+              {creditPacks.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label} — ${p.usd}
+                </option>
+              ))}
+            </select>
+          </FieldLabel>
+          {creditPacks.find((p) => p.id === creditPackId)?.blurb ? (
+            <p className="font-mono text-[11px] text-muted">
+              {creditPacks.find((p) => p.id === creditPackId)?.blurb}
+            </p>
+          ) : null}
+
+          <FieldLabel label="Asset" hint="Default usdc_sol (Solana USDC).">
+            <select
+              value={cryptoAsset}
+              onChange={(e) => setCryptoAsset(e.target.value)}
+              className="field font-mono text-[12px]"
+            >
+              <option value="usdc_sol">USDC · Solana (usdc_sol)</option>
+              <option value="sol">SOL</option>
+              <option value="usdc_erc20">USDC · Ethereum</option>
+              <option value="usdt_erc20">USDT · Ethereum</option>
+              <option value="eth">ETH</option>
+              <option value="btc">BTC</option>
+              <option value="usdt_trc20">USDT · TRON</option>
+              <option value="trx">TRX</option>
+            </select>
+          </FieldLabel>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-primary h-7 px-3 text-[10px]"
+              disabled={cryptoBusy === 'create' || cryptoBusy === 'poll'}
+              onClick={() => void startCryptoCheckout()}
+            >
+              {cryptoBusy === 'create' ? 'Creating…' : cryptoBusy === 'poll' ? 'Waiting…' : 'Pay with crypto'}
+            </button>
+            {pendingCryptoId ? (
+              <button
+                type="button"
+                className="btn-ghost h-7 px-2 text-[10px]"
+                disabled={cryptoBusy === 'poll'}
+                onClick={() => {
+                  const gen = ++cryptoPollAbortRef.current;
+                  setCryptoBusy('poll');
+                  void pollCryptoUntilPaid(pendingCryptoId, gen, effectiveBillingEmail());
+                }}
+              >
+                Resume crypto poll
+              </button>
+            ) : null}
+          </div>
+
+          {cryptoPayUrl || cryptoPayUri ? (
+            <div className="rounded border border-border bg-background px-3 py-2 font-mono text-[11px] text-zinc-200">
+              <div className="text-[10px] uppercase text-muted">
+                Crypto pay{cryptoAmountLabel ? ` · ${cryptoAmountLabel}` : ''}
+                {pendingCryptoId ? ` · ${pendingCryptoId.slice(0, 10)}…` : ''}
+              </div>
+              {cryptoPayUrl ? (
+                <>
+                  <div className="mt-1 text-[10px] uppercase text-muted">Checkout page</div>
+                  <div className="mt-0.5 break-all text-sky-300">{cryptoPayUrl}</div>
+                </>
+              ) : null}
+              {cryptoPayUri ? (
+                <>
+                  <div className="mt-2 text-[10px] uppercase text-muted">Payment URI</div>
+                  <div className="mt-0.5 break-all text-sky-300">{cryptoPayUri}</div>
+                </>
+              ) : null}
+              <div className="mt-2 flex flex-wrap gap-2">
+                {cryptoPayUrl ? (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-ghost h-7 px-2 text-[10px]"
+                      onClick={() => void openBillingUrl(cryptoPayUrl)}
+                    >
+                      Open
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost h-7 px-2 text-[10px]"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(cryptoPayUrl);
+                        setCryptoMsg('Crypto checkout URL copied.');
+                      }}
+                    >
+                      Copy URL
+                    </button>
+                  </>
+                ) : null}
+                {cryptoPayUri ? (
+                  <button
+                    type="button"
+                    className="btn-ghost h-7 px-2 text-[10px]"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(cryptoPayUri);
+                      setCryptoMsg('Payment URI copied.');
+                    }}
+                  >
+                    Copy URI
+                  </button>
+                ) : null}
+              </div>
+              <p className="mt-2 font-mono text-[10px] text-muted">
+                Prepaid credits — no subscription auto-renew.
+              </p>
+            </div>
+          ) : null}
+
+          {cryptoMsg ? <p className="font-mono text-[11px] text-sky-300">{cryptoMsg}</p> : null}
+        </Section>
+
+        <Section
+          title="License"
+          hint="Paste an ABLIT-* key or redeem a one-time access code (device-bound)."
+        >
           <FieldLabel label="Redeem access code" hint="One-time code from waitlist / promo — bound to this device.">
             <input
               value={redeemCode}
@@ -1574,10 +1988,10 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
           <button
             type="button"
             className="btn-primary h-7 px-3 text-[10px]"
-            disabled={checkoutBusy !== null}
+            disabled={redeemBusy}
             onClick={() => void startRedeem()}
           >
-            {checkoutBusy === 'redeem' ? 'Redeeming…' : 'Redeem code'}
+            {redeemBusy ? 'Redeeming…' : 'Redeem code'}
           </button>
 
           <FieldLabel label="License key" hint="Paste your ABLIT-* license key from checkout or redeem. Or Sign up / Log in above — login returns licenseKey when bound.">
@@ -1619,7 +2033,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
           </div>
           {licenseMsg ? <p className="font-mono text-[11px] text-sky-300">{licenseMsg}</p> : null}
           <p className="font-mono text-[10px] text-muted">
-            In-app checkout calls abliterated.app APIs (Stripe + Solana + redeem). No payment secrets in this client — see docs/PRODUCT.md.
+            Billing calls abliterated.app APIs only — no Stripe secrets in this client. See docs/PRODUCT.md.
           </p>
         </Section>
 

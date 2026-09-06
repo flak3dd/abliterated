@@ -403,6 +403,321 @@ export async function redeemAccessCode(
   };
 }
 
+
+export type CreditPackId = 'credits_5m' | 'credits_20m' | 'credits_50m';
+
+export type CreditPack = {
+  id: CreditPackId;
+  label: string;
+  tokens: number;
+  usd: number;
+  blurb: string;
+};
+
+/** Static fallback when GET /api/checkout/crypto is unreachable. */
+export const FALLBACK_CREDIT_PACKS: readonly CreditPack[] = [
+  {
+    id: 'credits_5m',
+    label: '5M app credits',
+    tokens: 5_000_000,
+    usd: 25,
+    blurb: 'Top-up tokens for the inbuilt abliteration.ai API — one-time crypto purchase.',
+  },
+  {
+    id: 'credits_20m',
+    label: '20M app credits',
+    tokens: 20_000_000,
+    usd: 79,
+    blurb: 'Best value top-up for heavier agent runs. Crypto only; does not renew.',
+  },
+  {
+    id: 'credits_50m',
+    label: '50M app credits',
+    tokens: 50_000_000,
+    usd: 169,
+    blurb: 'Large credit pack for teams and long Jobs. Prepaid via crypto.',
+  },
+] as const;
+
+export type CryptoAssetMeta = {
+  id: string;
+  label: string;
+  network: string;
+  symbol: string;
+  live: boolean;
+};
+
+export type CryptoCheckoutMeta = {
+  facilitator: string;
+  product: string;
+  packs: CreditPack[];
+  assets: CryptoAssetMeta[];
+};
+
+export type CryptoInvoiceView = {
+  invoiceId: string;
+  facilitator?: string;
+  status: string;
+  product?: string;
+  creditPackId?: string;
+  creditPackLabel?: string;
+  creditsTokens?: number;
+  plan?: string | null;
+  planLabel?: string;
+  seats?: number | null;
+  asset?: string;
+  assetLabel?: string;
+  symbol?: string;
+  network?: string;
+  address?: string;
+  contract?: string | null;
+  amountUsd?: number | string;
+  amountCrypto?: string;
+  /** Wallet payment URI (solana:, bitcoin:, etc.). */
+  uri?: string;
+  /** Site checkout page for this invoice (open in browser). */
+  url: string;
+  expiresAt?: string;
+  licenseKey?: string | null;
+  licenseExpiresAt?: string | null;
+  creditsLedgerId?: string | null;
+  txid?: string | null;
+  licenseWindowDays?: number;
+  listUsd?: number;
+  note?: string;
+};
+
+export type CryptoConfirmResponse = {
+  invoiceId: string;
+  status: string;
+  product?: string;
+  creditPackId?: string;
+  creditsTokens?: number;
+  creditsLedgerId?: string;
+  licenseKey?: string;
+  licenseExpiresAt?: string;
+  txid?: string;
+  plan?: string;
+  seats?: number;
+  asset?: string;
+  redirectUrl?: string;
+  licenseWindowDays?: number;
+  note?: string;
+  error?: string;
+};
+
+function parseCreditPack(raw: unknown): CreditPack | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const p = raw as JsonRecord;
+  const id = typeof p.id === 'string' ? p.id : '';
+  if (id !== 'credits_5m' && id !== 'credits_20m' && id !== 'credits_50m') return null;
+  return {
+    id,
+    label: typeof p.label === 'string' ? p.label : id,
+    tokens: typeof p.tokens === 'number' ? p.tokens : 0,
+    usd: typeof p.usd === 'number' ? p.usd : 0,
+    blurb: typeof p.blurb === 'string' ? p.blurb : '',
+  };
+}
+
+function cryptoInvoicePageUrl(
+  settingsOrUrl: BillingSiteSettings | string | null | undefined,
+  invoiceId: string,
+): string {
+  return billingApiUrl(
+    settingsOrUrl,
+    `/checkout/crypto?invoiceId=${encodeURIComponent(invoiceId)}`,
+  );
+}
+
+function parseCryptoInvoiceView(
+  settingsOrUrl: BillingSiteSettings | string | null | undefined,
+  json: JsonRecord,
+  fallbackId?: string,
+): CryptoInvoiceView {
+  const invoiceId =
+    typeof json.invoiceId === 'string' && json.invoiceId
+      ? json.invoiceId
+      : String(fallbackId || '');
+  if (!invoiceId) {
+    throw new BillingApiError('Crypto response missing invoiceId', 502);
+  }
+  return {
+    invoiceId,
+    facilitator: typeof json.facilitator === 'string' ? json.facilitator : undefined,
+    status: String(json.status ?? ''),
+    product: typeof json.product === 'string' ? json.product : undefined,
+    creditPackId: typeof json.creditPackId === 'string' ? json.creditPackId : undefined,
+    creditPackLabel: typeof json.creditPackLabel === 'string' ? json.creditPackLabel : undefined,
+    creditsTokens: typeof json.creditsTokens === 'number' ? json.creditsTokens : undefined,
+    plan: typeof json.plan === 'string' ? json.plan : null,
+    planLabel: typeof json.planLabel === 'string' ? json.planLabel : undefined,
+    seats: typeof json.seats === 'number' ? json.seats : null,
+    asset: typeof json.asset === 'string' ? json.asset : undefined,
+    assetLabel: typeof json.assetLabel === 'string' ? json.assetLabel : undefined,
+    symbol: typeof json.symbol === 'string' ? json.symbol : undefined,
+    network: typeof json.network === 'string' ? json.network : undefined,
+    address: typeof json.address === 'string' ? json.address : undefined,
+    contract: typeof json.contract === 'string' ? json.contract : null,
+    amountUsd: typeof json.amountUsd === 'number' || typeof json.amountUsd === 'string' ? json.amountUsd : undefined,
+    amountCrypto: typeof json.amountCrypto === 'string' ? json.amountCrypto : undefined,
+    uri: typeof json.uri === 'string' ? json.uri : undefined,
+    url: cryptoInvoicePageUrl(settingsOrUrl, invoiceId),
+    expiresAt: typeof json.expiresAt === 'string' ? json.expiresAt : undefined,
+    licenseKey: typeof json.licenseKey === 'string' ? json.licenseKey : null,
+    licenseExpiresAt: typeof json.licenseExpiresAt === 'string' ? json.licenseExpiresAt : null,
+    creditsLedgerId: typeof json.creditsLedgerId === 'string' ? json.creditsLedgerId : null,
+    txid: typeof json.txid === 'string' ? json.txid : null,
+    licenseWindowDays: typeof json.licenseWindowDays === 'number' ? json.licenseWindowDays : undefined,
+    listUsd: typeof json.listUsd === 'number' ? json.listUsd : undefined,
+    note: typeof json.note === 'string' ? json.note : undefined,
+  };
+}
+
+export async function openCustomerPortal(
+  settingsOrUrl: BillingSiteSettings | string | null | undefined,
+  body: { email: string },
+): Promise<{ url: string; customerId?: string }> {
+  const url = billingApiUrl(settingsOrUrl, '/api/billing/portal');
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ email: body.email }),
+  });
+  const json = await readJson(res);
+  if (!res.ok) throw errorFromBody(json, 'Billing portal failed', res.status);
+  const portalUrl = typeof json.url === 'string' ? json.url : '';
+  if (!portalUrl) throw new BillingApiError('Portal response missing url', res.status);
+  return {
+    url: portalUrl,
+    customerId: typeof json.customerId === 'string' ? json.customerId : undefined,
+  };
+}
+
+export async function setupCard(
+  settingsOrUrl: BillingSiteSettings | string | null | undefined,
+  body: { email: string },
+): Promise<{ url: string; customerId?: string }> {
+  const url = billingApiUrl(settingsOrUrl, '/api/billing/setup-card');
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ email: body.email }),
+  });
+  const json = await readJson(res);
+  if (!res.ok) throw errorFromBody(json, 'Card setup failed', res.status);
+  const setupUrl = typeof json.url === 'string' ? json.url : '';
+  if (!setupUrl) throw new BillingApiError('Setup-card response missing url', res.status);
+  return {
+    url: setupUrl,
+    customerId: typeof json.customerId === 'string' ? json.customerId : undefined,
+  };
+}
+
+export async function listCryptoCheckout(
+  settingsOrUrl: BillingSiteSettings | string | null | undefined,
+): Promise<CryptoCheckoutMeta> {
+  const url = billingApiUrl(settingsOrUrl, '/api/checkout/crypto');
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  const json = await readJson(res);
+  if (!res.ok) throw errorFromBody(json, 'Crypto catalog failed', res.status);
+  const packsRaw = Array.isArray(json.packs) ? json.packs : [];
+  const packs = packsRaw.map(parseCreditPack).filter((p): p is CreditPack => p != null);
+  const assetsRaw = Array.isArray(json.assets) ? json.assets : [];
+  const assets: CryptoAssetMeta[] = assetsRaw
+    .map((a) => {
+      if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
+      const r = a as JsonRecord;
+      if (typeof r.id !== 'string' || !r.id) return null;
+      return {
+        id: r.id,
+        label: typeof r.label === 'string' ? r.label : r.id,
+        network: typeof r.network === 'string' ? r.network : '',
+        symbol: typeof r.symbol === 'string' ? r.symbol : '',
+        live: r.live === true,
+      };
+    })
+    .filter((a): a is CryptoAssetMeta => a != null);
+  return {
+    facilitator: typeof json.facilitator === 'string' ? json.facilitator : '',
+    product: typeof json.product === 'string' ? json.product : 'credits',
+    packs: packs.length ? packs : [...FALLBACK_CREDIT_PACKS],
+    assets,
+  };
+}
+
+export async function createCryptoInvoice(
+  settingsOrUrl: BillingSiteSettings | string | null | undefined,
+  body: { creditPackId: CreditPackId | string; email: string; asset?: string },
+): Promise<CryptoInvoiceView> {
+  const url = billingApiUrl(settingsOrUrl, '/api/checkout/crypto');
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      creditPackId: body.creditPackId,
+      email: body.email,
+      asset: body.asset || 'usdc_sol',
+    }),
+  });
+  const json = await readJson(res);
+  if (!res.ok) throw errorFromBody(json, 'Crypto invoice failed', res.status);
+  return parseCryptoInvoiceView(settingsOrUrl, json);
+}
+
+export async function getCryptoInvoice(
+  settingsOrUrl: BillingSiteSettings | string | null | undefined,
+  invoiceId: string,
+): Promise<CryptoInvoiceView> {
+  const id = String(invoiceId || '').trim();
+  if (!id) throw new BillingApiError('invoiceId required', 400);
+  const url = billingApiUrl(
+    settingsOrUrl,
+    `/api/checkout/crypto?invoiceId=${encodeURIComponent(id)}`,
+  );
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  const json = await readJson(res);
+  if (!res.ok) throw errorFromBody(json, 'Crypto invoice lookup failed', res.status);
+  return parseCryptoInvoiceView(settingsOrUrl, json, id);
+}
+
+export async function confirmCryptoInvoice(
+  settingsOrUrl: BillingSiteSettings | string | null | undefined,
+  body: { invoiceId: string; email?: string; txid?: string },
+): Promise<CryptoConfirmResponse> {
+  const url = billingApiUrl(settingsOrUrl, '/api/checkout/crypto/confirm');
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      invoiceId: body.invoiceId,
+      email: body.email,
+      txid: body.txid,
+    }),
+  });
+  const json = await readJson(res);
+  if (!res.ok) throw errorFromBody(json, 'Crypto confirm failed', res.status);
+  return {
+    invoiceId: typeof json.invoiceId === 'string' ? json.invoiceId : body.invoiceId,
+    status: String(json.status ?? ''),
+    product: typeof json.product === 'string' ? json.product : undefined,
+    creditPackId: typeof json.creditPackId === 'string' ? json.creditPackId : undefined,
+    creditsTokens: typeof json.creditsTokens === 'number' ? json.creditsTokens : undefined,
+    creditsLedgerId: typeof json.creditsLedgerId === 'string' ? json.creditsLedgerId : undefined,
+    licenseKey: typeof json.licenseKey === 'string' ? json.licenseKey : undefined,
+    licenseExpiresAt:
+      typeof json.licenseExpiresAt === 'string' ? json.licenseExpiresAt : undefined,
+    txid: typeof json.txid === 'string' ? json.txid : undefined,
+    plan: typeof json.plan === 'string' ? json.plan : undefined,
+    seats: typeof json.seats === 'number' ? json.seats : undefined,
+    asset: typeof json.asset === 'string' ? json.asset : undefined,
+    redirectUrl: typeof json.redirectUrl === 'string' ? json.redirectUrl : undefined,
+    licenseWindowDays:
+      typeof json.licenseWindowDays === 'number' ? json.licenseWindowDays : undefined,
+    note: typeof json.note === 'string' ? json.note : undefined,
+  };
+}
+
 const DEVICE_ID_KEY = 'ablit_device_id';
 
 /**

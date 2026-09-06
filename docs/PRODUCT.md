@@ -3,7 +3,7 @@
 **Brand:** Abliterated / abliteration.ai
 **Product:** Local agent IDE - chat + tools + Jobs + MCP for OpenAI-compatible endpoints.
 **Distribution:** Electron desktop (macOS dmg/dir; Windows NSIS + portable).
-**Monetization:** Freemium license keys; Sign up / Log in + in-app Stripe + Solana + redeem via abliterated.app APIs (secrets on site).
+**Monetization:** Freemium license keys; Sign up / Log in + in-app Stripe + Solana + portal/setup-card + crypto credits + redeem via abliterated.app APIs (secrets on site).
 
 ---
 
@@ -84,17 +84,17 @@ Settings → **Account** (above License / Plan):
 
 ## In-app checkout
 
-Checkout is **in-app** (Settings → License / Plan): card (Stripe Checkout session), Solana USDC, and access-code redeem.
+Settings billing is split into five cards: **Account**, **Plan & upgrades**, **Cards & billing**, **Credits / crypto**, and **License**. Plan upgrades use Stripe Checkout or Solana USDC (poll until license); Cards opens Stripe setup-mode / Customer Portal; Credits buys prepaid packs via crypto (`usdc_sol` default, no auto-renew); License pastes keys or redeems codes. Effective email is `accountEmail || billingEmail`.
 
-- The desktop IDE calls public HTTPS APIs on **abliterated.app** (`POST /api/checkout`, `GET /api/checkout/session`, `POST|GET /api/checkout/solana`, `POST /api/checkout/solana/confirm`, `POST /api/redeem`, plus `POST /api/signup` / `POST /api/login`).
+- The desktop IDE calls public HTTPS APIs on **abliterated.app** (`POST /api/checkout`, `GET /api/checkout/session`, `POST|GET /api/checkout/solana`, `POST /api/checkout/solana/confirm`, `POST /api/billing/portal`, `POST /api/billing/setup-card`, `GET|POST /api/checkout/crypto`, `POST /api/checkout/crypto/confirm`, `POST /api/redeem`, plus `POST /api/signup` / `POST /api/login`).
 - Stripe secrets, webhooks, and license minting stay on the **site** — never embed payment provider secrets in this client repo.
-- After payment, the IDE polls until a license key appears, then activates via the existing `licenseKey` / `persistLicense` path. Optional deep link: `abliterated://license?key=…`.
+- After payment, the IDE polls until a license key (or credited pack) appears, then activates via the existing `licenseKey` / `persistLicense` path. Optional deep link: `abliterated://license?key=…`.
 
 ## Roadmap to payments
 
 1. ~~Checkout links for Pro and Team~~ — in-app checkout shipped (card + Solana + redeem)
 2. Webhook issues signed license keys (site)
-3. Customer portal
+3. ~~Customer portal~~ — Settings → Cards & billing
 4. Optional online expiry check
 5. Notarization, auto-update, Windows signing
 
