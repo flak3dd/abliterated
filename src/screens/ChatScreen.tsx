@@ -71,6 +71,7 @@ import {
   buildBuildModeImplementNudge,
   liftTodoListToContent,
   looksLikeBuildOutput,
+  shouldSkipSelfDeepen,
 } from '../lib/agentHelpers';
 import {
   PLAN_CODE_OMITTED_NOTE,
@@ -98,6 +99,15 @@ import { PLAN_MODE_TOOLS } from '../types';
 
 /** Render at most this many newest messages; older ones load on demand. */
 const MESSAGE_WINDOW = 80;
+
+/** Strip Qwen/R1 think wrappers before theater / build / deepen heuristics. */
+function stripThinkForDetect(text: string): string {
+  const withoutBlocks = (text || '')
+    .replace(/<think>[\s\S]*?<\/think>/gi, ' ')
+    .replace(/<\/?think>/gi, ' ');
+  return stripThinkingWrappers(withoutBlocks);
+}
+
 
 export interface ChatScreenHandle {
   stop: () => void;
@@ -1217,7 +1227,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           }
           if (!toolCalls.length) {
             const content = assistant.content || '';
-            const fakeParsed = parseFakeToolCalls(content);
+            const detectContent = stripThinkForDetect(content);
+            const fakeParsed = parseFakeToolCalls(detectContent);
             if (fakeParsed.length) {
               toolCalls = fakeParsed.map((f) => ({
                 id: uid('tool'),
@@ -1228,7 +1239,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               assistant.toolCalls = toolCalls;
               flushStreamPersist({ ...assistant });
               // Fall through into existing tool execution path.
-            } else if (looksLikeFakeToolTheater(content) && !fakeToolRetryUsed) {
+            } else if (looksLikeFakeToolTheater(detectContent) && !fakeToolRetryUsed) {
+              // One strike only — never loop "emit API tool_calls" nudges across deepen.
               fakeToolRetryUsed = true;
               setPhase(
                 'self_deepen',
@@ -1245,6 +1257,11 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               };
               current = persist(nudge);
               continue;
+            } else if (looksLikeFakeToolTheater(detectContent) && fakeToolRetryUsed) {
+              // Already nudged once; stop rather than deepen into another theater loop.
+              setPhase('finishing', {}, turn);
+              stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
+              break;
             } else {
               // Empty content after coalesce: no API recovery. Setting off → reasoning panel only.
               if (isMissingContentAnswer(assistant.content)) {
@@ -1300,8 +1317,13 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                 stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
                 break;
               }
-              if (grokBuildProcess && !looksLikeBuildOutput(content) && !isAnswerCompleteMarker(content)) {
-                const todos = parseTodoItems(content);
+              if (
+                grokBuildProcess &&
+                !shouldSkipSelfDeepen(detectContent, { status: assistant.status }) &&
+                !looksLikeBuildOutput(detectContent) &&
+                !isAnswerCompleteMarker(content)
+              ) {
+                const todos = parseTodoItems(detectContent);
                 if (todos.length && !buildImplementNudgeUsed) {
                   buildImplementNudgeUsed = true;
                   setPhase(
@@ -1343,8 +1365,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               if (
                 grokBuildProcess &&
                 !buildVerifyNudgeUsed &&
-                looksLikeBuildOutput(content) &&
-                !looksLikeVerifyEvidence(content, toolsUsed) &&
+                !shouldSkipSelfDeepen(detectContent, { status: assistant.status }) &&
+                looksLikeBuildOutput(detectContent) &&
+                !looksLikeVerifyEvidence(detectContent, toolsUsed) &&
                 !isAnswerCompleteMarker(content)
               ) {
                 buildVerifyNudgeUsed = true;
@@ -1372,7 +1395,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               // Already shipped a valid Done/Continue footer — treat as complete; skip an extra deepen turn.
               const footerDone =
                 liveDeepen.completionFooterEnabled !== false && hasValidCompletionFooter(content);
-              if (deepenOn && content.trim() && !footerDone) {
+              // Junk / error / truncated / network-error turns never deepen.
+              const junkTurn = shouldSkipSelfDeepen(detectContent, { status: assistant.status });
+              if (deepenOn && content.trim() && !footerDone && !junkTurn && !isAnswerCompleteMarker(content)) {
                 deepensUsed += 1;
                 setPhase(
                   'self_deepen',

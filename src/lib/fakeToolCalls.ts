@@ -37,6 +37,7 @@ const MAX_FAKE_TOOLS = 6;
 const FENCE_OPEN = String.fromCharCode(96,96,96);
 const FENCE_RE = new RegExp(FENCE_OPEN + '([a-zA-Z0-9_-]*)\\s*\\n?([\\s\\S]*?)' + FENCE_OPEN, 'g');
 const FENCE_LANGS = new Set(['', 'bash', 'shell', 'sh', 'zsh', 'console', 'text']);
+const JSON_FENCE_LANGS = new Set(['json', 'javascript', 'js']);
 
 function unquote(s: string): string {
   const t = s.trim();
@@ -182,9 +183,145 @@ function collectFromText(text: string, into: ParsedFakeTool[], seen: Set<string>
   }
 }
 
+
+function asArgsObject(raw: unknown): Record<string, unknown> {
+  if (!raw) return {};
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return { raw };
+    }
+    return { raw };
+  }
+  if (typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  return {};
+}
+
+function toolFromJsonEntry(entry: unknown): ParsedFakeTool | null {
+  if (!entry || typeof entry !== 'object') return null;
+  const o = entry as Record<string, unknown>;
+  const fn = (o.function && typeof o.function === 'object' ? (o.function as Record<string, unknown>) : null);
+  const nameRaw =
+    (typeof o.name === 'string' && o.name) ||
+    (fn && typeof fn.name === 'string' && fn.name) ||
+    (typeof o.tool === 'string' && o.tool) ||
+    '';
+  const name = nameRaw.trim().toLowerCase();
+  if (!name || NEVER_PARSE.has(name) || !SAFE_ALLOWLIST.has(name)) return null;
+  const argsRaw = o.arguments ?? o.args ?? o.parameters ?? (fn ? fn.arguments ?? fn.parameters : undefined);
+  const arguments_ = asArgsObject(argsRaw);
+  // Normalize common arg shapes for allowlisted tools.
+  if (name === 'list_dir' && !arguments_.path) arguments_.path = '.';
+  if (name === 'git_status') return { name, arguments: {} };
+  if ((name === 'read_file' || name === 'file_outline') && typeof arguments_.path !== 'string') return null;
+  if (name === 'glob' && typeof arguments_.pattern !== 'string') return null;
+  if (name === 'grep' && typeof arguments_.pattern !== 'string') return null;
+  if ((name === 'semantic_search' || name === 'web_search') && typeof arguments_.query !== 'string') {
+    const q = typeof arguments_.pattern === 'string' ? arguments_.pattern : typeof arguments_.q === 'string' ? arguments_.q : '';
+    if (!q) return null;
+    return { name, arguments: { query: q } };
+  }
+  if (name === 'web_fetch' && typeof arguments_.url !== 'string') return null;
+  return { name, arguments: arguments_ };
+}
+
+function extractJsonFenceBodies(content: string): string[] {
+  const bodies: string[] = [];
+  const re = new RegExp(FENCE_RE.source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const lang = (m[1] || '').toLowerCase();
+    if (!JSON_FENCE_LANGS.has(lang)) continue;
+    bodies.push(m[2] || '');
+  }
+  return bodies;
+}
+
+/** True when content has a markdown JSON fence that looks like OpenAI-style tool_calls. */
+export function looksLikeJsonToolCallFence(content: string): boolean {
+  if (!content || !content.trim()) return false;
+  for (const body of extractJsonFenceBodies(content)) {
+    if (/"tool_calls"\s*:/i.test(body)) return true;
+    if (/"name"\s*:\s*"[a-z_][a-z0-9_]*"/i.test(body) && /"arguments"\s*:/i.test(body)) return true;
+  }
+  // Bare JSON blob (no fence) that is mostly a tool_calls payload.
+  const trimmed = content.trim();
+  if (
+    (trimmed.startsWith('{') || trimmed.startsWith('[')) &&
+    /"tool_calls"\s*:/i.test(trimmed) &&
+    trimmed.length < 8000
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function collectFromJsonBlob(blob: string, into: ParsedFakeTool[], seen: Set<string>): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(blob);
+  } catch {
+    // Try to extract a {...} / [...] slice if prose wraps JSON.
+    const startObj = blob.indexOf('{');
+    const startArr = blob.indexOf('[');
+    let start = -1;
+    if (startObj < 0) start = startArr;
+    else if (startArr < 0) start = startObj;
+    else start = Math.min(startObj, startArr);
+    if (start < 0) return;
+    const slice = blob.slice(start);
+    try {
+      parsed = JSON.parse(slice);
+    } catch {
+      return;
+    }
+  }
+  const entries: unknown[] = [];
+  if (Array.isArray(parsed)) {
+    entries.push(...parsed);
+  } else if (parsed && typeof parsed === 'object') {
+    const o = parsed as Record<string, unknown>;
+    if (Array.isArray(o.tool_calls)) entries.push(...o.tool_calls);
+    else if (Array.isArray(o.tools)) entries.push(...o.tools);
+    else if (typeof o.name === 'string') entries.push(o);
+  }
+  for (const entry of entries) {
+    if (into.length >= MAX_FAKE_TOOLS) return;
+    const tool = toolFromJsonEntry(entry);
+    if (!tool) continue;
+    const k = keyOf(tool);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    into.push(tool);
+  }
+}
+
+/** Parse read-only-ish tools from markdown-fenced (or bare) JSON tool_calls payloads. */
+export function parseJsonToolCallFence(content: string): ParsedFakeTool[] {
+  if (!content || !content.trim()) return [];
+  const out: ParsedFakeTool[] = [];
+  const seen = new Set<string>();
+  for (const body of extractJsonFenceBodies(content)) {
+    collectFromJsonBlob(body, out, seen);
+    if (out.length >= MAX_FAKE_TOOLS) break;
+  }
+  if (out.length < MAX_FAKE_TOOLS && looksLikeJsonToolCallFence(content)) {
+    const trimmed = content.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      collectFromJsonBlob(trimmed, out, seen);
+    }
+  }
+  return out.slice(0, MAX_FAKE_TOOLS);
+}
+
 /** True if content looks like tool theater in markdown (bash/shell fences or bare tool lines). */
 export function looksLikeFakeToolTheater(content: string): boolean {
   if (!content || !content.trim()) return false;
+  if (looksLikeJsonToolCallFence(content)) return true;
   const fences = extractFenceBodies(content);
   const promptRe = new RegExp('^\\' + String.fromCharCode(36) + '\\s+');
   for (const body of fences) {
@@ -216,6 +353,15 @@ export function parseFakeToolCalls(content: string): ParsedFakeTool[] {
   const out: ParsedFakeTool[] = [];
   const seen = new Set<string>();
 
+  // Prefer JSON-fenced tool_calls (Qwen/theater) — parse into real allowlisted calls.
+  for (const t of parseJsonToolCallFence(content)) {
+    const k = keyOf(t);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+    if (out.length >= MAX_FAKE_TOOLS) return out;
+  }
+
   for (const body of extractFenceBodies(content)) {
     collectFromText(body, out, seen);
     if (out.length >= MAX_FAKE_TOOLS) break;
@@ -232,8 +378,8 @@ export function parseFakeToolCalls(content: string): ParsedFakeTool[] {
 /** Short system/user nudge for retry when theater is present but nothing safe to parse. */
 export function buildFakeToolNudge(): string {
   return (
-    'Tool recovery: Your last reply put IDE tool names inside markdown fences or bare lines. ' +
-    'Those do not execute. Emit real OpenAI function tool_calls via the API tools channel. ' +
-    'Use the API tools channel instead.'
+    'Tool recovery (one retry): Your last reply showed tools as markdown/JSON theater. ' +
+    'Those do not execute. Call the real function tools now (API tools channel), or answer without fake tool JSON. ' +
+    'Do not paste ```json tool_calls again.'
   );
 }

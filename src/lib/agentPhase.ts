@@ -139,7 +139,9 @@ export const NO_CONTENT_REASONING_NOTE = '(No content tokens — see reasoning)'
 export function stripThinkingWrappers(reasoning: string): string {
   let text = (reasoning || '').trim();
   if (!text) return '';
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, ' ');
   text = text.replace(/^<think>\s*/i, '').replace(/\s*<\/think>\s*$/i, '');
+  text = text.replace(/<\/?think>/gi, ' ');
   text = text.replace(/^\[thinking\]\s*/i, '').replace(/\s*\[\/thinking\]\s*$/i, '');
   text = text.replace(/^Thinking:\s*/i, '');
   return text.trim();

@@ -141,19 +141,19 @@ function addendum(opts: {
   const lines = [`## Model profile — ${opts.model}`, `Family: ${opts.family}. Context: ${ctx}.`];
   if (opts.tier === 'none') {
     lines.push(
-      'Native function tools are OFF for this checkpoint. Do not emit tool-call JSON or fake tool results.',
+      'Native function tools are OFF for this checkpoint. Do not emit tool-call JSON, ```json tool_calls fences, or fake tool results.',
       'Write every file into the connected working directory as ```diff or a // relative/path fence in CONTENT. Thought is prose only.',
       'If you need a file you do not have, name the path instead of inventing its contents. Chat-only source is a failed build.',
     );
   } else if (opts.tier === 'core') {
     lines.push(
       'Compact tool set only: ' + CORE_AGENT_TOOLS.join(', ') + '.',
-      'One tool at a time. Keep reasoning to a few lines. No skill-catalog essays.',
+      'One tool at a time via the API tools channel. Never paste tool JSON in markdown fences.',
       'CODE ONLY IN CONTENT via write_file or ```diff / // path — files must land in the working directory. Never in thought.',
     );
   } else {
     lines.push(
-      'Full native tools are available. Call write_file or emit path-headed diffs so files land in the working directory.',
+      'Full native tools are available. Call write_file or emit path-headed diffs via the API tools channel — never paste tool JSON in markdown.',
       'CODE ONLY IN CONTENT via write_file or ```diff / // path — files must land in the working directory. Never in thought.',
     );
   }
@@ -178,12 +178,18 @@ export function buildModelAgentProfile(opts: ModelAgentProfileInput): ModelAgent
       ? false
       : likelySmallContext(model, opts.contextLength);
   const thinking = klass.family === 'thinking';
-  const tier = resolveTier(opts, klass.toolsLikely, small);
-  const toolNames = namesForTier(tier, !!opts.planMode, opts.enabledTools);
+  let tier = resolveTier(opts, klass.toolsLikely, small);
   const eligibleLarge =
     opts.provider === 'featherless' && isLargeQwenAgentModel(model);
+  // Featherless Qwen3 (non-large): keep a short core tool list to cut theater/death spirals.
+  const featherlessQwen =
+    opts.provider === 'featherless' && /qwen/i.test(model);
+  if (featherlessQwen && !eligibleLarge && tier === 'full') {
+    tier = 'core';
+  }
+  const toolNames = namesForTier(tier, !!opts.planMode, opts.enabledTools);
   // compactPrompt NEVER solely because featherless; eligible large Qwen keeps full prompt/tools/skills.
-  const compactPrompt = eligibleLarge ? false : small;
+  const compactPrompt = eligibleLarge ? false : small || (featherlessQwen && !eligibleLarge);
   const useThoughtLock = (opts.reasoning || 'off') !== 'off' && (thinking || !small);
   const label =
     tier === 'none' ? `${klass.chip} · no-tools` : tier === 'core' ? `${klass.chip} · core-tools` : `${klass.chip} · tools`;

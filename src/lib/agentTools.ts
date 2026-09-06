@@ -32,6 +32,51 @@ export function toolArgString(args: Record<string, unknown>, keys: string[]): st
   return '';
 }
 
+const GREP_FLAG_RE = /^-[a-zA-Z]+$/;
+
+/**
+ * Models often swap grep argv: pattern="-n" path="TODO". Swap or reject clearly.
+ * Also strip an absolute workspace-root prefix from path when present.
+ */
+export function normalizeGrepArgs(
+  pattern: string,
+  pathArg: string,
+  workspaceRoot = '',
+): { pattern: string; path: string; error?: string } {
+  let pat = (pattern || '').trim();
+  let pth = (pathArg || '').trim();
+  const root = (workspaceRoot || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+
+  if (root && pth) {
+    const norm = pth.replace(/\\/g, '/');
+    const rootCmp = root.toLowerCase();
+    const pathCmp = norm.toLowerCase();
+    if (pathCmp === rootCmp) pth = '.';
+    else if (pathCmp.startsWith(rootCmp + '/')) pth = norm.slice(root.length + 1) || '.';
+  }
+
+  if (pth.includes('..')) {
+    return {
+      pattern: pat,
+      path: pth,
+      error: 'grep path must stay inside the workspace (no ".." segments). Use a relative path under the working directory.',
+    };
+  }
+
+  if (GREP_FLAG_RE.test(pat) && pth && !GREP_FLAG_RE.test(pth)) {
+    // pattern looks like a flag; path looks like the real query — swap.
+    return { pattern: pth, path: '.' };
+  }
+  if (GREP_FLAG_RE.test(pat) && (!pth || GREP_FLAG_RE.test(pth))) {
+    return {
+      pattern: pat,
+      path: pth,
+      error: `grep pattern looks like a flag (${pat}). Pass the search string as pattern and an optional relative path.`,
+    };
+  }
+  return { pattern: pat, path: pth };
+}
+
 export function asStringList(v: unknown): string[] | undefined {
   if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string');
   if (typeof v === 'string' && v.trim()) return [v];
@@ -196,11 +241,16 @@ export async function executeAgentTool(
   }
 
   if (name === 'grep') {
-    const pattern = toolArgString(tool.arguments, ['pattern']);
+    const rawPattern = toolArgString(tool.arguments, ['pattern']);
+    if (!rawPattern) return err(tool, 'missing pattern');
+    const rawPath = toolArgString(tool.arguments, ['path']);
+    const normalized = normalizeGrepArgs(rawPattern, rawPath, opts.workspaceRoot);
+    if (normalized.error) return err(tool, normalized.error);
+    const pattern = normalized.pattern;
     if (!pattern) return err(tool, 'missing pattern');
     if (!bridge.connected) return disconnected(tool, pattern, autoAcceptEdits, mode);
     try {
-      const pathArg = toolArgString(tool.arguments, ['path']);
+      const pathArg = normalized.path;
       const globArg = toolArgString(tool.arguments, ['glob']);
       return ok(
         tool,
