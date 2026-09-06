@@ -72,6 +72,7 @@ import {
   liftTodoListToContent,
   looksLikeBuildOutput,
 } from '../lib/agentHelpers';
+import { looksLikeProvenImprovement, buildProveImproveNudge, looksReadOnlyOrControlPrompt } from '../lib/proveImprove';
 import {
   PLAN_CODE_OMITTED_NOTE,
   liftReasoningWork,
@@ -997,6 +998,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     let fakeToolRetryUsed = false;
     let buildTodoNudgeUsed = false;
     let buildImplementNudgeUsed = false;
+    let proveImproveNudgeUsed = false;
     let buildVerifyNudgeUsed = false;
     let stopReason: AgentStopReason = 'no_tools';
     let turnCap = clampMaxAgentTurns(settingsRef.current.maxAgentTurns);
@@ -1239,7 +1241,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                 stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
                 break;
               }
-              if (grokBuildProcess && !looksLikeBuildOutput(content) && !isAnswerCompleteMarker(content)) {
+              if (grokBuildProcess && !looksLikeBuildOutput(content, toolsUsed) && !isAnswerCompleteMarker(content)) {
                 const todos = parseTodoItems(content);
                 if (todos.length && !buildImplementNudgeUsed) {
                   buildImplementNudgeUsed = true;
@@ -1282,7 +1284,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               if (
                 grokBuildProcess &&
                 !buildVerifyNudgeUsed &&
-                looksLikeBuildOutput(content) &&
+                looksLikeBuildOutput(content, toolsUsed) &&
                 !looksLikeVerifyEvidence(content, toolsUsed) &&
                 !isAnswerCompleteMarker(content)
               ) {
@@ -1334,6 +1336,31 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               }
               // Would stop: if mid-run notes arrived, integrate and keep going.
               if (drainMidRunMessages()) {
+                continue;
+              }
+              if (
+                !planMode &&
+                !proveImproveNudgeUsed &&
+                lastUser?.content &&
+                !looksReadOnlyOrControlPrompt(lastUser.content) &&
+                !looksLikeProvenImprovement(content, toolsUsed) &&
+                !isAnswerCompleteMarker(content)
+              ) {
+                proveImproveNudgeUsed = true;
+                setPhase(
+                  'self_deepen',
+                  { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+                  turn,
+                );
+                const nudge: Message = {
+                  id: uid('msg'),
+                  threadId: thread.id,
+                  role: 'user',
+                  content: buildProveImproveNudge(),
+                  createdAt: Date.now(),
+                  status: 'complete',
+                };
+                current = persist(nudge);
                 continue;
               }
               // Content is non-empty here (coalesce / empty handling above).

@@ -263,13 +263,43 @@ export function liftTodoListToContent(content: string, reasoning: string): strin
   return body ? `${block}\n\n${body}` : block;
 }
 
-/** True when content contains applyable build artifacts (diffs, path fences, code fences). */
-export function looksLikeBuildOutput(text: string): boolean {
+/** Tool names that count as successful build file writes. */
+export const BUILD_FILE_WRITE_TOOLS = [
+  'write_file',
+  'apply_patch',
+  'search_replace',
+  'edit_file',
+  'str_replace',
+] as const;
+
+export function hasBuildFileWrites(toolsUsed?: string[]): boolean {
+  if (!toolsUsed || !toolsUsed.length) return false;
+  const set = new Set(BUILD_FILE_WRITE_TOOLS.map((t) => t.toLowerCase()));
+  return toolsUsed.some((t) => set.has(String(t || '').toLowerCase()));
+}
+
+/** True when content contains applyable build artifacts (diffs, path fences, code fences), or a write/edit tool already ran. */
+export function looksLikeBuildOutput(text: string, toolsUsed?: string[]): boolean {
+  if (hasBuildFileWrites(toolsUsed)) return true;
   const t = text || '';
   if (/```(?:diff|patch|bash|ts|tsx|js|jsx|mjs|cjs|py|go|rs|json|css|html|vue|svelte)/i.test(t)) return true;
   if (/^diff --git |^--- (a\/|\/dev\/null)|\+\+\+ b\//m.test(t)) return true;
-  if (/^\/\/ [\w./+-]+\s*$/m.test(t) && t.length > 50) return true;
+  if (/^\/\/ [\w.\/+-]+\s*$/m.test(t) && t.length > 50) return true;
   return false;
+}
+
+/** Short single-area edit/fix — not a full scaffold/build. */
+export function looksTrivialFileEdit(userText: string): boolean {
+  const t = (userText || '').trim();
+  if (!t || t.length >= 120) return false;
+  const lower = t.toLowerCase();
+  if (/\b(scaffold|bootstrap|multi[- ]?file|whole\s+app|entire\s+(app|project)|project\s+skeleton|file\s+structure|folder\s+structure)\b/.test(lower)) {
+    return false;
+  }
+  if (/\b(build\s+(a|an|the|me)\s+(app|project|website|site|system)|create\s+(a|an|the)\s+(app|project))\b/.test(lower)) {
+    return false;
+  }
+  return /\b(edit|fix|wire|change|update|patch|typo|rename)\b/.test(lower);
 }
 
 export function looksBuildIntent(userText: string): boolean {
@@ -329,6 +359,7 @@ export function shouldApplyBuildProcess(
   if (!t) return false;
   if (looksBuildIntent(t) || looksLargeJob(t)) return true;
   if (!opts.buildMode) return false;
+  if (looksTrivialFileEdit(t)) return false;
   if (looksMultiStep(t)) return true;
   return t.length >= 40;
 }
@@ -349,9 +380,9 @@ export function buildBuildModeTodoNudge(): string {
 
 export function buildBuildModeImplementNudge(): string {
   return (
-    'Build process: you wrote a ToDo list but did not emit any file diffs or path-headed fences. ' +
+    'Build process: you wrote a ToDo list but did not emit a real ```diff / // path fence OR call write_file. ' +
     'That is not a build. Now: (1) if new structure is required, create the skeleton first; ' +
-    '(2) implement the next unchecked ToDo with a real ```diff or // relative/path file in content; ' +
+    '(2) implement the next unchecked ToDo with a real ```diff or // relative/path fence in content, OR call write_file; ' +
     '(3) call `todo` with merge=true to tick finished items. Do not reply with another list only.'
   );
 }

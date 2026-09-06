@@ -103,16 +103,33 @@ function shouldApplyBuildProcess(userText, opts = {}) {
   if (!t) return false;
   if (looksBuildIntent(t) || looksLargeJob(t)) return true;
   if (!opts.buildMode) return false;
+  if (looksTrivialFileEdit(t)) return false;
   if (looksMultiStep(t)) return true;
   return t.length >= 40;
 }
 
-function looksLikeBuildOutput(text) {
+function hasBuildFileWrites(toolsUsed) {
+  if (!toolsUsed || !toolsUsed.length) return false;
+  const set = new Set(['write_file', 'apply_patch', 'search_replace', 'edit_file', 'str_replace']);
+  return toolsUsed.some((t) => set.has(String(t || '').toLowerCase()));
+}
+
+function looksLikeBuildOutput(text, toolsUsed) {
+  if (hasBuildFileWrites(toolsUsed)) return true;
   const t = text || '';
   if (/```(?:diff|patch|bash|ts|tsx|js|jsx|mjs|cjs|py|go|rs|json|css|html|vue|svelte)/i.test(t)) return true;
   if (/^diff --git |^--- (a\/|\/dev\/null)|\+\+\+ b\//m.test(t)) return true;
-  if (/^\/\/ [\w./+-]+\s*$/m.test(t) && t.length > 50) return true;
+  if (/^\/\/ [\w.\/+-]+\s*$/m.test(t) && t.length > 50) return true;
   return false;
+}
+
+function looksTrivialFileEdit(userText) {
+  const t = (userText || '').trim();
+  if (!t || t.length >= 120) return false;
+  const lower = t.toLowerCase();
+  if (/\b(scaffold|bootstrap|multi[- ]?file|whole\s+app|entire\s+(app|project)|project\s+skeleton|file\s+structure|folder\s+structure)\b/.test(lower)) return false;
+  if (/\b(build\s+(a|an|the|me)\s+(app|project|website|site|system)|create\s+(a|an|the)\s+(app|project))\b/.test(lower)) return false;
+  return /\b(edit|fix|wire|change|update|patch|typo|rename)\b/.test(lower);
 }
 
 assert.equal(looksBuildIntent('hi'), false);
@@ -152,5 +169,12 @@ assert.ok(lifted.includes('Scaffold src/app dirs'));
 const items = parseTodoItems(lifted);
 assert.ok(items.length >= 2);
 assert.equal(items[0].done, false);
+
+assert.equal(looksLikeBuildOutput('ToDo:\n- [ ] a\n- [ ] b', ['write_file']), true);
+assert.equal(looksLikeBuildOutput('ToDo:\n- [ ] a\n- [ ] b', ['read_file']), false);
+assert.equal(looksTrivialFileEdit('fix the typo in main.ts'), true);
+assert.equal(looksTrivialFileEdit('scaffold the whole app project skeleton now'), false);
+assert.equal(shouldApplyBuildProcess('fix the typo in main.ts', { buildMode: true }), false);
+assert.ok(shouldApplyBuildProcess('Build a file structure for the new feature module', { buildMode: true }));
 
 console.log('build protocol ok');
