@@ -1,5 +1,6 @@
 import type { ToolType } from '../types';
 import { PLAN_MODE_TOOLS } from '../types';
+import { withCompletenessChecklist } from './deepenComplete';
 
 /** Pure helpers for agent loop settings, telemetry, pins, and prefetch tokens. */
 
@@ -54,10 +55,10 @@ export function stripAnswerCompleteMarker(content: string): string {
 }
 
 export function buildSelfDeepenNudge(): string {
-  return (
+  return withCompletenessChecklist(
     '↻ Self-review: Re-read your last answer. Expand thin/missing parts with concrete detail ' +
-    '(and tools if needed). If the answer already fully solves the user request, reply with ONLY ' +
-    'the token [ANSWER_COMPLETE].'
+      '(and tools if needed). If the answer already fully solves the user request, reply with ONLY ' +
+      'the token [ANSWER_COMPLETE].',
   );
 }
 

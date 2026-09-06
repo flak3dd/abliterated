@@ -337,7 +337,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             label="Self-deepen answers"
             checked={settings.selfDeepenEnabled !== false}
             onChange={(v) => patch({ selfDeepenEnabled: v })}
-            help="After a text-only answer, nudge the model to expand thin spots. Stops early on [ANSWER_COMPLETE]."
+            help="After a text-only answer, nudge the model to expand thin spots and run a completeness checklist (Abliterated-only — does not call Grok). Stops early on [ANSWER_COMPLETE]."
           />
 
           <FieldLabel label="Self-deepen passes (0–5)" hint="0 turns deepen off even if the toggle is on.">

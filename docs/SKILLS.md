@@ -38,3 +38,4 @@ After reasoning, if a clear reusable build-quality pattern is not covered, call 
 
 - skills/grok-cli-build — GROK-CLI-BUILD-PROCESS.md discipline
 - skills/code-change-checklist — multi-file change checklist
+- skills/deepen-complete-response — fuller functional answers without calling censored CLIs (see [PARALLEL-GROK-CLI.md](./PARALLEL-GROK-CLI.md))

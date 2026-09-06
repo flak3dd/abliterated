@@ -86,10 +86,19 @@ function stripAnswerCompleteMarker(content) {
 }
 
 function buildSelfDeepenNudge() {
-  return (
+  const base =
     '↻ Self-review: Re-read your last answer. Expand thin/missing parts with concrete detail ' +
     '(and tools if needed). If the answer already fully solves the user request, reply with ONLY ' +
-    'the token [ANSWER_COMPLETE].'
+    'the token [ANSWER_COMPLETE].';
+  return (
+    base +
+    '\n\n## Deepen for completeness (Abliterated-only)\n' +
+    'Expand thin or missing parts so the response is functionally complete:\n' +
+    '- Edge cases, failure modes, and acceptance checks\n' +
+    '- Tests / verify commands when code changed\n' +
+    '- Concrete impl details the user still needs\n' +
+    'Stay on Abliterated models and bridge tools. Do not call external censored CLIs for this deepen.\n' +
+    'If the answer already fully solves the request, reply with ONLY [ANSWER_COMPLETE].'
   );
 }
 
@@ -468,6 +477,7 @@ await test('buildSelfDeepenNudge contains guidance token', () => {
   const nudge = buildSelfDeepenNudge();
   assert.ok(nudge.includes('[ANSWER_COMPLETE]'));
   assert.ok(nudge.includes('Self-review'));
+  assert.ok(nudge.includes('Abliterated-only'));
 });
 
 // 3. Multi-Step & Large Job Heuristics

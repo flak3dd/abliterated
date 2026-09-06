@@ -4,6 +4,7 @@ import { formatSkillsCatalogPrompt, toCatalogEntries } from "./skills";
 import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from "./projectMemory";
 import { bridge } from "./bridgeClient";
 import { applyGrokEdits, parseGrokEdits } from "./grokLayer";
+import { buildJobCompletenessSystemBlock } from "./deepenComplete";
 import {
   buildLargeJobNudge,
   buildReasoningThenBuildNudge,
@@ -200,6 +201,9 @@ async function runJob(initial: Job, settings: ClientSettings) {
     }
   }
 
+  const deepenCompletenessBlock = buildJobCompletenessSystemBlock({
+    selfDeepenEnabled: settings.selfDeepenEnabled !== false,
+  });
   const systemParts = [
     settings.systemPrompt || "",
     projectMemoryBlock,
@@ -212,11 +216,15 @@ async function runJob(initial: Job, settings: ClientSettings) {
       ? "Auto-accept edits is ON for this job."
       : "Auto-accept edits is OFF — gated write tools skip in headless mode.",
     settings.autoRunShell ? "Auto-run shell is ON." : "Auto-run shell is OFF — shell skips in headless mode.",
+    deepenCompletenessBlock,
     buildProcess ? buildReasoningThenBuildNudge() : large ? buildLargeJobNudge() : "",
   ].filter(Boolean);
 
   if (projectMemoryBlock) job = appendLog(job, "auto-loaded project AGENTS.md / convention files");
   if (workspaceSkillsBlock) job = appendLog(job, "auto-loaded workspace .ablit/skills");
+  if (deepenCompletenessBlock) {
+    job = appendLog(job, "deepen for completeness (Abliterated-only) checklist active");
+  }
   if (buildProcess) {
     job = appendLog(job, "build process: reason → ToDo → explore → scaffold → implement → verify");
   } else if (large) {

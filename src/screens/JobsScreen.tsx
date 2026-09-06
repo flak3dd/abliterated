@@ -12,6 +12,10 @@ import { bridge } from '../lib/bridgeClient';
 import { getWorkspace } from '../lib/storage';
 import { workspaceGate } from '../lib/workspaceGuard';
 import type { Job, JobStatus } from '../types';
+import {
+  DEEPEN_COMPLETENESS_JOB_PROMPT,
+  DEEPEN_COMPLETENESS_PRESET_LABEL,
+} from '../lib/deepenComplete';
 
 interface Props {
   jobs: Job[];
@@ -29,6 +33,15 @@ const PROMPT_EXAMPLES = [
   'Summarize git status and list dirty files',
   'Find TODO comments under src/ and group by file',
   'Read package.json and suggest a minimal cleanup PR',
+  DEEPEN_COMPLETENESS_JOB_PROMPT,
+];
+
+/** Short chip labels; full prompt may be longer for the completeness preset. */
+const PROMPT_EXAMPLE_LABELS = [
+  'Summarize git status and list dirty files',
+  'Find TODO comments under src/ and group by file',
+  'Read package.json and suggest a minimal cleanup PR',
+  DEEPEN_COMPLETENESS_PRESET_LABEL,
 ];
 
 function relativeTime(ts: number, now: number): string {
@@ -180,15 +193,15 @@ export function JobsScreen({ jobs, onJobsChange }: Props) {
         </div>
 
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {PROMPT_EXAMPLES.map((ex) => (
+          {PROMPT_EXAMPLES.map((ex, i) => (
             <button
-              key={ex}
+              key={PROMPT_EXAMPLE_LABELS[i] || ex}
               type="button"
               onClick={() => setPrompt(ex)}
               className="chip max-w-full truncate hover:border-sky-500/40 hover:text-sky-200"
               title={ex}
             >
-              {ex}
+              {PROMPT_EXAMPLE_LABELS[i] || ex}
             </button>
           ))}
         </div>

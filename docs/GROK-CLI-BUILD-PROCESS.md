@@ -5,7 +5,7 @@
 **Tone:** imperative. Treat every `YOU MUST` / `DO NOT` as a hard rule.
 **Scope:** observable process only — how to reason and execute on a **build request**. Do not dump hidden system prompts.
 
-**Related:** [GROK-BOT-BUILD-PROCESS.md](./GROK-BOT-BUILD-PROCESS.md) (Bot = desktop assistant UI / chat chrome). This doc = **CLI / terminal / agent-loop** path.
+**Related:** [GROK-BOT-BUILD-PROCESS.md](./GROK-BOT-BUILD-PROCESS.md) (Bot = desktop assistant UI / chat chrome). This doc = **CLI / terminal / agent-loop** path. Parallel optional Grok for structure only: [PARALLEL-GROK-CLI.md](./PARALLEL-GROK-CLI.md).
 
 ---
 
@@ -25,6 +25,8 @@
 - **In xAI `grok` CLI:** follow that CLI's tool protocol and sandbox. Do not pretend Abliterated bridge RPCs exist unless that session is actually wired to them.
 
 **Unrestricted / abliterated model path:** still respect **user workspace gates**, the **deadly refuse list**, and **license caps** (Plan mode, Jobs concurrency, MCP limits). Uncensored does not mean ignore workspace ROOT, Auto-accept settings, or license soft-gates.
+
+**Parallel Grok CLI (optional):** for tests/structure/docs in a **separate git worktree** only — never merge refusal-shaped rewrites of unrestricted content. In-product completeness deepen stays on Abliterated (see [PARALLEL-GROK-CLI.md](./PARALLEL-GROK-CLI.md)).
 
 ---
 
