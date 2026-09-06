@@ -61,7 +61,8 @@
     "appId": "ai.abliteration.ide",
     "productName": "Abliterated",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "dist/**/*",
@@ -74,14 +75,16 @@
       "target": [
         "dir",
         "dmg"
-      ]
+      ],
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": [
         "nsis",
         "portable"
       ],
-      "publisherName": "Abliteration"
+      "publisherName": "Abliteration",
+      "icon": "build/icon.png"
     },
     "asarUnpack": [
       "daemon/**/*",

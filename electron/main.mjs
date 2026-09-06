@@ -167,6 +167,7 @@ function createWindow() {
     minHeight: 600,
     title: 'Abliterated',
     backgroundColor: '#09090b',
+    icon: path.join(__dirname, 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
       contextIsolation: true,
