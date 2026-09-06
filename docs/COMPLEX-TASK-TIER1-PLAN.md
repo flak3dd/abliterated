@@ -217,7 +217,7 @@ Build and tests must pass each slice.
 
 ## Tier-1 → multi-agent (do not paint into a corner)
 
-Tier-1 primitives are the foundation for a later Hierarchical Manager–Worker runtime. **This PR does not ship multi-agent orchestration** — only docs + primitives that stay forward-compatible.
+Tier-1 primitives are the foundation for a later Hierarchical Manager–Worker runtime. Tier-1 ships primitives + an optional flag-gated MVP runtime (`multiAgentEnabled`, default off). Full fleet UI remains Tier-2.
 
 | Tier-1 primitive | Multi-agent role |
 | --- | --- |
