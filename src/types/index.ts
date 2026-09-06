@@ -383,6 +383,8 @@ export interface ClientSettings {
   mempalaceAutoRecall: boolean;
   /** File the last user/assistant turn into the palace after each run. Default true when enabled. */
   mempalaceAutoSave: boolean;
+  /** Verify-strict quality loop (Build + skills auto-inject). Default true. */
+  verifyStrictProfile: boolean;
 }
 
 export type ChatOpenAiToolCall = {

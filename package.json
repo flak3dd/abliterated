@@ -22,7 +22,7 @@
     "test:context": "node scripts/test-context-window.mjs",
     "test:model-profile": "node scripts/test-model-agent-profile.mjs",
     "test:task-graph": "node scripts/test-task-graph.mjs",
-    "test": "npm run smoke && npm run test:agent && npm run test:reasoning && npm run test:sse && npm run test:model-guide && npm run test:context && npm run test:model-profile && npm run test:task-graph && npm run test:build && npm run test:workspace && npm run test:grok-edits && npm run test:memory && npm run test:mempalace",
+    "test": "npm run smoke && npm run test:agent && npm run test:reasoning && npm run test:sse && npm run test:model-guide && npm run test:context && npm run test:model-profile && npm run test:task-graph && npm run test:build && npm run test:workspace && npm run test:grok-edits && npm run test:memory && npm run test:mempalace && npm run test:vdone && npm run test:multi-agent && npm run test:featherless-qwen && npm run test:prove-improve && npm run test:eval-fixtures",
     "image:mock": "cd spark-image && ABLITERATED_IMAGE_MOCK=1 ABLITERATED_IMAGE_HOST=127.0.0.1 ABLITERATED_IMAGE_PORT=7860 python3 serve-openai-bridge.py",
     "featherless-oauth": "node featherless-oauth/server.mjs",
     "debug:featherless": "node scripts/debug-featherless.mjs",
@@ -35,7 +35,9 @@
     "dist:win:dir": "npm run build && electron-builder --win dir",
     "test:task": "node scripts/test-task-graph.mjs",
     "test:vdone": "node scripts/test-verify-done.mjs",
-    "test:multi-agent": "node scripts/test-multi-agent.mjs"
+    "test:multi-agent": "node scripts/test-multi-agent.mjs",
+    "test:prove-improve": "node scripts/test-prove-improve.mjs",
+    "test:eval-fixtures": "node scripts/eval-fixtures.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

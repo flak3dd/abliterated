@@ -107,6 +107,7 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   mempalaceWing: '',
   mempalaceAutoRecall: true,
   mempalaceAutoSave: true,
+  verifyStrictProfile: true,
 };
 
 export function isPlaceholderRoot(path: string): boolean {
@@ -276,6 +277,7 @@ export function getSettings(): ClientSettings {
     mempalaceWing: typeof stored.mempalaceWing === 'string' ? stored.mempalaceWing.trim() : '',
     mempalaceAutoRecall: stored.mempalaceAutoRecall !== false,
     mempalaceAutoSave: stored.mempalaceAutoSave !== false,
+    verifyStrictProfile: stored.verifyStrictProfile !== false,
     planModeEnabled: stored.planModeEnabled === true,
     buildModeEnabled: stored.buildModeEnabled !== false,
     fastModel: stored.fastModel?.trim() || '',

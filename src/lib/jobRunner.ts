@@ -1,6 +1,6 @@
 import { resolveActiveSettings } from "./activeEndpoint";
 import { executeAgentTool } from "./agentTools";
-import { formatSkillsCatalogPrompt, toCatalogEntries } from "./skills";
+import { formatSkillsCatalogPrompt, formatVerifyStrictSkillPrompt, shouldAutoInjectVerifyStrict, toCatalogEntries } from "./skills";
 import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from "./projectMemory";
 import { formatSessionMemory, mempalaceOpts } from "./mempalace";
 import { bridge } from "./bridgeClient";
@@ -33,7 +33,7 @@ import { buildModelAgentProfile } from "./modelAgentProfile";
 import { peekFeatherlessModel } from "./featherlessLimits";
 import { getJobs, getSettings, getWorkspace, setJobs, uid, upsertJob } from "./storage";
 import { workspaceGate } from "./workspaceGuard";
-import { TASK_GRAPH_PATH, formatTaskGraphPrompt, parseTaskGraph } from "./taskGraph";
+import { TASK_GRAPH_PATH, formatTaskGraphPrompt, parseTaskGraph, shouldUseTaskGraph } from "./taskGraph";
 import { prepareJobWorktree } from "./jobWorktree";
 import { runMultiAgentFleet, shouldRunMultiAgent } from "./multiAgentRunner";
 import type { ChatOpenAiMessage, ClientSettings, Job, ToolType } from "../types";
@@ -185,6 +185,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
     abortById.delete(job.id);
     return;
   }
+  let effectiveRoot = workspaceRoot;
   if (settings.jobWorktreesEnabled === true && bridge.connected) {
     try {
       const prep = await prepareJobWorktree({
@@ -198,8 +199,17 @@ async function runJob(initial: Job, settings: ClientSettings) {
         },
       });
       job = appendLog(job, `worktree: ${prep.note} (${prep.path})`);
+      if (prep.shouldSetRoot && prep.absPath) {
+        try {
+          const root = await bridge.setRoot(prep.absPath);
+          effectiveRoot = root || prep.absPath;
+          job = appendLog(job, `workspace root set to worktree: ${effectiveRoot}`);
+        } catch (e) {
+          job = appendLog(job, `worktree setRoot failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
     } catch (e) {
-      job = appendLog(job, `worktree stub error: ${e instanceof Error ? e.message : String(e)}`);
+      job = appendLog(job, `worktree error: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -214,8 +224,10 @@ async function runJob(initial: Job, settings: ClientSettings) {
   });
   let skillsCatalogBlock = "";
   let workspaceSkillsBlock = "";
+  let verifyStrictBlock = "";
   let projectMemoryBlock = "";
   let mempalaceBlock = "";
+  let listedSkills: Awaited<ReturnType<typeof bridge.listSkills>> = [];
   if (bridge.connected) {
     try {
       const files = await bridge.readProjectMemory();
@@ -233,26 +245,46 @@ async function runJob(initial: Job, settings: ClientSettings) {
   }
   if (settings.skillsEnabled !== false && bridge.connected) {
     try {
-      const skills = await bridge.listSkills();
-      skillsCatalogBlock = formatSkillsCatalogPrompt(toCatalogEntries(skills));
-      workspaceSkillsBlock = formatAutoLoadedSkillsPrompt(skills);
+      listedSkills = await bridge.listSkills();
+      skillsCatalogBlock = formatSkillsCatalogPrompt(toCatalogEntries(listedSkills));
+      workspaceSkillsBlock = formatAutoLoadedSkillsPrompt(listedSkills);
     } catch {
       skillsCatalogBlock = "";
       workspaceSkillsBlock = "";
+      listedSkills = [];
     }
   }
 
   const deepenCompletenessBlock = buildJobCompletenessSystemBlock({
     deepenCompleteness: settings.deepenCompleteness !== false,
   });
+
+  if (
+    shouldAutoInjectVerifyStrict({
+      buildProcess,
+      largeJob: large,
+      verifyStrictProfile: settings.verifyStrictProfile === true,
+    })
+  ) {
+    verifyStrictBlock = formatVerifyStrictSkillPrompt(listedSkills as never, { force: true });
+    if (verifyStrictBlock) job = appendLog(job, "auto-injected verify-strict skill");
+  }
+
   let taskGraphBlock = "";
-  if (bridge.connected) {
+  const useGraph = shouldUseTaskGraph({
+    largeJob: large,
+    buildProcess,
+    multiAgent: shouldRunMultiAgent(job, settings),
+  });
+  if (useGraph && bridge.connected) {
     try {
       const raw = await bridge.readFile(TASK_GRAPH_PATH);
       taskGraphBlock = formatTaskGraphPrompt(parseTaskGraph(raw));
     } catch {
       taskGraphBlock = "";
     }
+  } else if (!useGraph) {
+    job = appendLog(job, "one-shot: skipping task graph inject");
   }
   const jobPeek = peekFeatherlessModel(active.defaultModel);
   const jobProfile = buildModelAgentProfile({
@@ -271,10 +303,11 @@ async function runJob(initial: Job, settings: ClientSettings) {
     mempalaceBlock,
     !jobProfile.compactPrompt ? skillsCatalogBlock : "",
     !jobProfile.compactPrompt ? workspaceSkillsBlock : "",
+    verifyStrictBlock,
     taskGraphBlock,
 
-    workspaceRoot
-      ? `Workspace root: ${workspaceRoot}. Prefer relative paths. You are running as a headless background job.`
+    effectiveRoot
+      ? `Workspace root: ${effectiveRoot}. Prefer relative paths. You are running as a headless background job.`
       : "No workspace root set. Connect the bridge Workspace before relying on file tools.",
     settings.autoAcceptEdits
       ? "Auto-accept edits is ON for this job."
@@ -314,7 +347,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
         persist,
         appendLog,
         abortSignal: ac.signal,
-        workspaceRoot,
+        workspaceRoot: effectiveRoot,
       });
     } catch (e) {
       const aborted = e instanceof DOMException && e.name === "AbortError";
@@ -401,7 +434,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
           const applied = await applyGrokEdits(edits, {
             writeToWorkspace: true,
             autoAccept: true,
-            root: workspaceRoot,
+            root: effectiveRoot,
           });
           const n = applied.filter((r) => r.status === 'ok').length;
           job = appendLog(job, `wrote ${n}/${applied.length} file(s) to workspace`);
@@ -482,7 +515,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
           autoAcceptEdits: settings.autoAcceptEdits,
           autoRunShell: settings.autoRunShell,
           settings,
-          workspaceRoot,
+          workspaceRoot: effectiveRoot,
           mode: "headless",
           checkpointNamespace: `job ${job.id}`,
           executeMcpTool: executeMcpToolCall,
