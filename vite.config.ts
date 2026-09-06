@@ -135,7 +135,26 @@ const abliterationProxy = {
     target: 'https://api.featherless.ai',
     changeOrigin: true,
     secure: true,
+    timeout: 0,
+    proxyTimeout: 0,
     rewrite: (p: string) => p.replace(/^\/featherless-api/, ''),
+    configure: (proxy: { on: (event: string, listener: (...args: never[]) => void) => void }) => {
+      proxy.on(
+        'proxyRes',
+        ((
+          proxyRes: { headers: Record<string, unknown> },
+          _req: unknown,
+          res: { setHeader: (k: string, v: string) => void },
+        ) => {
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('X-Accel-Buffering', 'no');
+          const ct = String(proxyRes.headers['content-type'] || '');
+          if (ct.includes('text/event-stream')) {
+            res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+          }
+        }) as (...args: never[]) => void,
+      );
+    },
   },
   '/featherless-v1': {
     target: process.env.FEATHERLESS_URL || 'http://127.0.0.1:3000',

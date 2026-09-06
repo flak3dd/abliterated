@@ -82,16 +82,29 @@ export function mergeSkillsById(layers: SkillRecord[][]): SkillRecord[] {
 }
 
 /** Compact prompt block: name + description only. */
+const MAX_CATALOG_CHARS = 6_000;
+
 export function formatSkillsCatalogPrompt(skills: SkillCatalogEntry[]): string {
   if (!skills.length) return '';
-  const lines = skills.map((s) => `- **${s.name}** (\`${s.id}\`): ${s.description || '(no description)'}`);
-  return [
+  const header = [
     '## Available skills',
     'Reusable recipes matched by description. When a skill applies to the task, call `read_skill` with that `skill_id` **before** improvising, then follow the recipe.',
     'Tools: `list_skills` (catalog), `read_skill` `{ skill_id }` (full body), `suggest_skill` (propose only), `write_skill` (save after confirm; not Plan mode).',
     'After reasoning: if you identify a clear reusable multi-step build-quality/process pattern NOT already covered by a similar skill description, call `suggest_skill` (or propose briefly in prose) and wait for user confirm before `write_skill`. Do not spam.',
-    lines.join('\n'),
   ].join('\n');
+  const lines: string[] = [];
+  let used = header.length;
+  for (const s of skills) {
+    const desc = (s.description || '(no description)').slice(0, 160);
+    const line = `- **${s.name}** (\`${s.id}\`): ${desc}`;
+    if (used + line.length + 1 > MAX_CATALOG_CHARS) {
+      lines.push(`- … ${skills.length - lines.length} more (call list_skills)`);
+      break;
+    }
+    lines.push(line);
+    used += line.length + 1;
+  }
+  return `${header}\n${lines.join('\n')}`;
 }
 
 export function skillRootHints(opts: {

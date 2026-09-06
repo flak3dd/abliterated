@@ -1,3 +1,4 @@
+import { resolveFeatherlessModelId } from './featherlessQwen.js';
 /** Keep in sync with sseParse.ts thinking-family detection. */
 const THINKING_MODEL_RE =
   /qwen3|qwq[-_]?|deepseek-r1|deepseek-reasoner|hunyuan-t1|glm-4\.5|glm-5|magistral/i;
@@ -125,7 +126,7 @@ function providerOf(settings: GuideSettings): GuideProvider {
 
 function currentModel(settings: GuideSettings): string {
   const p = providerOf(settings);
-  if (p === 'featherless') return settings.featherlessModel?.trim() || 'Qwen/Qwen2.5-7B-Instruct';
+  if (p === 'featherless') return resolveFeatherlessModelId(settings.featherlessModel);
   if (p === 'dgx-spark') return settings.sparkModel?.trim() || 'qwen-abliterated';
   return settings.defaultModel?.trim() || '';
 }
@@ -170,7 +171,11 @@ export function recommendedApiPatch(model: string, _settings?: GuideSettings): P
     reasoning: recommendedReasoning(klass),
   };
   if (klass.family === 'thinking') {
+    // Qwen3*: Reasoning max + coalesce on (Thought → answer without a nudge retry).
     patch.coalesceReasoningToContent = true;
+  } else if (klass.family === 'instruct' || klass.family === 'code') {
+    // Pure Instruct Qwen2.5 (no thinking channel): Reasoning off.
+    patch.coalesceReasoningToContent = false;
   }
   return patch;
 }
@@ -293,7 +298,7 @@ export function buildModelSettingsGuide(model: string, settings: GuideSettings):
   if (klass.family === 'thinking') {
     summary =
       provider === 'featherless'
-        ? `${klass.label} model. Featherless maps API → Reasoning to enable_thinking. Use max for Thought traces; off for content-only.`
+        ? `${klass.label} model. Large-Qwen Featherless path: Reasoning maps to enable_thinking (+ preserve_thinking on Qwen3.5/3.6). Use max + coalesce.`
         : `${klass.label} model. API → Reasoning is sent as X-Reasoning. max is the usual Thought setting.`;
   } else if (klass.family === 'base') {
     summary = `${klass.label}. Chat/agent quality is poor; pick an Instruct or thinking variant. Keep Reasoning off.`;

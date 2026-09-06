@@ -186,6 +186,9 @@ No cloud `/v1/images/generations`. Enable Images → `:7860` / `abliterated-flux
 
 ## Featherless setup
 
+Large Qwen only (Abliteration-grade): dense >=32B or activated >=16B; A3B rejected; Qwen3.8-27B abliterated exception. Default `Qwen/Qwen3-32B`. See [FEATHERLESS-QWEN-BUILD.md](FEATHERLESS-QWEN-BUILD.md).
+
+
 1. OAuth app **ablit**; redirect `http://localhost:3000/callback` exact.  
 2. Local `.env` with client id/secret (never commit).  
 3. Start OAuth proxy (`featherless-oauth` script) + Vite DEV.  

@@ -12,10 +12,10 @@ const outDir = path.join(root, 'dist-test-model-guide');
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
 execFileSync(
-  'npx',
+  'node_modules/.bin/tsc',
   [
-    'tsc',
     'src/lib/modelSettingsGuide.ts',
+    'src/lib/featherlessQwen.ts',
     '--outDir',
     outDir,
     '--module',
@@ -58,6 +58,7 @@ assert.equal(qwen3.coalesceReasoningToContent, true);
 
 const instruct = recommendedApiPatch('Qwen/Qwen2.5-7B-Instruct', { ...base, reasoning: 'max' });
 assert.equal(instruct.reasoning, 'off');
+assert.equal(instruct.coalesceReasoningToContent, false);
 
 const applied = applyRecommendedApiSettings({ ...base, reasoning: 'off' }, 'Qwen/Qwen3-32B');
 assert.equal(applied.reasoning, 'max');

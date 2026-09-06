@@ -10,7 +10,7 @@ Every network surface Abliterated IDE touches locally, what listens where, and h
 | Vite preview | `http://127.0.0.1:4173` | HTTP | Production build + same proxies | `npm run preview` |
 | Bridge daemon | `ws://127.0.0.1:17322` | WebSocket JSON-RPC | Workspace files, shell, git, MCP, checkpoints | `npm run bridge` |
 | DGX Spark inference | `http://127.0.0.1:8000/v1` | OpenAI HTTP + SSE | `qwen-abliterated` chat completions | `spark/` compose on the Spark host |
-| Featherless | `http://127.0.0.1:3000/v1` | OpenAI HTTP + OAuth | `Qwen/Qwen2.5-7B-Instruct` chat + OAuth session | featherless-oauth server (see API tab) |
+| Featherless | `http://127.0.0.1:3000/v1` | OpenAI HTTP + OAuth | `Qwen/Qwen3-32B` chat + OAuth session | featherless-oauth server (see API tab) |
 | Image bridge | `http://127.0.0.1:7860/v1` | OpenAI images API | `abliterated-flux-klein` image generation | `spark-image/serve-openai-bridge.py` |
 
 Cloud fallback is `https://api.abliteration.ai/v1` (set via `VITE_ABLITERATED_BASE_URL`); it is not a local endpoint but is the default proxy target for `/v1` in DEV.
@@ -58,7 +58,7 @@ Optional local OpenAI-compatible endpoint with an OAuth session flow, selected v
 
 - **Paths:** `POST /v1/chat/completions`, `GET /v1/models`
 - **OAuth:** `GET /session`, `POST /logout`, login opened at `http://localhost:3000/login` (API tab polls `/session` until signed in)
-- **Default model:** `Qwen/Qwen2.5-7B-Instruct`
+- **Default model:** `Qwen/Qwen3-32B`
 - **Verify:** with the server running, `GET http://127.0.0.1:3000/session` returns `{ ok, signedIn, ... }`; in DEV use the `/featherless-oauth/session` proxy
 - **IDE wiring:** `resolveActiveSettings` routes chat/models through `featherlessBaseUrl` when provider is `featherless` and `featherlessEnabled` is on; in DEV traffic goes through the `/featherless-v1` proxy. When `featherlessEnabled` is off, chat falls back to the local dummy echo.
 

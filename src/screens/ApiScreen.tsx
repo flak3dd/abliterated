@@ -9,7 +9,16 @@ import { endpointUrl, formatFetchError } from '../lib/apiUrl';
 import { coalesceFetch } from '../lib/coalesceFetch';
 import { setSettings } from '../lib/storage';
 import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
+import { formatFeatherlessProbeReport, probeFeatherlessChat } from '../lib/featherlessDebug';
+import { extractHttpErrorMessage } from '../lib/providerError';
 import type { ClientSettings, ReasoningLevel } from '../types';
+import {
+  DEFAULT_FEATHERLESS_MODEL,
+  FEATHERLESS_EMPTY_STATE,
+  abliterationGradeFeatherlessPatch,
+  filterFeatherlessQwenModels,
+  resolveFeatherlessModelId,
+} from '../lib/featherlessQwen';
 
 interface Props {
   settings: ClientSettings;
@@ -278,7 +287,7 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
           'X-Title': 'ablit',
         },
         body: JSON.stringify({
-          model: draft.featherlessModel || 'Qwen/Qwen2.5-7B-Instruct',
+          model: resolveFeatherlessModelId(draft.featherlessModel),
           stream: false,
           messages: [{ role: 'user', content: 'Reply with the single word pong.' }],
           max_tokens: 256,
@@ -305,6 +314,77 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
     }
   };
 
+  const debugFeatherless = async () => {
+    setTesting(true);
+    setResult('');
+    if (draft.featherlessEnabled === false) {
+      setResult('Featherless endpoint unavailable — enable it first.');
+      setTesting(false);
+      return;
+    }
+    if (!draft.featherlessToken.trim() && !isLocalFeatherOAuthBase(draft.featherlessBaseUrl)) {
+      setResult('No Featherless API key. Paste a key, then Debug responses.');
+      setTesting(false);
+      return;
+    }
+    const model = resolveFeatherlessModelId(draft.featherlessModel);
+    const chatUrl = endpointUrl(featherEndpointArgs(draft), '/chat/completions');
+    const modelsUrl = endpointUrl(featherEndpointArgs(draft), '/models');
+    const headers: Record<string, string> = {
+      ...authHeaders(draft.featherlessToken),
+      'HTTP-Referer': 'http://localhost:5173',
+      'X-Title': 'ablit',
+    };
+    let features = '';
+    let modelsHint = '';
+    try {
+      const detailUrl = modelsUrl.replace(/\/$/, '') + '/' + model;
+      const detailRes = await coalesceFetch(detailUrl, { headers });
+      const detailText = await detailRes.text();
+      if (detailRes.ok) {
+        try {
+          const json = JSON.parse(detailText) as { features?: unknown; context_length?: unknown };
+          features = JSON.stringify(json.features ?? {}) + ` context=${String(json.context_length ?? '')}`;
+        } catch {
+          features = detailText.slice(0, 200);
+        }
+      } else {
+        features = `GET model ${detailRes.status}: ${extractHttpErrorMessage(detailRes.status, detailText)}`;
+      }
+      const toolUrl =
+        modelsUrl +
+        (modelsUrl.includes('?') ? '&' : '?') +
+        'capabilities=tool-use&per_page=5';
+      const toolRes = await coalesceFetch(toolUrl, { headers });
+      const toolText = await toolRes.text();
+      if (toolRes.ok) {
+        try {
+          const json = JSON.parse(toolText) as { data?: Array<{ id?: string; features?: { tool_use?: boolean } }> };
+          const ids = (json.data || []).map((m) => m.id).filter(Boolean).slice(0, 5);
+          modelsHint = 'tool-use sample: ' + (ids.join(', ') || '(none)');
+        } catch {
+          modelsHint = 'tool-use list: ' + toolText.slice(0, 160);
+        }
+      } else {
+        modelsHint = `GET tool-use ${toolRes.status}: ${extractHttpErrorMessage(toolRes.status, toolText)}`;
+      }
+    } catch (err) {
+      modelsHint = formatFetchError(err);
+    }
+    try {
+      const rows = await probeFeatherlessChat({
+        url: chatUrl,
+        token: draft.featherlessToken,
+        model,
+      });
+      setResult(formatFeatherlessProbeReport({ model, features, modelsHint, rows }));
+    } catch (err) {
+      setResult(formatFetchError(err));
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const listFeatherlessModels = async () => {
     setTesting(true);
     setResult('');
@@ -323,7 +403,21 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
       if (draft.featherlessToken.trim()) headers.Authorization = 'Bearer ' + draft.featherlessToken.trim();
       const res = await coalesceFetch(url, { headers });
       const text = await res.text();
-      setResult('GET ' + url + ' ' + String(res.status) + '\n' + text.slice(0, 2000));
+      let summary = 'GET ' + url + ' ' + String(res.status);
+      try {
+        const json = JSON.parse(text) as { data?: { id?: string }[] } | { id?: string }[];
+        const raw = Array.isArray(json) ? json : Array.isArray(json.data) ? json.data : [];
+        const items = raw
+          .map((row) => (row && typeof row.id === 'string' ? { id: row.id } : null))
+          .filter((m): m is { id: string } => m != null);
+        const allowed = filterFeatherlessQwenModels(items);
+        summary += '\nLarge Qwen filter: ' + String(allowed.length) + ' / ' + String(items.length);
+        if (!allowed.length) summary += '\n' + FEATHERLESS_EMPTY_STATE;
+        else summary += '\n' + allowed.slice(0, 40).map((m) => m.id).join('\n');
+      } catch {
+        summary += '\n' + text.slice(0, 2000);
+      }
+      setResult(summary);
     } catch (err) {
       setResult(formatFetchError(err));
     } finally {
@@ -462,8 +556,8 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
         ) : provider === 'featherless' ? (
           <>
             <p className="font-mono text-[10px] text-muted">
-              Default: cloud API key at https://api.featherless.ai/v1 (DEV proxies via /featherless-api). Local OAuth optional: http://127.0.0.1:3000/v1 + npm run featherless-oauth.
-            </p>
+              Large Qwen only (Abliteration-grade agent path). Default {DEFAULT_FEATHERLESS_MODEL}.</p>
+            <button type="button" onClick={() => { const next = { ...draft, ...abliterationGradeFeatherlessPatch() }; setDraft(next); onSettingsChange(next); }} className="w-fit rounded border border-emerald-500/50 bg-emerald-500/10 px-3 py-1 font-mono text-[11px] text-emerald-200">Abliteration-grade Featherless</button>
             <label className="flex items-center gap-2 font-mono text-[11px] text-zinc-200">
               <input
                 type="checkbox"
@@ -552,7 +646,7 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
               <input
                 value={draft.featherlessModel}
                 onChange={(e) => patch({ featherlessModel: e.target.value })}
-                placeholder="Qwen/Qwen2.5-7B-Instruct"
+                placeholder={DEFAULT_FEATHERLESS_MODEL}
                 className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
               />
             </label>
@@ -590,6 +684,14 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
                 className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200 disabled:opacity-50"
               >
                 List models
+              </button>
+              <button
+                type="button"
+                onClick={() => void debugFeatherless()}
+                disabled={testing || draft.featherlessEnabled === false}
+                className="w-fit rounded border border-amber-500/50 px-3 py-1 font-mono text-[11px] text-amber-200 disabled:opacity-50"
+              >
+                {testing ? 'Debugging…' : 'Debug responses'}
               </button>
             </div>
           </>
@@ -660,16 +762,19 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
         ) : null}
 
         <label className="block font-mono text-[10px] uppercase text-muted">
-          Context length (docs only — not sent as max_tokens)
+          Context length (prompt window — not max_tokens)
           <input
             type="number"
             min={0}
             value={draft.contextLength ?? ''}
             onChange={(e) => patch({ contextLength: e.target.value ? Number(e.target.value) : undefined })}
             className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
-            title="Informational model window size. Completions always use a separate max_tokens default (4096)."
+            title="Model prompt window. Chat is trimmed to this minus max_tokens. Empty = 32768 on Featherless, 131072 otherwise."
           />
         </label>
+        <p className="font-mono text-[10px] text-muted">
+          Completions use max_tokens 4096. Over-long history/tool dumps are dropped from the oldest turn so the prompt fits this window (Featherless plan default 32768).
+        </p>
         {result ? <pre className="whitespace-pre-wrap rounded border border-border bg-background p-2 font-mono text-[11px] text-zinc-300">{result}</pre> : null}
       </div>
     </div>

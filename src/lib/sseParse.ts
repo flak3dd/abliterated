@@ -29,34 +29,87 @@ export function isThinkingFamilyModel(model: string): boolean {
 }
 
 /** Featherless/vLLM chat_template_kwargs for Qwen3-class thinking models. */
+export type ThinkingChatTemplateKwargs = {
+  enable_thinking: boolean;
+  preserve_thinking?: boolean;
+  thinking_budget?: number;
+};
+
+const THINKING_BUDGET: Record<Exclude<ReasoningLevelLite, 'off'>, number> = {
+  low: 1024,
+  high: 8192,
+  max: 16384,
+};
+
+/** Qwen3.5 / Qwen3.6 (and close) benefit from preserve_thinking across tool turns. */
+export function isPreserveThinkingModel(model: string): boolean {
+  return /qwen3\.[568]/i.test(model || '');
+}
+
+/**
+ * Build chat_template_kwargs for thinking families.
+ * - Qwen3: enable_thinking
+ * - Qwen3.5/3.6: also preserve_thinking when reasoning ≠ off
+ * - low/high/max → thinking_budget tiers (providers that ignore the field are fine)
+ */
 export function thinkingChatTemplateKwargs(
   model: string,
   reasoning: ReasoningLevelLite,
-): { enable_thinking: boolean } | undefined {
+): ThinkingChatTemplateKwargs | undefined {
   if (!isThinkingFamilyModel(model)) return undefined;
-  return { enable_thinking: reasoning !== 'off' };
+  const enable = reasoning !== 'off';
+  const kwargs: ThinkingChatTemplateKwargs = { enable_thinking: enable };
+  if (enable && isPreserveThinkingModel(model)) {
+    kwargs.preserve_thinking = true;
+  }
+  if (enable && reasoning in THINKING_BUDGET) {
+    kwargs.thinking_budget = THINKING_BUDGET[reasoning as Exclude<ReasoningLevelLite, 'off'>];
+  }
+  return kwargs;
+}
+
+function textFromRecord(p: Record<string, unknown>): string {
+  if (typeof p.text === 'string') return p.text;
+  if (typeof p.content === 'string') return p.content;
+  if (typeof p.output_text === 'string') return p.output_text;
+  if (typeof p.reasoning === 'string') return p.reasoning;
+  if (typeof p.thinking === 'string') return p.thinking;
+  if (typeof p.reasoning_content === 'string') return p.reasoning_content;
+  return '';
 }
 
 export function extractTextPart(value: unknown): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (!Array.isArray(value)) return '';
-  let out = '';
-  for (const part of value) {
-    if (typeof part === 'string') {
-      out += part;
-      continue;
-    }
-    if (!part || typeof part !== 'object') continue;
-    const p = part as Record<string, unknown>;
-    if (typeof p.text === 'string') out += p.text;
-    else if (typeof p.content === 'string') out += p.content;
-    else if (typeof p.output_text === 'string') out += p.output_text;
-    else if (typeof p.reasoning === 'string') out += p.reasoning;
-    else if (typeof p.thinking === 'string') out += p.thinking;
-    else if (typeof p.reasoning_content === 'string') out += p.reasoning_content;
+  if (!value) return '';
+  if (Array.isArray(value)) {
+    let out = '';
+    for (const part of value) out += extractTextPart(part);
+    return out;
   }
-  return out;
+  if (typeof value === 'object') {
+    const p = value as Record<string, unknown>;
+    const direct = textFromRecord(p);
+    if (direct) return direct;
+    if (Array.isArray(p.reasoning_details)) return extractTextPart(p.reasoning_details);
+    if (Array.isArray(p.details)) return extractTextPart(p.details);
+  }
+  return '';
+}
+
+/** Provider error payload inside HTTP 200 SSE/JSON. */
+export function completionChunkError(json: unknown): string | null {
+  if (!json || typeof json !== 'object') return null;
+  const rec = json as Record<string, unknown>;
+  if (rec.error == null) return null;
+  const err = rec.error;
+  if (typeof err === 'string' && err.trim()) return err.trim();
+  if (err && typeof err === 'object') {
+    const e = err as Record<string, unknown>;
+    if (typeof e.message === 'string' && e.message.trim()) return e.message.trim();
+    if (typeof e.code === 'string' && e.code.trim()) return e.code.trim();
+  }
+  return 'Provider error in completion stream';
 }
 
 function reasoningFromRecord(rec: Record<string, unknown>): string {
@@ -182,17 +235,28 @@ export function applyCompletionChunk(json: unknown, h: CompletionHandlers): Chun
   const ch = choice as {
     delta?: unknown;
     message?: unknown;
+    text?: unknown;
     finish_reason?: string | null;
   };
   const deltaPayload = payloadFrom(ch.delta);
   const deltaHas =
     !!deltaPayload.content || !!deltaPayload.reasoning || deltaPayload.toolCalls.length > 0;
-  const applied = emitPayload(deltaHas ? deltaPayload : payloadFrom(ch.message), h);
+  const messagePayload = payloadFrom(ch.message);
+  const applied = emitPayload(deltaHas ? deltaPayload : messagePayload, h);
+  let contentChars = applied.contentChars;
+  let reasoningChars = applied.reasoningChars;
+  if (!deltaHas && !messagePayload.content && !messagePayload.reasoning) {
+    const text = extractTextPart(ch.text);
+    if (text) {
+      h.onContent(text);
+      contentChars += text.length;
+    }
+  }
   return {
     finishReason: typeof ch.finish_reason === 'string' && ch.finish_reason ? ch.finish_reason : null,
     usageTokens: usageTokensFrom(rec),
-    contentChars: applied.contentChars,
-    reasoningChars: applied.reasoningChars,
+    contentChars,
+    reasoningChars,
     hadToolDelta: applied.hadToolDelta,
   };
 }

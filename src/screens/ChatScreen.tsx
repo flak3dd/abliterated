@@ -55,6 +55,8 @@ import {
   buildLargeJobNudge,
   looksLargeJob,
   buildPlanModeNudge,
+  buildThoughtModeNudge,
+  buildBuildModeAlwaysNudge,
   filterPlanModeTools,
   parseTodoBullets,
   parseTodoItems,
@@ -71,6 +73,7 @@ import {
   PLAN_CODE_OMITTED_NOTE,
   liftReasoningWork,
   stripImplementationFromText,
+  enforceThoughtNoCode,
 } from '../lib/reasoningWork';
 import { hasValidCompletionFooter } from '../lib/completionFooter';
 import { asStringList, executeAgentTool, toolArgString } from '../lib/agentTools';
@@ -82,6 +85,8 @@ import { getMessages, recordAgentRun, replaceThreadMessages, saveMessage, setSet
 import { formatSkillsCatalogPrompt, toCatalogEntries, type SkillCatalogEntry, type SkillRecord } from '../lib/skills';
 import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from '../lib/projectMemory';
 import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
+import { buildModelAgentProfile } from '../lib/modelAgentProfile';
+import { peekFeatherlessModel } from '../lib/featherlessLimits';
 import type { ChatOpenAiMessage, ClientSettings, Message, Tab, Thread, ToolCallPayload } from '../types';
 import { PLAN_MODE_TOOLS } from '../types';
 
@@ -176,7 +181,7 @@ function grokAutoAcceptSuffix(workspaceRoot: string): string {
 }
 
 /** Cap tool results in API payloads (full text still kept in UI/storage). */
-const MAX_API_TOOL_CHARS = 48_000;
+const MAX_API_TOOL_CHARS = 8_000;
 
 function truncateForApi(content: string): string {
   if (!content || content.length <= MAX_API_TOOL_CHARS) return content;
@@ -207,7 +212,7 @@ async function prefetchPinnedPaths(text: string, root: string): Promise<string[]
   if (!bridge.connected) return [];
   const pins = extractAtPins(text).filter((p) => isPathInsideRoot(p, root || undefined));
   const notes: string[] = [];
-  let budget = 48_000;
+  let budget = 12_000;
   for (const pin of pins.slice(0, 12)) {
     if (budget <= 0) break;
     try {
@@ -241,7 +246,7 @@ async function prefetchPinnedPaths(text: string, root: string): Promise<string[]
 async function prefetchWorkspaceFiles(text: string, root: string): Promise<string[]> {
   if (!bridge.connected) return [];
   const notes: string[] = [];
-  let budget = 48_000;
+  let budget = 12_000;
 
   const pinned = await prefetchPinnedPaths(text, root);
   for (const n of pinned) {
@@ -404,6 +409,26 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     () => (planMode ? filterPlanModeTools(thread.enabledTools) : thread.enabledTools),
     [planMode, thread.enabledTools],
   );
+  const agentProfile = useMemo(() => {
+    const active = resolveActiveSettings(settings);
+    const peek = peekFeatherlessModel(active.defaultModel);
+    return buildModelAgentProfile({
+      model: active.defaultModel || thread.model,
+      provider: active.provider,
+      reasoning: settings.reasoning,
+      planMode,
+      buildMode,
+      toolUse: peek?.toolUse,
+      contextLength: peek?.contextLength,
+      enabledTools: effectiveTools,
+    });
+  }, [
+    settings,
+    planMode,
+    buildMode,
+    thread.model,
+    effectiveTools,
+  ]);
   const [planChecklist, setPlanChecklist] = useState<string[]>([]);
   const [skillsCatalog, setSkillsCatalog] = useState<SkillCatalogEntry[]>([]);
   const [projectMemoryBlock, setProjectMemoryBlock] = useState('');
@@ -735,19 +760,31 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       !buildProcess && !planMode && lastUser && looksLargeJob(lastUser.content)
         ? buildLargeJobNudge()
         : '';
-    const buildNudge = buildProcess ? buildReasoningThenBuildNudge() : '';
+    const thoughtOn = agentProfile.useThoughtLock;
+    const thoughtNudge = thoughtOn ? buildThoughtModeNudge() : '';
+    const buildNudge = planMode
+      ? ''
+      : buildProcess
+        ? buildReasoningThenBuildNudge()
+        : buildMode
+          ? buildBuildModeAlwaysNudge()
+          : '';
     const planNudge = planMode ? buildPlanModeNudge() : '';
     const planBuildNudge =
       planMode && lastUser && /\b(build|implement|apply|write|code)\b/i.test(lastUser.content)
-        ? 'Plan mode is still on; only checklist allowed — operator must Approve to write.'
+        ? 'Plan mode is still on; only checklist allowed — operator must Approve to write. Do not emit diffs.'
         : '';
     sys = [
       sys,
       LIVE_WORKSPACE_SUFFIX,
       projectMemoryBlock,
-      settings.skillsEnabled !== false ? formatSkillsCatalogPrompt(skillsCatalog) : '',
-      settings.skillsEnabled !== false ? workspaceSkillsBlock : '',
+      !agentProfile.compactPrompt && settings.skillsEnabled !== false
+        ? formatSkillsCatalogPrompt(skillsCatalog)
+        : '',
+      !agentProfile.compactPrompt && settings.skillsEnabled !== false ? workspaceSkillsBlock : '',
       autoAcceptEdits ? grokAutoAcceptSuffix(workspaceRoot) : '',
+      agentProfile.systemAddendum,
+      thoughtNudge,
       planNudge,
       planBuildNudge,
       buildNudge,
@@ -1030,7 +1067,11 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             messages: toApiMessages(current, turn === 1 ? prefetched : []),
             abortSignal: ac.signal,
             enabledTools: planMode ? effectiveTools : thread.enabledTools,
-            extraTools: mcpToolsToOpenAi(listConnectedMcpTools()) as Parameters<typeof streamChatCompletion>[0]['extraTools'],
+            extraTools: agentProfile.allowMcp
+              ? (mcpToolsToOpenAi(listConnectedMcpTools()) as Parameters<
+                  typeof streamChatCompletion
+                >[0]['extraTools'])
+              : undefined,
             toolChoice: turn === 1 && exploreIntent ? 'required' : 'auto',
             flightKey: `chat:${thread.id}`,
             onDelta: (text) => {
@@ -1077,13 +1118,14 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             assistant.reasoning = detokenizeArtifacts(assistant.reasoning);
           }
           assistant.status = 'complete';
-          // Coalesce/finalize FIRST so diffs that lived only in reasoning are in content before grok.
-          // Plan mode: do not promote implementation drafts out of reasoning.
+          // Thought never keeps code — lift fences/diffs into content (files), then Plan strips writes.
+          enforceThoughtNoCode(assistant, { liftToContent: !planMode });
           const coalesceOn = settingsRef.current.coalesceReasoningToContent !== false;
           if (planMode) applyPlanReasoningGuard(assistant);
           finalizeReasoningChannel(assistant, coalesceOn && !planMode);
           assistant.content = liftTodoListToContent(assistant.content || '', assistant.reasoning || '');
           if (planMode) applyPlanReasoningGuard(assistant);
+          else enforceThoughtNoCode(assistant, { liftToContent: true });
           flushStreamPersist({ ...assistant });
           await runGrokLayer(assistant);
 
@@ -1153,9 +1195,11 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                 }
                 // After strip: empty content → coalesce again (zero-cost), never API retry.
                 if (isMissingContentAnswer(assistant.content)) {
+                  enforceThoughtNoCode(assistant, { liftToContent: !planMode });
                   if (planMode) applyPlanReasoningGuard(assistant);
                   if (finalizeReasoningChannel(assistant, coalesceOn && !planMode)) {
                     if (planMode) applyPlanReasoningGuard(assistant);
+                    else enforceThoughtNoCode(assistant, { liftToContent: true });
                     flushStreamPersist({ ...assistant });
                     await runGrokLayer(assistant);
                   }
@@ -1291,9 +1335,11 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             setPhase('stopped', {}, turn);
             assistant.status = 'complete';
             const coalesceOnAbort = settingsRef.current.coalesceReasoningToContent !== false;
+            enforceThoughtNoCode(assistant, { liftToContent: !planMode });
             if (planMode) applyPlanReasoningGuard(assistant);
             finalizeReasoningChannel(assistant, coalesceOnAbort && !planMode);
             if (planMode) applyPlanReasoningGuard(assistant);
+            else enforceThoughtNoCode(assistant, { liftToContent: true });
             if (!assistant.content.trim() && !assistant.reasoning?.trim()) assistant.content = '(stopped)';
             // Apply diffs from coalesced reasoning even on abort (no-op if planMode).
             await runGrokLayer(assistant);
@@ -1527,13 +1573,20 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
   const modKey = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K';
   const midRunOn = settings.midRunInjectEnabled !== false;
   const completenessOn = settings.deepenCompleteness !== false;
+  const thoughtOn = settings.reasoning !== 'off';
   const placeholder = needsWorkingDir
     ? 'Choose a working directory first'
     : busy
     ? midRunOn
       ? 'Send to adjust mid-run…'
       : 'Agent busy — Stop to cancel'
-    : `Message · @src/foo.ts pin · ${modKey} commands · Enter send`;
+    : planMode
+      ? 'Plan mode — checklist only (no diffs) · Enter send'
+      : buildMode
+        ? 'Build mode — ToDo then diffs in content · Enter send'
+        : thoughtOn
+          ? 'Thought on — Goal/Inspect/Steps in reasoning · Enter send'
+          : `Message · @src/foo.ts pin · ${modKey} commands · Enter send`;
 
   const patchDeepenCompleteness = (next: boolean) => {
     const merged = { ...settingsRef.current, deepenCompleteness: next };
@@ -1556,8 +1609,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         <div className="min-w-0 flex-1">
           <div className="truncate font-mono text-xs text-zinc-100">{thread.title}</div>
           <div className="font-mono text-[10px] text-muted">
-            {resolveActiveSettings(settings).label} · {planMode ? 'PLAN · ' : ''}
-            {completenessOn ? 'COMPLETE · ' : ''}tools {(planMode ? effectiveTools : thread.enabledTools).join(', ') || 'none'} · {statusLabel}
+            {resolveActiveSettings(settings).label} · {agentProfile.label} · {planMode ? 'PLAN · ' : buildMode ? 'BUILD · ' : ''}
+            {agentProfile.useThoughtLock ? 'THOUGHT · ' : ''}
+            {completenessOn ? 'COMPLETE · ' : ''}tools {agentProfile.sendTools ? agentProfile.toolNames.join(', ') : 'none'} · {statusLabel}
           </div>
           <div className="truncate font-mono text-[10px] text-zinc-500">
             {grokHeader}
@@ -1700,6 +1754,12 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         </div>
       ) : null}
 
+      {!planMode && buildMode ? (
+        <div className="border-t border-amber-800/50 bg-amber-950/20 px-3 py-1.5 font-mono text-[10px] text-amber-200/90">
+          Build mode locked — todo → explore tools → real diffs in content this turn
+          {thoughtOn ? ' · Thought: Goal / Inspect / steps in reasoning first' : ''}.
+        </div>
+      ) : null}
       {planMode ? (
         <div className="border-t border-sky-800/60 bg-sky-950/30 px-3 py-2">
           <div className="font-mono text-[10px] uppercase tracking-wide text-sky-300">

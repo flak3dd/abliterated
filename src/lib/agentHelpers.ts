@@ -285,8 +285,34 @@ export function needsBuildProtocol(userText: string): boolean {
 
 /** Short reminder; full Work rules live in SYSTEM_PROMPT. */
 export const BUILD_PROCESS_SECTION =
-  '## Work — ACTIVE\n' +
-  'Reason (goal / inspect / step # why success) — no code, diffs, bash fences, or // path files in reasoning. Call `todo` (3–12). Explore with tools. Scaffold then implement with ```diff in content. Tick todos via merge=true. One verify bash fence. Do not stop at a list. Do not spawn other coding CLIs.';
+  '## Build mode — LOCKED (implementation run)\n' +
+  'This turn MUST follow this order in CONTENT (reasoning never executes):\n' +
+  '1. If Thought is on: Goal / Inspect / step # — why — success in the reasoning channel. No code there.\n' +
+  '2. Call `todo` with 3–12 items (scaffold first if new files/folders).\n' +
+  '3. Explore with list_dir/glob/grep/semantic_search/read_file — do not invent listings.\n' +
+  '4. Emit real ```diff or // relative/path fences in CONTENT and `todo` merge=true to tick items.\n' +
+  '5. After a meaningful change, one scoped verify ```bash fence.\n' +
+  'A ToDo or essay with no diffs is a FAILED build. Do not stop at the list. Do not spawn other coding CLIs.';
+
+export function buildThoughtModeNudge(): string {
+  return (
+    '## Thought mode — LOCKED\n' +
+    'Fill the reasoning channel FIRST this turn, before tools and before content, exactly:\n' +
+    'Goal: <one line>\n' +
+    'Inspect: <tools/paths you will call — never invent their results>\n' +
+    '1. <step> — why: <...> — success: <...>\n' +
+    'After every tool result: one line on what changed.\n' +
+    'CODE IN THOUGHT IS DISCARDED. Never write source, diffs, bash fences, JSON blobs, or // path files in reasoning. All code goes to files via CONTENT (```diff or // relative/path) only.\n' +
+    'Then put the user-facing answer in content (Plan: checklist only; Build: diffs in content). Reasoning-only is incomplete unless Plan mode forbids implementation.'
+  );
+}
+
+export function buildBuildModeAlwaysNudge(): string {
+  return (
+    '## Build mode — ON\n' +
+    'Prefer shipping the change over advice. If this request touches files, run the Build lock: todo → explore tools → real diffs in content this turn. Skip the full ToDo only for a trivial one-shot (typo, single read).'
+  );
+}
 
 /** True for an actual build request (not every multi-step chat). Plan mode never builds. */
 export function shouldApplyBuildProcess(
@@ -469,11 +495,14 @@ export function filterPlanModeTools(enabled: readonly ToolType[]): ToolType[] {
 
 export function buildPlanModeNudge(): string {
   return (
-    '## Plan mode — ACTIVE (read-only)\n' +
-    'Tools: read_file, grep, glob, list_dir, file_outline, semantic_search, git_status, git_diff, web_fetch, web_search, todo, list_skills, read_skill, suggest_skill. ' +
-    'No shell/write/git_commit/create_pr/checkpoint_restore/generate_image/write_skill and no diffs.\n' +
-    'Reasoning: outline only (goal, inspect, step # / why / success). Never write code, diffs, bash fences, or // path files in reasoning.\n' +
-    'Content: Plan checklist (todo tool or bullets) only, then stop. Skip the completion footer until Plan is approved.'
+    '## Plan mode — LOCKED (read-only). Overrides Build. Writes are blocked.\n' +
+    'FORBIDDEN in content AND reasoning: unified diffs, ```diff, ```bash, // path files, write/shell/git_commit/create_pr/write_skill, applying patches.\n' +
+    'ALLOWED tools: read_file, grep, glob, list_dir, file_outline, semantic_search, git_status, git_diff, web_fetch, web_search, todo, list_skills, read_skill, suggest_skill.\n' +
+    'REQUIRED every reply:\n' +
+    '1. Reasoning (if Thought is on): Goal / Inspect / numbered steps (why + success). No code.\n' +
+    '2. Content MUST start with a checklist (call `todo` or markdown):\n' +
+    'Plan:\n- [ ] …\n- [ ] …\n' +
+    'Then 2–8 short rationale bullets. STOP. No implementation. No completion footer until the operator Approves the plan.'
   );
 }
 

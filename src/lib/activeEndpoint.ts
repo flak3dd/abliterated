@@ -1,4 +1,5 @@
 import type { ClientSettings, InferenceProvider } from '../types';
+import { resolveFeatherlessModelId } from './featherlessQwen.js';
 
 export type ActiveEndpoint = {
   baseUrl: string;
@@ -43,7 +44,7 @@ export function resolveActiveSettings(settings: ClientSettings): ActiveEndpoint 
 
   if (provider === 'featherless') {
     if (settings.featherlessEnabled !== false) {
-      const model = settings.featherlessModel?.trim() || 'Qwen/Qwen2.5-7B-Instruct';
+      const model = resolveFeatherlessModelId(settings.featherlessModel);
       return {
         baseUrl: settings.featherlessBaseUrl?.trim() || 'https://api.featherless.ai/v1',
         token: settings.featherlessToken ?? '',

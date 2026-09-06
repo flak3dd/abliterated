@@ -28,6 +28,7 @@ import {
 } from './agentHelpers';
 import { getLicenseState } from './license';
 import { LEGACY_PROMPTS, SYSTEM_PROMPT } from './systemPrompt';
+import { DEFAULT_FEATHERLESS_MODEL, migrateFeatherlessModel } from './featherlessQwen.js';
 
 export const KEYS = {
   settings: 'ablit_settings',
@@ -85,7 +86,7 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   featherlessEnabled: true,
   featherlessBaseUrl: 'https://api.featherless.ai/v1',
   featherlessToken: '',
-  featherlessModel: 'Qwen/Qwen2.5-7B-Instruct',
+  featherlessModel: DEFAULT_FEATHERLESS_MODEL,
   featherlessViaProxy: false,
   imageGenEnabled: false,
   imageBaseUrl: 'http://127.0.0.1:7860/v1',
@@ -223,7 +224,7 @@ export function getSettings(): ClientSettings {
     !storedPrompt || (LEGACY_PROMPTS as readonly string[]).includes(storedPrompt)
       ? SYSTEM_PROMPT
       : storedPrompt;
-  return {
+  const _settings = {
     ...DEFAULT_SETTINGS,
     ...stored,
     baseUrl: stored.baseUrl?.trim() || DEFAULT_SETTINGS.baseUrl,
@@ -280,7 +281,7 @@ export function getSettings(): ClientSettings {
       return raw;
     })(),
     featherlessToken: stored.featherlessToken ?? DEFAULT_SETTINGS.featherlessToken,
-    featherlessModel: stored.featherlessModel?.trim() || DEFAULT_SETTINGS.featherlessModel,
+    featherlessModel: /* migrated below */ stored.featherlessModel?.trim() || DEFAULT_SETTINGS.featherlessModel,
     featherlessViaProxy: (() => {
       const raw = stored.featherlessBaseUrl?.trim() || '';
       const legacyLocal =
@@ -305,6 +306,17 @@ export function getSettings(): ClientSettings {
       typeof stored.webSearchSearxUrl === 'string' ? stored.webSearchSearxUrl.trim() : '',
     systemPrompt,
   };
+  const flMig = migrateFeatherlessModel(stored.featherlessModel ?? _settings.featherlessModel);
+  if (flMig.migrated) {
+    _settings.featherlessModel = flMig.model;
+    if (flMig.patch) {
+      _settings.reasoning = flMig.patch.reasoning;
+      _settings.coalesceReasoningToContent = flMig.patch.coalesceReasoningToContent;
+    }
+  } else {
+    _settings.featherlessModel = flMig.model;
+  }
+  return _settings;
 }
 
 export function setSettings(settings: ClientSettings): void {

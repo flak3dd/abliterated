@@ -5,19 +5,100 @@ const FENCE_RE = /```[^\n]*\n[\s\S]*?```/g;
 const TOOL_NAME_RE =
   /\b(list_dir|read_file|grep|glob|file_outline|semantic_search|git_status|git_diff|git_commit|create_pr|web_fetch|web_search|write_file|apply_patch|apply_diff|delete_file|shell|list_skills|read_skill|suggest_skill|write_skill)\b/;
 
-/** Drop fenced code, unified diffs, and //path dumps so plan/reasoning stays prose. */
+const CODE_LINE_RE =
+  /^(?:import\s|export\s|from\s['"]|const\s|let\s|var\s|function\s|async\s+function|class\s|type\s|interface\s|enum\s|def\s|fn\s|pub\s|impl\s|struct\s|#include\s|using\s|package\s|return\s|if\s*\(|for\s*\(|while\s*\(|switch\s*\(|<\/?[A-Z][A-Za-z0-9]+[\s/>]|[{}\[\];]\s*$|\/\/\s|\/\*|\*\s)/;
+
+function isCodeLine(line: string): boolean {
+  const s = line.trim();
+  if (!s) return false;
+  if (/^(goal|inspect|plan|delta|success|risks?)\s*:/i.test(s)) return false;
+  if (/^\d+[.)]\s+/.test(s) && !/[;{}].*(?:=>|function |const |import )/.test(s)) return false;
+  if (/^[-*]\s+/.test(s) && !CODE_LINE_RE.test(s.slice(2).trim())) return false;
+  if (CODE_LINE_RE.test(s)) return true;
+  if (/=>/.test(s) && /[)\]}]/.test(s)) return true;
+  if (/[{};]\s*$/.test(s) && /[=(){}]/.test(s) && !/^\d+[.)]/.test(s)) return true;
+  return false;
+}
+
+function stripCodeRuns(text: string): string {
+  const lines = text.split('\n');
+  const out: string[] = [];
+  let run: string[] = [];
+  const flushRun = () => {
+    if (run.length >= 2 || (run.length === 1 && /[;{}]|import |function |class |const |def /.test(run[0]))) {
+      run = [];
+      return;
+    }
+    out.push(...run);
+    run = [];
+  };
+  for (const line of lines) {
+    if (isCodeLine(line) || /^(?: {4}|\t)/.test(line) && line.trim()) {
+      run.push(line);
+    } else {
+      flushRun();
+      out.push(line);
+    }
+  }
+  flushRun();
+  return out.join('\n');
+}
+
+/** Drop fenced code, unified diffs, //path dumps, and code runs so thought stays prose. */
 export function stripImplementationFromText(text: string): string {
   let t = String(text || '');
   if (!t.trim()) return '';
   t = t.replace(FENCE_RE, '');
+  t = t.replace(/```[\s\S]*$/g, '');
   t = t.replace(/^diff --git .+\n/gm, '');
   t = t.replace(/^--- (?:a\/|\/dev\/null).*\n\+\+\+ b\/.*\n(?:@@.*\n(?:[-+ ].*\n)*)*/gm, '');
   t = t.replace(/^\/\/ [\w./+-]+\s*\n(?:(?:import |export |const |let |var |function |class |type |interface |from |def |fn |pub |#include ).*\n)+/gm, '');
+  t = t.replace(/(?:^(?: {4}|\t).+\n){2,}/gm, '');
+  t = stripCodeRuns(t);
   return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+export const THOUGHT_CODE_MOVED_NOTE =
+  '(Code stripped from thought — write files with ```diff or // path in content only.)';
+
 export const PLAN_CODE_OMITTED_NOTE =
   'Plan mode is read-only. Checklist only — Approve to write code.';
+
+/**
+ * Thought must stay prose. Code/diffs/fences are stripped from reasoning.
+ * When liftToContent is on (not Plan), those fences are appended to content so they can be written to files.
+ */
+export function enforceThoughtNoCode(
+  assistant: { content: string; reasoning?: string },
+  opts?: { liftToContent?: boolean },
+): boolean {
+  const raw = assistant.reasoning || '';
+  if (!raw.trim()) return false;
+  const lifted = liftReasoningWork(raw);
+  const prose = stripImplementationFromText(raw);
+  let changed = false;
+  if (prose) {
+    if (prose !== raw.trim()) {
+      assistant.reasoning = prose;
+      changed = true;
+    }
+  } else if (lifted) {
+    assistant.reasoning = THOUGHT_CODE_MOVED_NOTE;
+    changed = true;
+  } else if (raw.trim()) {
+    assistant.reasoning = undefined;
+    changed = true;
+  }
+  if (lifted && opts?.liftToContent !== false) {
+    const c = assistant.content || '';
+    const sig = lifted.slice(0, Math.min(80, lifted.length));
+    if (!c.includes(sig)) {
+      assistant.content = c.trim() ? `${c.trimEnd()}\n\n${lifted}` : lifted;
+      changed = true;
+    }
+  }
+  return changed;
+}
 
 /** Fenced blocks, unified diffs, or whole-file path dumps sitting in reasoning. */
 export function liftReasoningWork(reasoning: string): string {

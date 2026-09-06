@@ -12,9 +12,8 @@ const outDir = path.join(root, 'dist-test-sse-parse');
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
 execFileSync(
-  'npx',
+  'node_modules/.bin/tsc',
   [
-    'tsc',
     'src/lib/sseParse.ts',
     '--outDir',
     outDir,
@@ -32,6 +31,7 @@ const mod = await import(pathToFileURL(path.join(outDir, 'sseParse.js')).href);
 const {
   extractTextPart,
   applyCompletionChunk,
+  completionChunkError,
   thinkingChatTemplateKwargs,
   isThinkingFamilyModel,
 } = mod;
@@ -146,9 +146,26 @@ assert.equal(toolMsg.result.finishReason, 'tool_calls');
 
 assert.equal(isThinkingFamilyModel('Qwen/Qwen3-32B'), true);
 assert.equal(isThinkingFamilyModel('Qwen/Qwen2.5-7B-Instruct'), false);
-assert.deepEqual(thinkingChatTemplateKwargs('Qwen/Qwen3-32B', 'max'), { enable_thinking: true });
+assert.deepEqual(thinkingChatTemplateKwargs('Qwen/Qwen3-32B', 'max'), { enable_thinking: true, thinking_budget: 16384 });
 assert.deepEqual(thinkingChatTemplateKwargs('Qwen/Qwen3-32B', 'off'), { enable_thinking: false });
 assert.equal(thinkingChatTemplateKwargs('Qwen/Qwen2.5-7B-Instruct', 'max'), undefined);
+assert.equal(thinkingChatTemplateKwargs('Qwen/Qwen3.5-27B', 'max').preserve_thinking, true);
+assert.equal(thinkingChatTemplateKwargs('Qwen/Qwen3-32B', 'low').thinking_budget, 1024);
+
+
+const objectReasoning = collect({
+  choices: [{ delta: { reasoning: { content: 'hidden think' } }, finish_reason: 'length' }],
+});
+assert.equal(objectReasoning.reasoning, 'hidden think');
+assert.equal(objectReasoning.result.finishReason, 'length');
+
+const choiceText = collect({
+  choices: [{ text: 'plain completion text', finish_reason: 'stop' }],
+});
+assert.equal(choiceText.content, 'plain completion text');
+
+assert.equal(completionChunkError({ error: { message: 'model overloaded' } }), 'model overloaded');
+assert.equal(completionChunkError({ choices: [] }), null);
 
 fs.rmSync(outDir, { recursive: true, force: true });
 console.log('test-sse-parse: ok');

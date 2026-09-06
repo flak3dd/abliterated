@@ -6,7 +6,14 @@ import { coalesceFetch } from '../lib/coalesceFetch';
 import { cn } from '../lib/cn';
 import { setSettings } from '../lib/storage';
 import { ModelFamilyChip, ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
+import { classifyModel } from '../lib/modelSettingsGuide';
 import type { ClientSettings, Tab } from '../types';
+import {
+  DEFAULT_FEATHERLESS_MODEL,
+  FEATHERLESS_EMPTY_STATE,
+  abliterationGradeFeatherlessPatch,
+  filterFeatherlessQwenModels,
+} from '../lib/featherlessQwen';
 
 interface Props {
   settings: ClientSettings;
@@ -24,6 +31,8 @@ interface ModelItem {
   available_on_current_plan?: boolean;
   training?: string;
   name?: string;
+  /** Native tool/function calling when the catalog says so. */
+  toolUse?: boolean;
 }
 
 type SortMode = 'ranking' | 'name';
@@ -37,6 +46,25 @@ function isAbliteratedModel(m: ModelItem): boolean {
   if (ABLIT_RE.test(m.owned_by || '')) return true;
   if (typeof m.name === 'string' && ABLIT_RE.test(m.name)) return true;
   return false;
+}
+
+function readToolUse(raw: Record<string, unknown>): boolean | undefined {
+  const features = raw.features;
+  if (features && typeof features === 'object') {
+    const f = features as Record<string, unknown>;
+    if (f.tool_use === true || f.tool_calling === true || f.tools === true) return true;
+    if (f.tool_use === false || f.tool_calling === false) return false;
+  }
+  const caps = raw.capabilities;
+  if (Array.isArray(caps) && caps.some((c) => /tool/i.test(String(c)))) return true;
+  if (typeof caps === 'string' && /tool/i.test(caps)) return true;
+  return undefined;
+}
+
+function modelUsesTools(m: ModelItem): boolean {
+  if (m.toolUse === true) return true;
+  if (m.toolUse === false) return false;
+  return classifyModel(m.id).toolsLikely;
 }
 
 function normalizeModel(raw: Record<string, unknown>): ModelItem | null {
@@ -53,6 +81,8 @@ function normalizeModel(raw: Record<string, unknown>): ModelItem | null {
   }
   if (typeof raw.training === 'string') out.training = raw.training;
   if (typeof raw.name === 'string') out.name = raw.name;
+  const toolUse = readToolUse(raw);
+  if (toolUse != null) out.toolUse = toolUse;
   return out;
 }
 
@@ -75,6 +105,7 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [activeOnly, setActiveOnly] = useState(false);
   const [abliteratedOnly, setAbliteratedOnly] = useState(false);
+  const [toolsOnly, setToolsOnly] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('ranking');
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
@@ -106,7 +137,7 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
       }
       if (settings.inferenceProvider === 'featherless' && settings.featherlessEnabled === false) {
         setError('Featherless selected but endpoint is not marked available.');
-        setModels([{ id: resolved.defaultModel || 'Qwen/Qwen2.5-7B-Instruct', owned_by: 'inactive' }]);
+        setModels([{ id: resolved.defaultModel || 'Qwen/Qwen3-32B', owned_by: 'inactive' }]);
         setHasMore(false);
         return;
       }
@@ -147,6 +178,7 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
           if (q) params.set('q', q);
           if (activeOnly) params.set('available_on_current_plan', 'true');
           if (abliteratedOnly) params.set('training', 'abliterated');
+          if (toolsOnly) params.set('capabilities', 'tool-use');
           url = appendQuery(base, params);
         }
 
@@ -179,7 +211,12 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
           )
           .filter((m): m is ModelItem => m != null);
 
-        const next = list.length ? list : [{ id: resolved.defaultModel || 'abliterated-model' }];
+        let next = list.length ? list : [{ id: resolved.defaultModel || 'abliterated-model' }];
+        if (resolved.provider === 'featherless') {
+          const filteredLarge = filterFeatherlessQwenModels(list);
+          next = filteredLarge.length ? filteredLarge : (list.length ? [] : [{ id: resolved.defaultModel || DEFAULT_FEATHERLESS_MODEL, owned_by: 'filter' }]);
+          if (!filteredLarge.length && list.length) setError(FEATHERLESS_EMPTY_STATE);
+        }
         setPage(pageNum);
         setHasMore(resolved.provider === 'featherless' && list.length >= PER_PAGE);
         setModels((prev) => {
@@ -204,7 +241,7 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
         setLoading(false);
       }
     },
-    [settings, sortMode, debouncedQuery, activeOnly, abliteratedOnly],
+    [settings, sortMode, debouncedQuery, activeOnly, abliteratedOnly, toolsOnly],
   );
 
   useEffect(() => {
@@ -227,6 +264,7 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
     isFeatherless ? debouncedQuery : null,
     isFeatherless ? activeOnly : null,
     isFeatherless ? abliteratedOnly : null,
+    isFeatherless ? toolsOnly : null,
   ]);
 
   const select = (id: string) => {
@@ -255,6 +293,10 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
 
     if (abliteratedOnly) {
       list = list.filter(isAbliteratedModel);
+    }
+
+    if (toolsOnly) {
+      list = list.filter((m) => m.id === selectedId || modelUsesTools(m));
     }
 
     if (activeOnly && !isFeatherless) {
@@ -292,7 +334,7 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
     }
 
     return list;
-  }, [models, query, abliteratedOnly, activeOnly, isFeatherless, sortMode, selectedId]);
+  }, [models, query, abliteratedOnly, toolsOnly, activeOnly, isFeatherless, sortMode, selectedId]);
 
   const toggleChip = (on: boolean) =>
     cn(
@@ -314,6 +356,12 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
           {loading ? 'Loading…' : 'Refresh'}
         </button>
       </div>
+      {isFeatherless ? (
+        <div className="mb-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 font-mono text-[10px] leading-5 text-emerald-100/90">
+          Large Qwen only (Abliteration-grade agent path) — dense ≥32B or activated ≥16B; A3B rejected; Qwen3.8-27B abliterated exception.
+          <button type="button" className="ml-2 underline text-emerald-300" onClick={() => { const next = { ...settings, ...abliterationGradeFeatherlessPatch() }; setSettings(next); onSettingsChange(next); }}>Apply Abliteration-grade preset</button>
+        </div>
+      ) : null}
 
       <div className="relative mb-2">
         <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
@@ -352,6 +400,19 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
         >
           Abliterated
         </button>
+        <button
+          type="button"
+          aria-pressed={toolsOnly}
+          onClick={() => setToolsOnly((v) => !v)}
+          className={toggleChip(toolsOnly)}
+          title={
+            isFeatherless
+              ? 'Filter to models with native tool calling (Featherless capabilities=tool-use)'
+              : 'Filter to models that look like they support native tool / function calling'
+          }
+        >
+          Tools
+        </button>
         <span className="mx-0.5 text-muted">|</span>
         <button
           type="button"
@@ -374,6 +435,9 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
       </div>
 
       {error ? <div className="mb-2 font-mono text-[11px] text-red-400">{error}</div> : null}
+      {isFeatherless && !loading && !error && filtered.length === 0 ? (
+        <div className="mb-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-2 font-mono text-[11px] text-amber-100">{FEATHERLESS_EMPTY_STATE}</div>
+      ) : null}
 
       {selectedId ? (
         <ModelSettingsGuidePanel
@@ -389,13 +453,14 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
         {query.trim() ? ` · filter "${query.trim()}"` : ''}
         {activeOnly ? ' · active' : ''}
         {abliteratedOnly ? ' · abliterated' : ''}
+        {toolsOnly ? ' · tools' : ''}
       </div>
 
       <ul className="divide-y divide-border rounded border border-border">
         {filtered.length === 0 ? (
           <li className="px-3 py-6 text-center font-mono text-[11px] text-muted">
             No models match{query.trim() ? ` "${query.trim()}"` : ''}.
-            {query.trim() || activeOnly || abliteratedOnly ? (
+            {query.trim() || activeOnly || abliteratedOnly || toolsOnly ? (
               <button
                 type="button"
                 className="ml-2 text-zinc-300 underline hover:text-zinc-100"
@@ -403,6 +468,7 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
                   setQuery('');
                   setActiveOnly(false);
                   setAbliteratedOnly(false);
+                  setToolsOnly(false);
                 }}
               >
                 Clear
@@ -423,6 +489,11 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
                 <span className="min-w-0 truncate pr-2">{m.id}</span>
                 <span className="flex shrink-0 items-center gap-1.5 text-[10px] text-muted">
                   <ModelFamilyChip model={m.id} />
+                  {modelUsesTools(m) ? (
+                    <span className="rounded border border-emerald-800/80 px-1 py-px font-mono text-[9px] uppercase tracking-wide text-emerald-400/90">
+                      tools
+                    </span>
+                  ) : null}
                   {isAbliteratedModel(m) ? 'ablit · ' : ''}
                   {m.owned_by || 'remote'}
                 </span>

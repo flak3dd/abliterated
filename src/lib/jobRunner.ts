@@ -8,6 +8,9 @@ import { buildJobCompletenessSystemBlock } from "./deepenComplete";
 import {
   buildLargeJobNudge,
   buildReasoningThenBuildNudge,
+  buildBuildModeAlwaysNudge,
+  buildThoughtModeNudge,
+  buildPlanModeNudge,
   buildBuildModeImplementNudge,
   clampMaxAgentTurns,
   EMPTY_CONTENT_REPLY_NOTE,
@@ -19,8 +22,11 @@ import {
   shouldApplyBuildProcess,
 } from "./agentHelpers";
 import { finalizeReasoningChannel } from "./agentPhase";
+import { enforceThoughtNoCode } from "./reasoningWork";
 import { executeMcpToolCall } from "./mcpClient";
 import { streamChatCompletion } from "./sse";
+import { buildModelAgentProfile } from "./modelAgentProfile";
+import { peekFeatherlessModel } from "./featherlessLimits";
 import { getJobs, getSettings, getWorkspace, setJobs, uid, upsertJob } from "./storage";
 import { workspaceGate } from "./workspaceGuard";
 import type { ChatOpenAiMessage, ClientSettings, Job, ToolType } from "../types";
@@ -204,11 +210,22 @@ async function runJob(initial: Job, settings: ClientSettings) {
   const deepenCompletenessBlock = buildJobCompletenessSystemBlock({
     deepenCompleteness: settings.deepenCompleteness !== false,
   });
+  const jobPeek = peekFeatherlessModel(active.defaultModel);
+  const jobProfile = buildModelAgentProfile({
+    model: active.defaultModel,
+    provider: active.provider,
+    reasoning: settings.reasoning,
+    planMode: settings.planModeEnabled === true,
+    buildMode: settings.buildModeEnabled !== false,
+    toolUse: jobPeek?.toolUse,
+    contextLength: jobPeek?.contextLength,
+    enabledTools,
+  });
   const systemParts = [
     settings.systemPrompt || "",
     projectMemoryBlock,
-    skillsCatalogBlock,
-    workspaceSkillsBlock,
+    !jobProfile.compactPrompt ? skillsCatalogBlock : "",
+    !jobProfile.compactPrompt ? workspaceSkillsBlock : "",
     workspaceRoot
       ? `Workspace root: ${workspaceRoot}. Prefer relative paths. You are running as a headless background job.`
       : "No workspace root set. Connect the bridge Workspace before relying on file tools.",
@@ -217,7 +234,18 @@ async function runJob(initial: Job, settings: ClientSettings) {
       : "Auto-accept edits is OFF — gated write tools skip in headless mode.",
     settings.autoRunShell ? "Auto-run shell is ON." : "Auto-run shell is OFF — shell skips in headless mode.",
     deepenCompletenessBlock,
-    buildProcess ? buildReasoningThenBuildNudge() : large ? buildLargeJobNudge() : "",
+    jobProfile.systemAddendum,
+    jobProfile.useThoughtLock ? buildThoughtModeNudge() : '',
+    settings.planModeEnabled === true ? buildPlanModeNudge() : '',
+    settings.planModeEnabled === true
+      ? ''
+      : buildProcess
+        ? buildReasoningThenBuildNudge()
+        : settings.buildModeEnabled !== false
+          ? buildBuildModeAlwaysNudge()
+          : large
+            ? buildLargeJobNudge()
+            : '',
   ].filter(Boolean);
 
   if (projectMemoryBlock) job = appendLog(job, "auto-loaded project AGENTS.md / convention files");
@@ -267,7 +295,10 @@ async function runJob(initial: Job, settings: ClientSettings) {
       // Finalize/coalesce BEFORE applyGrokEdits so diffs in reasoning are promoted first.
       const coalesceOn = settings.coalesceReasoningToContent !== false;
       const bubble = { content: assistantText, reasoning: assistantReasoning || undefined };
-      if (finalizeReasoningChannel(bubble, coalesceOn)) {
+      enforceThoughtNoCode(bubble, { liftToContent: settings.planModeEnabled !== true });
+      assistantText = bubble.content;
+      assistantReasoning = bubble.reasoning || "";
+      if (finalizeReasoningChannel(bubble, coalesceOn && settings.planModeEnabled !== true)) {
         assistantText = bubble.content;
         assistantReasoning = bubble.reasoning || "";
         job = appendLog(

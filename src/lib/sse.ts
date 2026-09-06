@@ -9,7 +9,26 @@ import {
   isBuiltinEndpoint,
   recordBuiltinUsage,
 } from './builtinTokens';
-import { applyCompletionChunk, thinkingChatTemplateKwargs } from './sseParse';
+import {
+  applyCompletionChunk,
+  completionChunkError,
+  isThinkingFamilyModel,
+  thinkingChatTemplateKwargs,
+} from './sseParse';
+import {
+  defaultContextWindow,
+  fitChatPayload,
+  isInvalidRequestError,
+  parseContextLengthError,
+  sanitizeOpenAiMessages,
+} from './contextWindow';
+import { describeChatBody, extractHttpErrorMessage } from './providerError';
+import { resolveFeatherlessContextWindow } from './featherlessLimits';
+import { buildModelAgentProfile } from './modelAgentProfile';
+import {
+  featherlessEligibleContext,
+  isLargeQwenAgentModel,
+} from './featherlessQwen.js';
 
 export interface StreamChatArgs {
   settings: ClientSettings;
@@ -290,20 +309,15 @@ export const CHAT_TOOLS = [
         properties: {
           items: {
             type: 'array',
-            description: 'Checklist items as strings or {text, done} / {content, status} objects',
+            description: 'Checklist items as {text, done} objects',
             items: {
-              anyOf: [
-                { type: 'string' },
-                {
-                  type: 'object',
-                  properties: {
-                    text: { type: 'string' },
-                    content: { type: 'string' },
-                    done: { type: 'boolean' },
-                    status: { type: 'string', description: 'pending | completed | in_progress' },
-                  },
-                },
-              ],
+              type: 'object',
+              properties: {
+                text: { type: 'string' },
+                content: { type: 'string' },
+                done: { type: 'boolean' },
+                status: { type: 'string', description: 'pending | completed | in_progress' },
+              },
             },
           },
           todos: { type: 'array', description: 'Alias for items' },
@@ -571,15 +585,86 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     headers['X-Title'] = 'ablit';
   }
 
-  const tools = filterChatTools(enabledTools, { imageGenEnabled: settings.imageGenEnabled === true, skillsEnabled: settings.skillsEnabled !== false, extraTools });
+  const featherless = active.provider === 'featherless';
+  let contextWindow = defaultContextWindow(active.provider, settings.contextLength);
+  let liveToolUse: boolean | undefined;
+  if (featherless) {
+    const extra: Record<string, string> = {
+      'HTTP-Referer': 'http://localhost:5173',
+      'X-Title': 'ablit',
+    };
+    const limits = await resolveFeatherlessContextWindow({
+      modelsUrl: endpointUrl(
+        {
+          baseUrl: active.baseUrl,
+          sparkViaProxy: active.sparkViaProxy,
+          featherlessViaProxy: active.featherlessViaProxy,
+          inferenceProvider: active.provider,
+        },
+        '/models',
+      ),
+      planUrl: endpointUrl(
+        {
+          baseUrl: active.baseUrl,
+          sparkViaProxy: active.sparkViaProxy,
+          featherlessViaProxy: active.featherlessViaProxy,
+          inferenceProvider: active.provider,
+        },
+        '/plan',
+      ),
+      token: active.token,
+      model,
+      settingsContext: settings.contextLength,
+      fallback: 32768,
+      extraHeaders: extra,
+      abortSignal,
+    });
+    contextWindow = isLargeQwenAgentModel(model)
+      ? featherlessEligibleContext(limits.modelContext ?? limits.contextWindow, limits.contextWindow)
+      : limits.contextWindow;
+    liveToolUse = limits.toolUse;
+  }
+  const profile = buildModelAgentProfile({
+    model,
+    provider: active.provider,
+    reasoning: settings.reasoning,
+    toolUse: liveToolUse,
+    contextLength: contextWindow,
+    enabledTools,
+  });
+  const tools = profile.sendTools
+    ? filterChatTools(profile.toolNames as ToolType[], {
+        imageGenEnabled: settings.imageGenEnabled === true,
+        skillsEnabled: settings.skillsEnabled !== false && !profile.compactPrompt,
+        extraTools: profile.allowMcp ? extraTools : undefined,
+      })
+    : [];
+  // Featherless docs: resend reasoning_content across tool calls for thinking models.
+  // Strip only when reasoning is off or the checkpoint is a non-thinking instruct family.
+  const stripReasoning =
+    featherless &&
+    (settings.reasoning === 'off' || !isThinkingFamilyModel(model)); // Instruct / off only — keep for Qwen3/QwQ
+  const safeMessages = sanitizeOpenAiMessages(messages, { stripReasoning });
+  if (safeMessages[0]?.role === 'system') {
+    const sys = safeMessages[0].content || '';
+    if (!sys.includes('## Model profile')) {
+      safeMessages[0] = { ...safeMessages[0], content: `${sys}\n\n${profile.systemAddendum}` };
+    }
+  } else {
+    safeMessages.unshift({ role: 'system', content: profile.systemAddendum });
+  }
   const body: Record<string, unknown> = {
     model,
     stream: true,
-    messages,
+    messages: safeMessages,
   };
   if (tools.length) {
     body.tools = tools;
-    body.tool_choice = toolChoice || 'auto';
+    // Eligible large Qwen: honor tool_choice (incl. required). Force auto only when not tool-capable.
+    body.tool_choice =
+      featherless && (!isLargeQwenAgentModel(model) || liveToolUse === false)
+        ? 'auto'
+        : toolChoice || 'auto';
   }
   // contextLength is a UI/docs hint for model window — never send it as OpenAI max_tokens.
   const maxTokens =
@@ -587,14 +672,45 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     (settings as ClientSettings & { maxTokens?: number }).maxTokens! > 0
       ? Math.floor((settings as ClientSettings & { maxTokens?: number }).maxTokens!)
       : 4096;
-  body.max_tokens = maxTokens;
+  if (
+    featherless &&
+    isThinkingFamilyModel(model) &&
+    settings.reasoning !== 'off' &&
+    maxTokens < 8192
+  ) {
+    body.max_tokens = 8192;
+  } else {
+    body.max_tokens = maxTokens;
+  }
   if (usingBuiltin) {
     body.stream_options = { include_usage: true };
   }
-  if (active.provider === 'featherless') {
+  if (featherless) {
     const kwargs = thinkingChatTemplateKwargs(model, settings.reasoning);
     if (kwargs) body.chat_template_kwargs = kwargs;
   }
+  const applyFit = (window: number, charsPerToken?: number) => {
+    const fitted = fitChatPayload({
+      messages: safeMessages,
+      tools: tools.length ? tools : undefined,
+      contextWindow: window,
+      maxTokens,
+      charsPerToken,
+    });
+    body.messages = sanitizeOpenAiMessages(fitted.messages, { stripReasoning });
+    if (fitted.tools?.length) {
+      body.tools = fitted.tools;
+      body.tool_choice =
+      featherless && (!isLargeQwenAgentModel(model) || liveToolUse === false)
+        ? 'auto'
+        : toolChoice || 'auto';
+    } else {
+      delete body.tools;
+      delete body.tool_choice;
+    }
+    return fitted;
+  };
+  applyFit(contextWindow);
 
   let res: Response;
   try {
@@ -618,7 +734,81 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
 
   if (!res.ok) {
     const errText = await res.text().catch(() => res.statusText);
-    const snippet = errText.slice(0, 400);
+    const snippet = errText.slice(0, 800);
+    const ctxErr = parseContextLengthError(snippet);
+    if (ctxErr && res.status >= 400 && res.status < 500) {
+      const scale = ctxErr.limit / Math.max(ctxErr.prompt, 1);
+      applyFit(ctxErr.limit, Math.max(1.5, 3 * scale * 0.85));
+      let retryCtx: Response;
+      try {
+        retryCtx = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal: abortSignal,
+        });
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') throw err;
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(`Chat retry after context trim failed (${active.provider}): ${detail}`);
+      }
+      if (!retryCtx.ok) {
+        const retryText = await retryCtx.text().catch(() => retryCtx.statusText);
+        throw new Error(
+          `HTTP ${retryCtx.status}: ${extractHttpErrorMessage(retryCtx.status, retryText)} [${describeChatBody(body)}]`,
+        );
+      }
+      if (!retryCtx.body) throw new Error('Empty response body');
+      res = retryCtx;
+    } else if (featherless && res.status >= 400 && res.status < 500 && isInvalidRequestError(snippet)) {
+      // Locked: strip min_tokens / chat_template_kwargs first; do not drop tools first unless tool_use===false.
+      delete body.min_tokens;
+      delete body.chat_template_kwargs;
+      body.stream = true;
+      const keepReasoning = !stripReasoning;
+      let stripped = sanitizeOpenAiMessages(safeMessages, { stripReasoning: !keepReasoning });
+      if (liveToolUse === false) {
+        delete body.tools;
+        delete body.tool_choice;
+        stripped = stripped
+          .filter((m) => m.role !== 'tool')
+          .map((m) => {
+            const { tool_calls: _tc, ...rest } = m as ChatOpenAiMessage & { tool_calls?: unknown };
+            return rest as ChatOpenAiMessage;
+          });
+      }
+      const fitted = fitChatPayload({
+        messages: stripped,
+        tools: body.tools as unknown[] | undefined,
+        contextWindow,
+        maxTokens: typeof body.max_tokens === 'number' ? (body.max_tokens as number) : maxTokens,
+      });
+      body.messages = fitted.messages;
+      if (fitted.tools?.length) {
+        body.tools = fitted.tools;
+      }
+      let retryInv: Response;
+      try {
+        retryInv = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal: abortSignal,
+        });
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') throw err;
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(`Chat retry after invalid-params strip failed (${active.provider}): ${detail}`);
+      }
+      if (!retryInv.ok) {
+        const retryText = await retryInv.text().catch(() => retryInv.statusText);
+        throw new Error(
+          `HTTP ${retryInv.status}: ${extractHttpErrorMessage(retryInv.status, retryText)} [${describeChatBody(body)}]`,
+        );
+      }
+      if (!retryInv.body) throw new Error('Empty response body');
+      res = retryInv;
+    } else {
     const usedRequired = body.tool_choice === 'required';
     const mentionsToolChoice = /tool_choice|tool choice|toolChoice/i.test(snippet);
     if (usedRequired && res.status >= 400 && res.status < 500 && mentionsToolChoice) {
@@ -640,7 +830,9 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
       }
       if (!retry.ok) {
         const retryText = await retry.text().catch(() => retry.statusText);
-        throw new Error(`HTTP ${retry.status}: ${retryText.slice(0, 400)}`);
+        throw new Error(
+          `HTTP ${retry.status}: ${extractHttpErrorMessage(retry.status, retryText)} [${describeChatBody(body)}]`,
+        );
       }
       if (!retry.body) throw new Error('Empty response body');
       res = retry;
@@ -675,7 +867,10 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
           : res.status >= 500
             ? ' Provider server error.'
             : '';
-      throw new Error(`HTTP ${res.status}: ${snippet}${hint}`);
+      throw new Error(
+        `HTTP ${res.status}: ${extractHttpErrorMessage(res.status, snippet)} [${describeChatBody(body)}]${hint}`,
+      );
+    }
     }
   }
   const consumeResponse = async (response: Response) => {
@@ -706,6 +901,8 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
       } catch {
         return;
       }
+      const streamErr = completionChunkError(json);
+      if (streamErr) throw new Error(streamErr);
       const applied = applyCompletionChunk(json, {
         onContent: (text) => onDelta(detokenizeArtifacts(text)),
         onReasoning: (text) => {
@@ -739,18 +936,23 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
         buffer = parts.pop() ?? '';
         for (const rawLine of parts) {
           const line = rawLine.replace(/\r$/, '');
-          if (!line.startsWith('data:')) continue;
-          sawSse = true;
-          handleData(line.slice(5).trimStart());
+          if (!line) continue;
+          if (line.startsWith('data:')) {
+            sawSse = true;
+            handleData(line.slice(5).trimStart());
+          } else if (line.startsWith('{')) {
+            handleData(line);
+          }
           if (sawDone) break;
         }
         if (sawDone) break;
       }
-      if (sawSse) {
-        if (!sawDone && buffer.trim().startsWith('data:')) {
-          handleData(buffer.trim().slice(5).trimStart());
-        }
-      } else {
+      const leftover = buffer.trim();
+      if (leftover.startsWith('data:')) {
+        handleData(leftover.slice(5).trimStart());
+      } else if (leftover.startsWith('{')) {
+        handleData(leftover);
+      } else if (!sawSse) {
         const text = rawAll.trim();
         if (text.startsWith('{')) handleData(text);
       }
@@ -770,31 +972,76 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     }
   };
 
-  let consumed = await consumeResponse(res);
-  // Models without native tool-calling often return HTTP 200 with empty choices
-  // when `tools` is set. One retry without tools recovers a text reply.
-  const emptyReply =
-    consumed.completionChars === 0 &&
-    consumed.reasoningChars === 0 &&
-    consumed.toolCalls.length === 0;
-  if (emptyReply && Array.isArray(body.tools) && (body.tools as unknown[]).length) {
-    delete body.tools;
-    delete body.tool_choice;
-    let retryEmpty: Response;
+  const isEmptyReply = (c: { completionChars: number; reasoningChars: number; toolCalls: ToolCallPayload[] }) =>
+    c.completionChars === 0 && c.reasoningChars === 0 && c.toolCalls.length === 0;
+  /** Content channel empty (reasoning-only still counts — Qwen3 often burns max_tokens here). */
+  const isContentEmpty = (c: { completionChars: number; toolCalls: ToolCallPayload[] }) =>
+    c.completionChars === 0 && c.toolCalls.length === 0;
+
+  const postOnce = async (payload: Record<string, unknown>): Promise<Response> => {
     try {
-      retryEmpty = await fetch(url, {
+      return await fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
         signal: abortSignal,
       });
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') throw err;
       const detail = err instanceof Error ? err.message : String(err);
-      throw new Error(`Chat retry without tools failed (${active.provider}): ${detail}`);
+      throw new Error(`Chat request failed (${active.provider}): ${detail}`);
     }
-    if (retryEmpty.ok && retryEmpty.body) {
-      consumed = await consumeResponse(retryEmpty);
+  };
+
+  let consumed = await consumeResponse(res);
+  // Empty / content-empty recovery (Abliteration-grade Featherless path):
+  // 1) Raise max_tokens for thinking models (budget often burns on reasoning).
+  // 2) Keep tools when possible; only drop tools if the whole reply is empty.
+  // 3) Disable thinking only as a last resort — coalesce handles reasoning-only answers.
+  if (
+    featherless &&
+    isThinkingFamilyModel(model) &&
+    isContentEmpty(consumed) &&
+    (consumed.reasoningChars > 0 || isEmptyReply(consumed))
+  ) {
+    const prevMax = typeof body.max_tokens === 'number' ? (body.max_tokens as number) : 4096;
+    if (prevMax < 8192) {
+      body.max_tokens = 8192;
+      const kwargs = thinkingChatTemplateKwargs(model, settings.reasoning);
+      if (kwargs) body.chat_template_kwargs = kwargs;
+      body.stream = true;
+      const retryBudget = await postOnce(body);
+      if (retryBudget.ok && retryBudget.body) {
+        const again = await consumeResponse(retryBudget);
+        if (!isContentEmpty(again) || again.reasoningChars > consumed.reasoningChars) {
+          consumed = again;
+        }
+      }
+    }
+  }
+  // Locked: keep tools on empty 200s. Only drop tools when catalog says tool_use===false.
+  if (isEmptyReply(consumed) && liveToolUse === false && Array.isArray(body.tools) && (body.tools as unknown[]).length) {
+    delete body.tools;
+    delete body.tool_choice;
+    const retryTools = await postOnce(body);
+    if (retryTools.ok && retryTools.body) consumed = await consumeResponse(retryTools);
+  }
+  if (isEmptyReply(consumed)) {
+    body.stream = false;
+    const retryJson = await postOnce(body);
+    if (retryJson.ok) consumed = await consumeResponse(retryJson);
+  }
+  // Thinking-off retry keeps tools; last resort when still fully empty.
+  if (featherless && isThinkingFamilyModel(model) && isEmptyReply(consumed)) {
+    body.chat_template_kwargs = { enable_thinking: false };
+    body.stream = false;
+    if (typeof body.max_tokens === 'number' && (body.max_tokens as number) < 8192) {
+      body.max_tokens = 8192;
+    }
+    const retryThink = await postOnce(body);
+    if (retryThink.ok && retryThink.body) {
+      const again = await consumeResponse(retryThink);
+      if (!isEmptyReply(again)) consumed = again;
     }
   }
 

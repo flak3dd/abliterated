@@ -12,9 +12,8 @@ const outDir = path.join(root, 'dist-test-reasoning');
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
 execFileSync(
-  'npx',
+  'node_modules/.bin/tsc',
   [
-    'tsc',
     'src/lib/reasoningWork.ts',
     '--outDir',
     outDir,
@@ -29,7 +28,7 @@ execFileSync(
   { cwd: root, stdio: 'inherit' },
 );
 const mod = await import(pathToFileURL(path.join(outDir, 'reasoningWork.js')).href);
-const { liftReasoningWork, reasoningLooksLikeStalledWork, buildReasoningOnlyNudge, stripImplementationFromText, splitReasoningSections } = mod;
+const { liftReasoningWork, reasoningLooksLikeStalledWork, buildReasoningOnlyNudge, stripImplementationFromText, splitReasoningSections, enforceThoughtNoCode, THOUGHT_CODE_MOVED_NOTE } = mod;
 
 const fence = String.fromCharCode(96, 96, 96);
 const script = [fence + 'bash', 'npm test', fence].join('\n');
@@ -66,6 +65,24 @@ assert.ok(!stripped.includes('+++ b/src/lib/sse.ts'));
 assert.ok(!stripped.includes('```'));
 assert.equal(stripImplementationFromText(diff), '');
 assert.equal(stripImplementationFromText('just a plan bullet'), 'just a plan bullet');
+
+const leakedFn = 'Goal: add helper.\nInspect: src/foo.ts\nfunction add(a, b) {\n  return a + b;\n}\nThen wire it.';
+const leakedStripped = stripImplementationFromText(leakedFn);
+assert.ok(leakedStripped.includes('Goal: add helper.'));
+assert.ok(!leakedStripped.includes('function add'));
+assert.ok(!leakedStripped.includes('return a + b'));
+
+const unclosed = 'Inspect: bar.ts\n' + fence + 'ts\nconst x = 1;\n';
+assert.ok(!stripImplementationFromText(unclosed).includes('const x'));
+
+const bubble = {
+  content: '',
+  reasoning: 'Goal: patch sse.\n' + fence + 'diff\n--- a/src/lib/sse.ts\n+++ b/src/lib/sse.ts\n@@ -1,1 +1,2 @@\n keep\n+added\n' + fence + '\n',
+};
+assert.ok(enforceThoughtNoCode(bubble, { liftToContent: true }));
+assert.ok((bubble.content || '').includes('+++ b/src/lib/sse.ts'));
+assert.ok(!(bubble.reasoning || '').includes('+++ b/src/lib/sse.ts'));
+assert.ok((bubble.reasoning || '').includes('Goal: patch sse.') || bubble.reasoning === THOUGHT_CODE_MOVED_NOTE);
 
 const one = splitReasoningSections('just thinking about the problem');
 assert.equal(one.length, 1);

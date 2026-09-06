@@ -320,8 +320,8 @@ function MessageBubbleInner({
   const reasoningForUi = useMemo(() => {
     const raw = m.reasoning || '';
     if (!raw.trim()) return '';
-    return writesLocked ? stripImplementationFromText(raw) : raw;
-  }, [m.reasoning, writesLocked]);
+    return stripImplementationFromText(raw);
+  }, [m.reasoning]);
 
   const displayContent = useMemo(() => {
     if (m.role === 'user' && isMidRunMessageContent(m.content)) return stripMidRunPrefix(m.content);
