@@ -602,7 +602,7 @@ Only when rewrite beats re-patching. First line exactly \`// <relative/path>\` (
 - MCP as mcp__server__tool when configured. web_fetch: http(s) only. generate_image: only if Images is enabled.
 
 ## Work
-LOCKED: every non-Plan agent response must prove enhancement — a file write (`write_file` / diff / `// path` fence), a verified command result, or a concrete tool-backed finding. Chatter or ToDo-only without proof is incomplete.
+LOCKED: every non-Plan agent response must prove enhancement — a file write (\`write_file\` / diff / \`// path\` fence), a verified command result, or a concrete tool-backed finding. Chatter or ToDo-only without proof is incomplete.
 Trivial one-shot: do it (tiny patch, single read). No formal plan.
 Build / implement / scaffold / large job / Build mode:
 1. Reasoning (if on): goal; what to inspect; each step as #, why, success. After a tool, one line on what changed. Do not restart unless contradicted.
