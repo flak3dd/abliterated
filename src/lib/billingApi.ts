@@ -405,8 +405,20 @@ export async function redeemAccessCode(
 
 const DEVICE_ID_KEY = 'ablit_device_id';
 
-/** Stable per-install device id for redeem / client_reference_id. */
-export function getOrCreateDeviceId(): string {
+/**
+ * Stable per-install device id for redeem / client_reference_id / auth.
+ * Prefer an explicit id (e.g. settings.deviceId), then localStorage, else mint UUID.
+ */
+export function getOrCreateDeviceId(preferred?: string | null): string {
+  const fromArg = typeof preferred === 'string' ? preferred.trim() : '';
+  if (fromArg) {
+    try {
+      localStorage.setItem(DEVICE_ID_KEY, fromArg);
+    } catch {
+      /* ignore */
+    }
+    return fromArg;
+  }
   try {
     const existing = localStorage.getItem(DEVICE_ID_KEY)?.trim();
     if (existing) return existing;

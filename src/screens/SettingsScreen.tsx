@@ -31,6 +31,13 @@ import {
   type BillingPlan,
 } from '../lib/billingApi';
 import {
+  AuthApiError,
+  ensureDeviceId,
+  loginEmail,
+  loginWithLoginId,
+  signup,
+} from '../lib/authApi';
+import {
   formatTokenCount,
   loadBuiltinUsage,
   remainingBuiltinTokens,
@@ -149,7 +156,16 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   const [mcpHint, setMcpHint] = useState('');
   const [licenseDraft, setLicenseDraft] = useState(settings.licenseKey || '');
   const [licenseMsg, setLicenseMsg] = useState('');
-  const [billingEmail, setBillingEmail] = useState(settings.billingEmail || '');
+  const preferredEmail = (settings.accountEmail || settings.billingEmail || '').trim();
+  const [billingEmail, setBillingEmail] = useState(preferredEmail);
+  const [authMode, setAuthMode] = useState<'signup' | 'login'>('login');
+  const [authEmail, setAuthEmail] = useState(settings.accountEmail || '');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authLoginId, setAuthLoginId] = useState(settings.loginId || '');
+  const [authAdvanced, setAuthAdvanced] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authMsg, setAuthMsg] = useState('');
+  const [deviceIdDisplay, setDeviceIdDisplay] = useState(settings.deviceId || '');
   const [billingPlan, setBillingPlan] = useState<BillingPlan>('pro_monthly');
   const [billingSeats, setBillingSeats] = useState(1);
   const [redeemCode, setRedeemCode] = useState('');
@@ -169,8 +185,44 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   }, [settings.licenseKey]);
 
   useEffect(() => {
-    setBillingEmail(settings.billingEmail || '');
-  }, [settings.billingEmail]);
+    const next = (settings.accountEmail || settings.billingEmail || '').trim();
+    setBillingEmail(next);
+  }, [settings.billingEmail, settings.accountEmail]);
+
+  useEffect(() => {
+    setAuthEmail(settings.accountEmail || '');
+  }, [settings.accountEmail]);
+
+  useEffect(() => {
+    setAuthLoginId(settings.loginId || '');
+  }, [settings.loginId]);
+
+  useEffect(() => {
+    setDeviceIdDisplay(settings.deviceId || '');
+  }, [settings.deviceId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const id = await ensureDeviceId(settings, (deviceId) => {
+          if (cancelled) return;
+          if (deviceId !== (settings.deviceId || '')) {
+            const next = { ...settings, deviceId };
+            setSettings(next);
+            onSettingsChange(next);
+          }
+        });
+        if (!cancelled) setDeviceIdDisplay(id);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot ensure on mount / deviceId change
+  }, [settings.deviceId]);
 
   useEffect(() => {
     return () => {
@@ -204,9 +256,158 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   const rememberEmail = (email: string) => {
     const trimmed = email.trim();
     setBillingEmail(trimmed);
+    const patchBody: Partial<ClientSettings> = {};
     if (trimmed !== (settings.billingEmail || '')) {
-      patch({ billingEmail: trimmed });
+      patchBody.billingEmail = trimmed;
     }
+    // Keep account email in sync when logged in and user edits receipt email.
+    if (settings.accountLoggedIn && trimmed && trimmed !== (settings.accountEmail || '')) {
+      patchBody.accountEmail = trimmed;
+    }
+    if (Object.keys(patchBody).length) patch(patchBody);
+  };
+
+  const effectiveBillingEmail = () => {
+    const typed = billingEmail.trim();
+    if (typed) return typed;
+    return (settings.accountEmail || settings.billingEmail || '').trim();
+  };
+
+  const applyAuthSuccess = async (result: {
+    loginId: string;
+    email?: string | null;
+    deviceId?: string | null;
+    licenseKey?: string | null;
+  }) => {
+    const email = (result.email || authEmail || '').trim();
+    const deviceId = (result.deviceId || deviceIdDisplay || (await ensureDeviceId(settings))).trim();
+    const accountPatch: Partial<ClientSettings> = {
+      accountLoggedIn: true,
+      loginId: result.loginId,
+      deviceId,
+      accountEmail: email || settings.accountEmail || '',
+    };
+    if (email) {
+      accountPatch.billingEmail = email;
+      setBillingEmail(email);
+      setAuthEmail(email);
+    }
+    setAuthLoginId(result.loginId);
+    setDeviceIdDisplay(deviceId);
+    setAuthPassword('');
+
+    const rawKey = result.licenseKey != null ? String(result.licenseKey).trim() : '';
+    if (rawKey) {
+      const key = normalizeLicenseKey(rawKey);
+      setLicenseDraft(key);
+      const nextLicense = getLicenseState({ licenseKey: key });
+      patch({
+        ...accountPatch,
+        licenseKey: key,
+        maxConcurrentJobs: nextLicense.tier === 'admin' ? 16 : nextLicense.tier === 'free' ? 1 : 4,
+        selfDeepenPasses: nextLicense.features.maxSelfDeepenPasses,
+      });
+      try {
+        void window.ablitDesktop?.setLicense?.(key);
+      } catch {
+        /* browser / no preload */
+      }
+      setAuthMsg(`Signed in as ${email || result.loginId} — activated ${nextLicense.label}.`);
+    } else {
+      patch(accountPatch);
+      setAuthMsg(`Signed in as ${email || result.loginId}.`);
+    }
+  };
+
+  const handleSignup = async () => {
+    setAuthBusy(true);
+    setAuthMsg('');
+    try {
+      const deviceId = await ensureDeviceId(settings, (id) => {
+        if (id !== (settings.deviceId || '')) patch({ deviceId: id });
+        setDeviceIdDisplay(id);
+      });
+      const result = await signup(settings, {
+        email: authEmail.trim(),
+        password: authPassword,
+        deviceId,
+      });
+      await applyAuthSuccess(result);
+    } catch (err) {
+      const msg =
+        err instanceof AuthApiError || err instanceof BillingApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      setAuthMsg(`Sign up error: ${msg}`);
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleLoginEmail = async () => {
+    setAuthBusy(true);
+    setAuthMsg('');
+    try {
+      const deviceId = await ensureDeviceId(settings, (id) => {
+        if (id !== (settings.deviceId || '')) patch({ deviceId: id });
+        setDeviceIdDisplay(id);
+      });
+      const result = await loginEmail(settings, {
+        email: authEmail.trim(),
+        password: authPassword,
+        deviceId,
+      });
+      await applyAuthSuccess(result);
+    } catch (err) {
+      const msg =
+        err instanceof AuthApiError || err instanceof BillingApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      setAuthMsg(`Log in error: ${msg}`);
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleLoginWithLoginId = async () => {
+    setAuthBusy(true);
+    setAuthMsg('');
+    try {
+      const deviceId = await ensureDeviceId(settings, (id) => {
+        if (id !== (settings.deviceId || '')) patch({ deviceId: id });
+        setDeviceIdDisplay(id);
+      });
+      const result = await loginWithLoginId(settings, {
+        loginId: authLoginId.trim(),
+        deviceId,
+      });
+      await applyAuthSuccess(result);
+    } catch (err) {
+      const msg =
+        err instanceof AuthApiError || err instanceof BillingApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      setAuthMsg(`Log in error: ${msg}`);
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleLogout = () => {
+    patch({
+      accountLoggedIn: false,
+      accountEmail: '',
+      loginId: '',
+      // keep deviceId for future logins / redeem binding
+    });
+    setAuthPassword('');
+    setAuthMsg('Logged out.');
   };
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -279,7 +480,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   };
 
   const startStripeCheckout = async () => {
-    const email = billingEmail.trim();
+    const email = effectiveBillingEmail();
     if (!email || !email.includes('@')) {
       setLicenseMsg('Enter a receipt email before paying with card.');
       return;
@@ -289,7 +490,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
     setCheckoutBusy('stripe');
     setLicenseMsg('Creating Stripe checkout…');
     try {
-      const deviceId = getOrCreateDeviceId();
+      const deviceId = getOrCreateDeviceId(settings.deviceId);
       const created = await createStripeCheckout(settings, {
         plan: billingPlan,
         seats: billingPlan === 'team_monthly' ? billingSeats : undefined,
@@ -315,7 +516,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   };
 
   const startSolanaCheckout = async () => {
-    const email = billingEmail.trim();
+    const email = effectiveBillingEmail();
     if (email) rememberEmail(email);
     const gen = ++pollAbortRef.current;
     setCheckoutBusy('solana');
@@ -342,7 +543,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
   };
 
   const startRedeem = async () => {
-    const email = billingEmail.trim();
+    const email = effectiveBillingEmail();
     const code = redeemCode.trim();
     if (!email || !email.includes('@')) {
       setLicenseMsg('Enter email to redeem an access code.');
@@ -356,13 +557,42 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
     setCheckoutBusy('redeem');
     setLicenseMsg('Redeeming access code…');
     try {
-      const deviceId = getOrCreateDeviceId();
+      const deviceId = getOrCreateDeviceId(settings.deviceId);
       const result = await redeemAccessCode(settings, { code, email, deviceId });
-      const next = persistLicense(result.licenseKey);
+      const key = normalizeLicenseKey(result.licenseKey);
+      setLicenseDraft(key);
+      const nextLicense = getLicenseState({ licenseKey: key });
+      const boundDevice = (result.deviceId || deviceId).trim();
+      const accountEmail = (result.email || email).trim();
+      patch({
+        licenseKey: key,
+        maxConcurrentJobs: nextLicense.tier === 'admin' ? 16 : nextLicense.tier === 'free' ? 1 : 4,
+        selfDeepenPasses: nextLicense.features.maxSelfDeepenPasses,
+        deviceId: boundDevice || settings.deviceId,
+        ...(result.loginId
+          ? {
+              loginId: result.loginId,
+              accountLoggedIn: true,
+              accountEmail,
+              billingEmail: accountEmail,
+            }
+          : { billingEmail: accountEmail }),
+      });
+      if (boundDevice) setDeviceIdDisplay(boundDevice);
+      if (result.loginId) setAuthLoginId(result.loginId);
+      if (accountEmail) {
+        setBillingEmail(accountEmail);
+        setAuthEmail(accountEmail);
+      }
+      try {
+        void window.ablitDesktop?.setLicense?.(key);
+      } catch {
+        /* ignore */
+      }
       setRedeemCode('');
       setCheckoutBusy(null);
       setLicenseMsg(
-        `Redeemed — activated ${next.label}${result.loginId ? ` (loginId ${result.loginId})` : ''}.`,
+        `Redeemed — activated ${nextLicense.label}${result.loginId ? ` (loginId ${result.loginId})` : ''}.`,
       );
     } catch (err) {
       setCheckoutBusy(null);
@@ -1058,6 +1288,119 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
           </div>
         </Section>
 
+
+        <Section
+          title="Account"
+          hint="Sign up or log in on abliterated.app. Device-bound loginId restores your license on this install."
+        >
+          {settings.accountLoggedIn ? (
+            <>
+              <div className="rounded border border-border bg-background px-3 py-2 font-mono text-[12px] text-zinc-200">
+                <div className="text-[10px] uppercase text-muted">Signed in</div>
+                <div className="mt-1">{settings.accountEmail || '(no email)'}</div>
+                <div className="mt-1 text-[11px] text-muted">loginId: {settings.loginId || '—'}</div>
+                <div className="mt-1 break-all text-[10px] text-muted">deviceId: {deviceIdDisplay || settings.deviceId || '—'}</div>
+              </div>
+              <button
+                type="button"
+                className="btn-ghost h-7 px-3 text-[10px]"
+                disabled={authBusy}
+                onClick={handleLogout}
+              >
+                Log out
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={`h-7 px-3 text-[10px] ${authMode === 'login' ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setAuthMode('login')}
+                >
+                  Log in
+                </button>
+                <button
+                  type="button"
+                  className={`h-7 px-3 text-[10px] ${authMode === 'signup' ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setAuthMode('signup')}
+                >
+                  Sign up
+                </button>
+              </div>
+
+              <FieldLabel label="Email" hint="Account email (also used as checkout receipt email when set).">
+                <input
+                  type="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="field font-mono text-[12px]"
+                  autoComplete="email"
+                />
+              </FieldLabel>
+              <FieldLabel label="Password" hint={authMode === 'signup' ? 'At least 8 characters.' : 'Your abliterated.app password.'}>
+                <input
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="field font-mono text-[12px]"
+                  autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
+                />
+              </FieldLabel>
+              <button
+                type="button"
+                className="btn-primary h-7 px-3 text-[10px]"
+                disabled={authBusy}
+                onClick={() => void (authMode === 'signup' ? handleSignup() : handleLoginEmail())}
+              >
+                {authBusy ? 'Working…' : authMode === 'signup' ? 'Create account' : 'Log in'}
+              </button>
+
+              <div className="mt-2">
+                <button
+                  type="button"
+                  className="btn-ghost h-7 px-2 text-[10px]"
+                  onClick={() => setAuthAdvanced((v) => !v)}
+                >
+                  {authAdvanced ? 'Hide advanced' : 'Advanced: loginId + device'}
+                </button>
+              </div>
+              {authAdvanced ? (
+                <>
+                  <FieldLabel label="loginId" hint="From redeem / prior signup — restores license when device matches.">
+                    <input
+                      value={authLoginId}
+                      onChange={(e) => setAuthLoginId(e.target.value)}
+                      placeholder="login_…"
+                      className="field font-mono text-[12px]"
+                      spellCheck={false}
+                      autoComplete="off"
+                    />
+                  </FieldLabel>
+                  <FieldLabel label="deviceId" hint="Stable on this install (Electron userData or settings).">
+                    <input
+                      value={deviceIdDisplay}
+                      readOnly
+                      className="field font-mono text-[11px] text-muted"
+                    />
+                  </FieldLabel>
+                  <button
+                    type="button"
+                    className="btn-primary h-7 px-3 text-[10px]"
+                    disabled={authBusy}
+                    onClick={() => void handleLoginWithLoginId()}
+                  >
+                    {authBusy ? 'Working…' : 'Log in with loginId'}
+                  </button>
+                </>
+              ) : null}
+            </>
+          )}
+          {authMsg ? <p className="font-mono text-[11px] text-sky-300">{authMsg}</p> : null}
+        </Section>
+
         <Section
           title="License / Plan"
           hint={`Starter $${PRICING_HINT.starterMonthly}/mo · Pro $${PRICING_HINT.proMonthly}/mo or $${PRICING_HINT.proYearly}/yr · Team $${PRICING_HINT.teamMonthlySeat}/mo seat.`}
@@ -1097,7 +1440,14 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             <BuiltinTokenMeter license={license} />
           ) : null}
 
-          <FieldLabel label="Email" hint="Receipt email for Stripe / Solana / redeem (stored locally).">
+          <FieldLabel
+            label="Email"
+            hint={
+              settings.accountEmail
+                ? 'Prefers account email when set; used for Stripe / Solana / redeem receipts.'
+                : 'Receipt email for Stripe / Solana / redeem (stored locally). Sign in above to sync.'
+            }
+          >
             <input
               type="email"
               value={billingEmail}
@@ -1177,7 +1527,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
                 onClick={() => {
                   const gen = ++pollAbortRef.current;
                   setCheckoutBusy('solana');
-                  void pollSolanaUntilLicense(pendingSolanaId, gen, billingEmail.trim());
+                  void pollSolanaUntilLicense(pendingSolanaId, gen, effectiveBillingEmail());
                 }}
               >
                 Resume Solana poll
@@ -1230,7 +1580,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             {checkoutBusy === 'redeem' ? 'Redeeming…' : 'Redeem code'}
           </button>
 
-          <FieldLabel label="License key" hint="Paste your ABLIT-* license key from checkout or redeem. IDE activates via license key (loginId support later).">
+          <FieldLabel label="License key" hint="Paste your ABLIT-* license key from checkout or redeem. Or Sign up / Log in above — login returns licenseKey when bound.">
             <input
               value={licenseDraft}
               onChange={(e) => setLicenseDraft(e.target.value)}

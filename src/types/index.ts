@@ -367,6 +367,14 @@ export interface ClientSettings {
   billingSiteUrl?: string;
   /** Receipt / redeem email remembered for checkout. */
   billingEmail?: string;
+  /** Account email from Sign up / Log in (preferred over billingEmail when set). */
+  accountEmail?: string;
+  /** Server-issued login id bound to this device. */
+  loginId?: string;
+  /** Stable per-install device fingerprint for auth / redeem. */
+  deviceId?: string;
+  /** True when the user completed Sign up or Log in successfully. */
+  accountLoggedIn?: boolean;
   /** Discover/follow SKILL.md recipes (default true). */
   skillsEnabled: boolean;
   /** Optional Brave Search API key (X-Subscription-Token). Empty = keyless HTML search. */

@@ -15,6 +15,8 @@ interface ImportMeta {
 interface AblitDesktopApi {
   getLicense: () => Promise<string>;
   setLicense: (key: string) => Promise<boolean>;
+  /** Stable per-install device id (userData). */
+  getDeviceId?: () => Promise<string>;
   getVersion: () => Promise<string>;
   openExternal: (url: string) => Promise<boolean>;
   /** Subscribe to abliterated://license?key=… deep links; returns unsubscribe. */

@@ -6,6 +6,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('ablitDesktop', {
   getLicense: () => ipcRenderer.invoke('ablit:getLicense'),
   setLicense: (key) => ipcRenderer.invoke('ablit:setLicense', key),
+  getDeviceId: () => ipcRenderer.invoke('ablit:getDeviceId'),
   getVersion: () => ipcRenderer.invoke('ablit:getVersion'),
   webSearch: (opts) => ipcRenderer.invoke('ablit:webSearch', opts),
   openExternal: (url) => ipcRenderer.invoke('ablit:openExternal', url),

@@ -100,6 +100,10 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   licenseKey: import.meta.env.DEV ? 'ABLIT-ADMIN' : '',
   billingSiteUrl: 'https://abliterated.app',
   billingEmail: '',
+  accountEmail: '',
+  loginId: '',
+  deviceId: '',
+  accountLoggedIn: false,
   webSearchBraveKey: '',
   webSearchSearxUrl: '',
   jobWorktreesEnabled: false,
@@ -327,6 +331,11 @@ export function getSettings(): ClientSettings {
         : (DEFAULT_SETTINGS.billingSiteUrl || 'https://abliterated.app'),
     billingEmail:
       typeof stored.billingEmail === 'string' ? stored.billingEmail.trim() : '',
+    accountEmail:
+      typeof stored.accountEmail === 'string' ? stored.accountEmail.trim() : '',
+    loginId: typeof stored.loginId === 'string' ? stored.loginId.trim() : '',
+    deviceId: typeof stored.deviceId === 'string' ? stored.deviceId.trim() : '',
+    accountLoggedIn: stored.accountLoggedIn === true,
     webSearchBraveKey:
       typeof stored.webSearchBraveKey === 'string' ? stored.webSearchBraveKey.trim() : '',
     webSearchSearxUrl:

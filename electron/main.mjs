@@ -9,6 +9,7 @@ import { createServer } from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.join(__dirname, '..');
@@ -42,6 +43,39 @@ if (!gotLock) {
 
 function licenseStorePath() {
   return path.join(app.getPath('userData'), 'license.json');
+}
+
+function deviceStorePath() {
+  return path.join(app.getPath('userData'), 'device.json');
+}
+
+function readStoredDeviceId() {
+  try {
+    const raw = fs.readFileSync(deviceStorePath(), 'utf8');
+    const j = JSON.parse(raw);
+    return typeof j?.deviceId === 'string' ? j.deviceId.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+function writeStoredDeviceId(deviceId) {
+  const dir = path.dirname(deviceStorePath());
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    deviceStorePath(),
+    JSON.stringify({ deviceId: String(deviceId || '') }, null, 2),
+    'utf8',
+  );
+}
+
+/** Stable per-install id (UUID persisted in userData). */
+function getOrCreateStoredDeviceId() {
+  const existing = readStoredDeviceId();
+  if (existing) return existing;
+  const id = randomUUID();
+  writeStoredDeviceId(id);
+  return id;
 }
 
 function readStoredLicense() {
@@ -258,6 +292,7 @@ function registerIpc() {
     writeStoredLicense(typeof key === 'string' ? key : '');
     return true;
   });
+  ipcMain.handle('ablit:getDeviceId', () => getOrCreateStoredDeviceId());
   ipcMain.handle('ablit:getVersion', () => app.getVersion());
   ipcMain.handle('ablit:openExternal', async (_e, url) => {
     const s = String(url || '').trim();

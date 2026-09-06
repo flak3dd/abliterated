@@ -39,7 +39,8 @@
     "test:prove-improve": "node scripts/test-prove-improve.mjs",
     "test:eval-fixtures": "node scripts/eval-fixtures.mjs",
     "test:capability-router": "node scripts/test-capability-router.mjs",
-    "test:billing": "node scripts/test-billing-api.mjs"
+    "test:billing": "node scripts/test-billing-api.mjs",
+    "test:auth": "node scripts/test-auth-api.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

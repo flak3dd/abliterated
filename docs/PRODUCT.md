@@ -3,7 +3,7 @@
 **Brand:** Abliterated / abliteration.ai
 **Product:** Local agent IDE - chat + tools + Jobs + MCP for OpenAI-compatible endpoints.
 **Distribution:** Electron desktop (macOS dmg/dir; Windows NSIS + portable).
-**Monetization:** Freemium license keys; in-app Stripe + Solana + redeem via abliterated.app APIs (secrets on site).
+**Monetization:** Freemium license keys; Sign up / Log in + in-app Stripe + Solana + redeem via abliterated.app APIs (secrets on site).
 
 ---
 
@@ -72,11 +72,21 @@ Public client pepper is not a secret; stub accepts prefixes only.
 
 ---
 
+## Account (Sign up / Log in)
+
+Settings → **Account** (above License / Plan):
+
+- Logged out: Sign up or Log in with email + password; advanced loginId + deviceId path for redeem-created accounts.
+- Logged in: shows email, loginId, Log out.
+- Client calls `POST /api/signup` and `POST /api/login` on **billingSiteUrl** (default https://abliterated.app) with a stable `deviceId` (Electron userData / settings).
+- On success: stores `accountEmail`, `loginId`, `deviceId`, `accountLoggedIn`; if `licenseKey` is returned, activates like checkout.
+- Checkout receipt email prefers `accountEmail` when set.
+
 ## In-app checkout
 
 Checkout is **in-app** (Settings → License / Plan): card (Stripe Checkout session), Solana USDC, and access-code redeem.
 
-- The desktop IDE calls public HTTPS APIs on **abliterated.app** (`POST /api/checkout`, `GET /api/checkout/session`, `POST|GET /api/checkout/solana`, `POST /api/checkout/solana/confirm`, `POST /api/redeem`).
+- The desktop IDE calls public HTTPS APIs on **abliterated.app** (`POST /api/checkout`, `GET /api/checkout/session`, `POST|GET /api/checkout/solana`, `POST /api/checkout/solana/confirm`, `POST /api/redeem`, plus `POST /api/signup` / `POST /api/login`).
 - Stripe secrets, webhooks, and license minting stay on the **site** — never embed payment provider secrets in this client repo.
 - After payment, the IDE polls until a license key appears, then activates via the existing `licenseKey` / `persistLicense` path. Optional deep link: `abliterated://license?key=…`.
 
