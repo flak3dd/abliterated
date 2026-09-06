@@ -15,6 +15,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { DiffViewer } from './DiffViewer';
+import { ReasoningTrace } from './ReasoningTrace';
 import { TerminalPane, type TerminalTone } from './TerminalPane';
 import { formatGrokStatus, type GrokApplyResult } from '../../lib/grokLayer';
 import { cn } from '../../lib/cn';
@@ -322,22 +323,18 @@ function MessageBubbleInner({
     return writesLocked ? stripImplementationFromText(raw) : raw;
   }, [m.reasoning, writesLocked]);
 
-  const promoteReasoning =
-    m.role === 'assistant' &&
-    m.status === 'complete' &&
-    (!(m.content || '').trim() || (m.content || '').trim() === NO_CONTENT_REASONING_NOTE) &&
-    !!reasoningForUi.trim();
-
   const displayContent = useMemo(() => {
     if (m.role === 'user' && isMidRunMessageContent(m.content)) return stripMidRunPrefix(m.content);
-    if (promoteReasoning) return reasoningForUi;
     if (writesLocked) {
       const stripped = stripImplementationFromText(m.content || '');
       if (stripped) return stripped;
       if (liftReasoningWork(m.content || '')) return PLAN_CODE_OMITTED_NOTE;
     }
-    return m.content;
-  }, [m.role, m.content, reasoningForUi, m.status, promoteReasoning, writesLocked]);
+    const body = m.content || '';
+    if (reasoningForUi && body.trim() === reasoningForUi.trim()) return '';
+    if (body.trim() === NO_CONTENT_REASONING_NOTE && reasoningForUi) return '';
+    return body;
+  }, [m.role, m.content, reasoningForUi, writesLocked]);
 
   const textToCopy = useMemo(() => {
     if (m.toolCall) return m.toolCall.result || m.content;
@@ -472,25 +469,17 @@ function MessageBubbleInner({
           </>
         ) : (
           <>
-            {m.status === 'streaming' && !!reasoningForUi.trim() && !m.content.trim() ? (
+            {reasoningForUi ? (
+              <ReasoningTrace
+                text={reasoningForUi}
+                streaming={m.status === 'streaming'}
+                startedAt={m.createdAt}
+              />
+            ) : m.status === 'streaming' && !m.content.trim() ? (
               <div className="agent-status-chip" role="status">
                 <Brain size={11} className="animate-pulse text-amber-400" />
-                <span>reasoning (synthesizing plan)…</span>
+                <span>waiting for tokens…</span>
               </div>
-            ) : null}
-            {reasoningForUi && !promoteReasoning ? (
-              <details
-                className="mb-2.5 rounded-md border border-zinc-800/80 bg-zinc-950/80 px-2.5 py-1.5 transition-all"
-                open={m.status === 'streaming' && !m.content.trim()}
-              >
-                <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-wide text-zinc-400 flex items-center gap-1.5 select-none hover:text-zinc-200">
-                  <Brain size={12} className="text-amber-400" />
-                  <span>reasoning{m.status === 'streaming' && !m.content.trim() ? ' · active' : ''}</span>
-                </summary>
-                <div className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-zinc-400 border-t border-zinc-800/60 pt-2">
-                  {reasoningForUi}
-                </div>
-              </details>
             ) : null}
             {contentNode}
             {m.status === 'streaming' ? <span className="stream-cursor" aria-hidden /> : null}

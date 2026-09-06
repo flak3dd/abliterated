@@ -300,6 +300,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
       history.push({
         role: "assistant",
         content: assistantText,
+        reasoning_content: assistantReasoning.trim() ? assistantReasoning : undefined,
         tool_calls: toolCalls.length
           ? toolCalls.map((t) => ({
               id: t.id,

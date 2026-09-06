@@ -81,7 +81,8 @@ import { streamChatCompletion } from '../lib/sse';
 import { getMessages, recordAgentRun, replaceThreadMessages, saveMessage, setSettings, uid, upsertThread } from '../lib/storage';
 import { formatSkillsCatalogPrompt, toCatalogEntries, type SkillCatalogEntry, type SkillRecord } from '../lib/skills';
 import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from '../lib/projectMemory';
-import type { ChatOpenAiMessage, ClientSettings, Message, Thread, ToolCallPayload } from '../types';
+import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
+import type { ChatOpenAiMessage, ClientSettings, Message, Tab, Thread, ToolCallPayload } from '../types';
 import { PLAN_MODE_TOOLS } from '../types';
 
 /** Render at most this many newest messages; older ones load on demand. */
@@ -114,6 +115,7 @@ interface Props {
   onApprovePlan?: () => void;
   /** Persist ClientSettings patches (Completeness toggle syncs with Settings/Jobs). */
   onSettingsChange?: (s: ClientSettings) => void;
+  onOpenTab?: (tab: Tab) => void;
 }
 
 /** Named hard clamp; effective turns come from settings.maxAgentTurns. */
@@ -382,6 +384,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     onTogglePlanMode,
     onApprovePlan,
     onSettingsChange,
+    onOpenTab,
   },
   ref,
 ) {
@@ -766,6 +769,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       }
       if (m.role === 'assistant') {
         const msg: ChatOpenAiMessage = { role: 'assistant', content: m.content };
+        if (m.reasoning?.trim()) msg.reasoning_content = m.reasoning;
         if (m.toolCalls && m.toolCalls.length) {
           msg.tool_calls = m.toolCalls.map((tc) => ({
             id: tc.id,
@@ -1045,42 +1049,16 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             },
             onReasoningDelta: (text) => {
               assistant.reasoning = (assistant.reasoning || '') + text;
-              const coalesceOn = settingsRef.current.coalesceReasoningToContent !== false;
-              // Live mirror: while no real content deltas yet, preview stripped reasoning as content.
-              // Plan mode: never mirror implementation drafts (diffs / fences / //path dumps).
-              if (coalesceOn && !turnHasContentRef.current) {
-                let mirrored = stripThinkingWrappers(assistant.reasoning || '');
-                if (planMode) mirrored = stripImplementationFromText(mirrored);
-                if (mirrored) {
-                  const grew = mirrored.length > (assistant.content || '').length;
-                  assistant.content = mirrored;
-                  if (grew) {
-                    setPhase('writing', { hasReasoning: true }, turn);
-                  }
-                }
-              }
               if (!turnHasReasoningRef.current) {
                 turnHasReasoningRef.current = true;
-                if (!coalesceOn || turnHasContentRef.current || !(assistant.content || '').trim()) {
-                  setPhase(
-                    'reasoning',
-                    {
-                      hasReasoning: true,
-                      reasoningStartedAt: Date.now(),
-                    },
-                    turn,
-                  );
-                } else {
-                  // Mirrored path already marked writing; still record reasoning start meta.
-                  setPhase(
-                    agentPhaseRef.current === 'writing' ? 'writing' : 'reasoning',
-                    {
-                      hasReasoning: true,
-                      reasoningStartedAt: Date.now(),
-                    },
-                    turn,
-                  );
-                }
+                setPhase(
+                  'reasoning',
+                  {
+                    hasReasoning: true,
+                    reasoningStartedAt: Date.now(),
+                  },
+                  turn,
+                );
               } else if (
                 agentPhaseRef.current !== 'writing' &&
                 agentPhaseRef.current !== 'reasoning' &&
@@ -1619,6 +1597,15 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           <RotateCcw size={14} />
         </button>
       </header>
+      {onSettingsChange ? (
+        <ModelSettingsGuidePanel
+          compact
+          model={resolveActiveSettings(settings).defaultModel}
+          settings={settings}
+          onSettingsChange={onSettingsChange}
+          onOpenTab={onOpenTab}
+        />
+      ) : null}
 
       <div
         className={cn(

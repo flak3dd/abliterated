@@ -9,6 +9,7 @@ import {
   isBuiltinEndpoint,
   recordBuiltinUsage,
 } from './builtinTokens';
+import { applyCompletionChunk, thinkingChatTemplateKwargs } from './sseParse';
 
 export interface StreamChatArgs {
   settings: ClientSettings;
@@ -554,17 +555,20 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
   );
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'X-Retention': 'none',
   };
+  // X-Retention / X-Reasoning are Abliteration-only; Featherless ignores or can stall on them.
+  if (active.provider !== 'featherless') {
+    headers['X-Retention'] = 'none';
+    if (settings.reasoning !== 'off') {
+      headers['X-Reasoning'] = settings.reasoning;
+    }
+  }
   if (active.token.trim()) {
     headers.Authorization = `Bearer ${active.token.trim()}`;
   }
   if (active.provider === 'featherless') {
     headers['HTTP-Referer'] = 'http://localhost:5173';
     headers['X-Title'] = 'ablit';
-  }
-  if (settings.reasoning !== 'off') {
-    headers['X-Reasoning'] = settings.reasoning;
   }
 
   const tools = filterChatTools(enabledTools, { imageGenEnabled: settings.imageGenEnabled === true, skillsEnabled: settings.skillsEnabled !== false, extraTools });
@@ -586,6 +590,10 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
   body.max_tokens = maxTokens;
   if (usingBuiltin) {
     body.stream_options = { include_usage: true };
+  }
+  if (active.provider === 'featherless') {
+    const kwargs = thinkingChatTemplateKwargs(model, settings.reasoning);
+    if (kwargs) body.chat_template_kwargs = kwargs;
   }
 
   let res: Response;
@@ -670,118 +678,133 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
       throw new Error(`HTTP ${res.status}: ${snippet}${hint}`);
     }
   }
-  if (!res.body) {
-    throw new Error('Empty response body');
-  }
+  const consumeResponse = async (response: Response) => {
+    if (!response.body) {
+      throw new Error('Empty response body');
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let rawAll = '';
+    let sawSse = false;
+    const toolAcc = new Map<number, ToolAcc>();
+    let finishReason = 'stop';
+    let sawDone = false;
+    let usageTokens = 0;
+    let completionChars = 0;
+    let reasoningChars = 0;
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  const toolAcc = new Map<number, ToolAcc>();
-  let finishReason = 'stop';
-  let sawDone = false;
-  let usageTokens = 0;
-  let completionChars = 0;
-
-  const handleData = (payload: string) => {
-    const trimmed = payload.trim();
-    if (!trimmed || trimmed === '[DONE]') {
-      if (trimmed === '[DONE]') sawDone = true;
-      return trimmed === '[DONE]';
-    }
-    let json: {
-      choices?: Array<{
-        delta?: {
-          content?: string | null;
-          reasoning?: string | null;
-          reasoning_content?: string | null;
-          thinking?: string | null;
-          tool_calls?: Array<{
-            index?: number;
-            id?: string;
-            function?: { name?: string; arguments?: string };
-          }>;
-        };
-        finish_reason?: string | null;
-      }>;
-      usage?: {
-        prompt_tokens?: number;
-        completion_tokens?: number;
-        total_tokens?: number;
-      };
-    };
-    try {
-      json = JSON.parse(trimmed) as typeof json;
-    } catch {
-      return false;
-    }
-    const choice = json.choices?.[0];
-    const delta = choice?.delta;
-    if (delta?.content) onDelta(detokenizeArtifacts(delta.content));
-    const reasoningChunk =
-      (typeof delta?.reasoning_content === 'string' && delta.reasoning_content) ||
-      (typeof delta?.reasoning === 'string' && delta.reasoning) ||
-      (typeof delta?.thinking === 'string' && delta.thinking) ||
-      '';
-    if (reasoningChunk) {
-      const r = detokenizeArtifacts(reasoningChunk);
-      if (onReasoningDelta) onReasoningDelta(r);
-      else onDelta(r);
-    }
-    if (delta?.tool_calls) {
-      for (const tc of delta.tool_calls) {
-        const idx = tc.index ?? 0;
-        const cur = toolAcc.get(idx) ?? { id: '', name: 'shell', arguments: '' };
-        if (tc.id) cur.id = tc.id;
-        if (tc.function?.name) cur.name = tc.function.name;
-        if (tc.function?.arguments) cur.arguments += tc.function.arguments;
-        toolAcc.set(idx, cur);
+    const handleData = (payload: string) => {
+      const trimmed = payload.trim();
+      if (!trimmed || trimmed === '[DONE]') {
+        if (trimmed === '[DONE]') sawDone = true;
+        return;
       }
-    }
-    if (choice?.finish_reason) finishReason = choice.finish_reason;
-    if (json.usage) {
-      const total =
-        Number(json.usage.total_tokens) ||
-        (Number(json.usage.prompt_tokens) || 0) + (Number(json.usage.completion_tokens) || 0);
-      if (total > 0) usageTokens = total;
-    }
-    if (delta?.content) completionChars += delta.content.length;
-    return false;
-  };
+      let json: unknown;
+      try {
+        json = JSON.parse(trimmed);
+      } catch {
+        return;
+      }
+      const applied = applyCompletionChunk(json, {
+        onContent: (text) => onDelta(detokenizeArtifacts(text)),
+        onReasoning: (text) => {
+          const r = detokenizeArtifacts(text);
+          if (onReasoningDelta) onReasoningDelta(r);
+          else onDelta(r);
+        },
+        onToolCallDelta: (tc) => {
+          const idx = tc.index ?? 0;
+          const cur = toolAcc.get(idx) ?? { id: '', name: 'shell', arguments: '' };
+          if (tc.id) cur.id = tc.id;
+          if (tc.name) cur.name = tc.name;
+          if (tc.arguments) cur.arguments += tc.arguments;
+          toolAcc.set(idx, cur);
+        },
+      });
+      if (applied.finishReason) finishReason = applied.finishReason;
+      if (applied.usageTokens > 0) usageTokens = applied.usageTokens;
+      completionChars += applied.contentChars;
+      reasoningChars += applied.reasoningChars;
+    };
 
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split('\n');
-      buffer = parts.pop() ?? '';
-      for (const rawLine of parts) {
-        const line = rawLine.replace(/\r$/, '');
-        if (!line.startsWith('data:')) continue;
-        handleData(line.slice(5).trimStart());
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        rawAll += chunk;
+        buffer += chunk;
+        const parts = buffer.split('\n');
+        buffer = parts.pop() ?? '';
+        for (const rawLine of parts) {
+          const line = rawLine.replace(/\r$/, '');
+          if (!line.startsWith('data:')) continue;
+          sawSse = true;
+          handleData(line.slice(5).trimStart());
+          if (sawDone) break;
+        }
         if (sawDone) break;
       }
-      if (sawDone) break;
-    }
-    if (!sawDone && buffer.trim().startsWith('data:')) {
-      handleData(buffer.trim().slice(5).trimStart());
-    }
-    const toolCalls = materializeTools(toolAcc, onToolCallComplete);
-    if (usingBuiltin) {
-      let tokens = usageTokens;
-      if (tokens <= 0) {
-        const promptText = messages.map((m) => m.content || '').join('\n');
-        tokens = estimateTokensFromText(promptText) + Math.max(0, Math.ceil(completionChars / 4));
+      if (sawSse) {
+        if (!sawDone && buffer.trim().startsWith('data:')) {
+          handleData(buffer.trim().slice(5).trimStart());
+        }
+      } else {
+        const text = rawAll.trim();
+        if (text.startsWith('{')) handleData(text);
       }
-      recordBuiltinUsage(tokens);
+      return {
+        finishReason,
+        toolCalls: materializeTools(toolAcc, onToolCallComplete),
+        usageTokens,
+        completionChars,
+        reasoningChars,
+      };
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        /* ignore */
+      }
     }
-    return { finishReason, toolCalls };
-  } finally {
+  };
+
+  let consumed = await consumeResponse(res);
+  // Models without native tool-calling often return HTTP 200 with empty choices
+  // when `tools` is set. One retry without tools recovers a text reply.
+  const emptyReply =
+    consumed.completionChars === 0 &&
+    consumed.reasoningChars === 0 &&
+    consumed.toolCalls.length === 0;
+  if (emptyReply && Array.isArray(body.tools) && (body.tools as unknown[]).length) {
+    delete body.tools;
+    delete body.tool_choice;
+    let retryEmpty: Response;
     try {
-      reader.releaseLock();
-    } catch {
-      /* ignore */
+      retryEmpty = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: abortSignal,
+      });
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') throw err;
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`Chat retry without tools failed (${active.provider}): ${detail}`);
+    }
+    if (retryEmpty.ok && retryEmpty.body) {
+      consumed = await consumeResponse(retryEmpty);
     }
   }
+
+  if (usingBuiltin) {
+    let tokens = consumed.usageTokens;
+    if (tokens <= 0) {
+      const promptText = messages.map((m) => m.content || '').join('\n');
+      tokens = estimateTokensFromText(promptText) + Math.max(0, Math.ceil(consumed.completionChars / 4));
+    }
+    recordBuiltinUsage(tokens);
+  }
+  return { finishReason: consumed.finishReason, toolCalls: consumed.toolCalls };
 }

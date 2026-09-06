@@ -163,7 +163,8 @@ export const MODEL_NO_ANSWER_NOTE = '(Model returned no answer.)';
 /**
  * Zero-cost coalesce for R1-style dual channels: empty content + non-empty reasoning →
  * promote stripped reasoning into content (no second completion call).
- * On success, clears reasoning to avoid double display in MessageBubble.
+ * On success, copies reasoning into content for apply/footer but **keeps** the
+ * reasoning field so the chat can show an expandable thought panel.
  * On promote failure, leaves reasoning and sets MODEL_NO_ANSWER_NOTE.
  * When `enabled` is false, no-op (reasoning panel only).
  */
@@ -177,7 +178,6 @@ export function coalesceEmptyContentFromReasoning(
   const promoted = stripThinkingWrappers(assistant.reasoning || '');
   if (promoted) {
     assistant.content = promoted;
-    assistant.reasoning = undefined;
     return true;
   }
   // Promote yielded nothing useful — leave reasoning; hard error in content.
@@ -187,9 +187,8 @@ export function coalesceEmptyContentFromReasoning(
 
 /**
  * End-of-stream reasoning channel cleanup.
- * - empty content → promote stripped reasoning (same as coalesceEmptyContentFromReasoning)
- * - else if enabled && reasoning && content is prefix/equal of stripped reasoning → clear reasoning
- *   (live-mirrored preview already filled content; avoid double panel)
+ * - empty content → copy stripped reasoning into content (keep reasoning for the UI)
+ * - live-mirrored content that is a prefix/equal of reasoning is left in place; reasoning stays
  * - else leave both channels
  * Returns true when content or reasoning was mutated.
  */
@@ -198,18 +197,6 @@ export function finalizeReasoningChannel(
   enabled: boolean,
 ): boolean {
   if (!enabled) return false;
-  const contentTrim = (assistant.content || '').trim();
-  if (!contentTrim) {
-    return coalesceEmptyContentFromReasoning(assistant, enabled);
-  }
-  const reasoningRaw = (assistant.reasoning || '').trim();
-  if (!reasoningRaw) return false;
-  const stripped = stripThinkingWrappers(assistant.reasoning || '');
-  if (!stripped) return false;
-  // content is equal to, or a prefix of, the stripped reasoning → mirrored live preview
-  if (contentTrim === stripped || stripped.startsWith(contentTrim)) {
-    assistant.reasoning = undefined;
-    return true;
-  }
-  return false;
+  if ((assistant.content || '').trim()) return false;
+  return coalesceEmptyContentFromReasoning(assistant, enabled);
 }

@@ -8,6 +8,7 @@ import {
 import { endpointUrl, formatFetchError } from '../lib/apiUrl';
 import { coalesceFetch } from '../lib/coalesceFetch';
 import { setSettings } from '../lib/storage';
+import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
 import type { ClientSettings, ReasoningLevel } from '../types';
 
 interface Props {
@@ -331,6 +332,12 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
   };
 
   const provider = draft.inferenceProvider || 'abliteration';
+  const selectedModelId =
+    provider === 'featherless'
+      ? draft.featherlessModel
+      : provider === 'dgx-spark'
+        ? draft.sparkModel
+        : draft.defaultModel;
   const sparkInactive = provider === 'dgx-spark' && !draft.sparkEnabled;
   const featherInactive = provider === 'featherless' && draft.featherlessEnabled === false;
   const active = resolveActiveSettings(draft);
@@ -641,6 +648,17 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
             ))}
           </select>
         </label>
+        {selectedModelId?.trim() ? (
+          <ModelSettingsGuidePanel
+            model={selectedModelId}
+            settings={draft}
+            onSettingsChange={(s) => {
+              setDraft(s);
+              onSettingsChange(s);
+            }}
+          />
+        ) : null}
+
         <label className="block font-mono text-[10px] uppercase text-muted">
           Context length (docs only — not sent as max_tokens)
           <input

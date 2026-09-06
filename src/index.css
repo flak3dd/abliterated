@@ -148,6 +148,114 @@ code,
   background-color: #06140c;
 }
 
+.reasoning-trace {
+  border: 1px solid rgb(63 63 70 / 0.7);
+  border-radius: 0.5rem;
+  background: rgb(9 9 11 / 0.85);
+  overflow: hidden;
+}
+
+.reasoning-trace-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.reasoning-trace-toggle {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.6rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: #a1a1aa;
+  text-align: left;
+}
+
+.reasoning-trace-toggle:hover {
+  color: #e4e4e7;
+  background: rgb(24 24 27 / 0.7);
+}
+
+.reasoning-trace-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-right: 0.35rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  color: #71717a;
+}
+
+.reasoning-trace-copy:hover {
+  color: #e4e4e7;
+  background: #27272a;
+}
+
+.reasoning-trace-body {
+  border-top: 1px solid rgb(39 39 42 / 0.9);
+  padding: 0.45rem 0.55rem 0.6rem;
+  max-height: 22rem;
+  overflow: auto;
+}
+
+.reasoning-trace-prose {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  color: #a1a1aa;
+}
+
+.reasoning-sub {
+  border-radius: 0.35rem;
+  margin-bottom: 0.25rem;
+}
+
+.reasoning-sub summary {
+  display: flex;
+  cursor: pointer;
+  list-style: none;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #d4d4d8;
+}
+
+.reasoning-sub summary::-webkit-details-marker {
+  display: none;
+}
+
+.reasoning-sub summary:hover {
+  background: rgb(39 39 42 / 0.6);
+  border-radius: 0.3rem;
+}
+
+.reasoning-sub-chevron {
+  flex-shrink: 0;
+  color: #fbbf24;
+  transition: transform 120ms ease;
+}
+
+.reasoning-sub[open] .reasoning-sub-chevron {
+  transform: rotate(90deg);
+}
+
+.reasoning-sub .reasoning-trace-prose {
+  padding: 0.15rem 0.35rem 0.45rem 1.35rem;
+}
+
 .term-pane-output--plan {
   background-color: rgba(154, 52, 18, 0.22);
 }

@@ -5,11 +5,13 @@ import { endpointUrl, formatFetchError } from '../lib/apiUrl';
 import { coalesceFetch } from '../lib/coalesceFetch';
 import { cn } from '../lib/cn';
 import { setSettings } from '../lib/storage';
-import type { ClientSettings } from '../types';
+import { ModelFamilyChip, ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
+import type { ClientSettings, Tab } from '../types';
 
 interface Props {
   settings: ClientSettings;
   onSettingsChange: (s: ClientSettings) => void;
+  onOpenTab?: (tab: Tab) => void;
 }
 
 interface ModelItem {
@@ -60,7 +62,7 @@ function appendQuery(url: string, params: URLSearchParams): string {
   return url.includes('?') ? `${url}&${qs}` : `${url}?${qs}`;
 }
 
-export function ModelsScreen({ settings, onSettingsChange }: Props) {
+export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
   const active = resolveActiveSettings(settings);
   const isFeatherless = settings.inferenceProvider === 'featherless';
 
@@ -373,6 +375,15 @@ export function ModelsScreen({ settings, onSettingsChange }: Props) {
 
       {error ? <div className="mb-2 font-mono text-[11px] text-red-400">{error}</div> : null}
 
+      {selectedId ? (
+        <ModelSettingsGuidePanel
+          model={selectedId}
+          settings={settings}
+          onSettingsChange={onSettingsChange}
+          onOpenTab={onOpenTab}
+        />
+      ) : null}
+
       <div className="mb-2 font-mono text-[10px] text-muted">
         Showing {filtered.length} of {models.length}
         {query.trim() ? ` · filter "${query.trim()}"` : ''}
@@ -410,7 +421,8 @@ export function ModelsScreen({ settings, onSettingsChange }: Props) {
                 )}
               >
                 <span className="min-w-0 truncate pr-2">{m.id}</span>
-                <span className="shrink-0 text-[10px] text-muted">
+                <span className="flex shrink-0 items-center gap-1.5 text-[10px] text-muted">
+                  <ModelFamilyChip model={m.id} />
                   {isAbliteratedModel(m) ? 'ablit · ' : ''}
                   {m.owned_by || 'remote'}
                 </span>

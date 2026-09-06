@@ -310,4 +310,6 @@ export type ChatOpenAiMessage = {
   content: string;
   tool_call_id?: string;
   tool_calls?: ChatOpenAiToolCall[];
+  /** Qwen3/vLLM thinking — resend on later turns so tool loops keep prior reasoning. */
+  reasoning_content?: string;
 };

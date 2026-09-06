@@ -29,7 +29,7 @@ execFileSync(
   { cwd: root, stdio: 'inherit' },
 );
 const mod = await import(pathToFileURL(path.join(outDir, 'reasoningWork.js')).href);
-const { liftReasoningWork, reasoningLooksLikeStalledWork, buildReasoningOnlyNudge, stripImplementationFromText } = mod;
+const { liftReasoningWork, reasoningLooksLikeStalledWork, buildReasoningOnlyNudge, stripImplementationFromText, splitReasoningSections } = mod;
 
 const fence = String.fromCharCode(96, 96, 96);
 const script = [fence + 'bash', 'npm test', fence].join('\n');
@@ -66,6 +66,21 @@ assert.ok(!stripped.includes('+++ b/src/lib/sse.ts'));
 assert.ok(!stripped.includes('```'));
 assert.equal(stripImplementationFromText(diff), '');
 assert.equal(stripImplementationFromText('just a plan bullet'), 'just a plan bullet');
+
+const one = splitReasoningSections('just thinking about the problem');
+assert.equal(one.length, 1);
+assert.equal(one[0].title, 'Thought');
+
+const labeled = splitReasoningSections('Goal: add search.\nInspect: sse.ts and agentTools.\nStep 1: wire the tool.\nStep 2: verify.');
+assert.ok(labeled.length >= 3);
+assert.equal(labeled[0].title, 'Goal');
+assert.match(labeled[0].body, /add search/);
+assert.ok(labeled.some((s) => s.title === 'Inspect' || s.title.startsWith('Step')));
+
+const headed = splitReasoningSections('# Goal\nShip the dropdown.\n# Verify\nCheck chat.');
+assert.equal(headed.length, 2);
+assert.equal(headed[0].title, 'Goal');
+assert.equal(headed[1].title, 'Verify');
 
 console.log('reasoningWork ok');
 fs.rmSync(outDir, { recursive: true, force: true });

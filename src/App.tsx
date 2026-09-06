@@ -689,7 +689,7 @@ export default function App() {
             ) : null}
             {visitedTabs.has('models') ? (
               <div className={panelClass('models')}>
-                <ModelsScreen settings={settings} onSettingsChange={applySettings} />
+                <ModelsScreen settings={settings} onSettingsChange={applySettings} onOpenTab={setTab} />
               </div>
             ) : null}
             {visitedTabs.has('jobs') ? (
@@ -767,6 +767,7 @@ export default function App() {
                   );
                 }}
                 onSettingsChange={applySettings}
+                onOpenTab={setTab}
               />
             </div>
           ) : null}
