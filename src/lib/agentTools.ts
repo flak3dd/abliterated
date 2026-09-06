@@ -1,4 +1,5 @@
 import { bridge } from './bridgeClient';
+import { isPathLocked, type WriteLockTable } from './writeLocks';
 import { workspaceGate } from './workspaceGuard';
 import { generateImage, imageResultToMarkdown } from './imageGen';
 import { saveGeneratedImage } from './imageLibrary';
@@ -55,6 +56,10 @@ export type ExecuteAgentToolOpts = {
   todoItems?: TodoItem[];
   /** Persist ToDo checklist after a successful todo tool call. */
   onTodos?: (items: TodoItem[]) => void;
+  /** Path-level write locks (exact relative paths). */
+  writeLocks?: WriteLockTable;
+  /** Owner id for lock checks (job/node id). */
+  writeLockOwner?: string;
 };
 
 export type ExecuteAgentToolResult = {
@@ -183,6 +188,12 @@ export async function executeAgentTool(
     if (!file) return err(tool, 'missing path');
     if (content === '' && tool.arguments.content == null && tool.arguments.text == null && tool.arguments.body == null) {
       return err(tool, 'missing content');
+    }
+    if (opts.writeLocks) {
+      const held = isPathLocked(opts.writeLocks, file, opts.writeLockOwner);
+      if (held) {
+        return err(tool, `path locked by ${held.owner} (node ${held.nodeId}) — path-level write lock`);
+      }
     }
     const preview = file + '\n---\n' + content.slice(0, 4000);
     if (!autoAcceptEdits) {

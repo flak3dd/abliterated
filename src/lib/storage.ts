@@ -101,6 +101,7 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   webSearchSearxUrl: '',
   jobWorktreesEnabled: false,
   multiAgentEnabled: false,
+  verifyStrictProfile: false,
 };
 
 export function isPlaceholderRoot(path: string): boolean {
@@ -264,6 +265,7 @@ export function getSettings(): ClientSettings {
     coalesceReasoningToContent: stored.coalesceReasoningToContent !== false,
     jobWorktreesEnabled: stored.jobWorktreesEnabled === true,
     multiAgentEnabled: stored.multiAgentEnabled === true,
+    verifyStrictProfile: stored.verifyStrictProfile === true,
     planModeEnabled: stored.planModeEnabled === true,
     buildModeEnabled: stored.buildModeEnabled !== false,
     fastModel: stored.fastModel?.trim() || '',

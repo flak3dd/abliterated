@@ -110,4 +110,26 @@ assert.equal(cycleTry.ok, false);
 assert.match(cycleTry.error, /cycle/i);
 
 fs.rmSync(outDir, { recursive: true, force: true });
+
+// reclaim + path locks + default budget
+{
+  let g2 = g.createTaskGraph({ goal: 'reclaim fixture', success_criteria: ['ok'] });
+  const n = g.addNode(g2, { description: 'coder', role_hint: 'coder', budget: g.defaultNodeBudget('coder') });
+  g2 = n.graph;
+  assert.equal(n.node.budget.max_steps, 16);
+  g2 = g.assignNode(g2, n.node.id, 'c1');
+  g2 = g.startNode(g2, n.node.id);
+  g2 = {
+    ...g2,
+    nodes: g2.nodes.map((node) =>
+      node.id === n.node.id
+        ? { ...node, started_at: new Date(Date.now() - 200000).toISOString(), metadata: { lastBeatAt: Date.now() - 200000, lockPath: 'src/x.ts' } }
+        : node,
+    ),
+  };
+  const rec = g.reclaimStaleNodes(g2, 90000);
+  assert.ok(rec.reclaimed.includes(n.node.id));
+  assert.equal(g.canClaimWritePath(g2, 'src/x.ts', 'other'), false);
+}
+
 console.log('test-task-graph: ok');

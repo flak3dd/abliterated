@@ -16,6 +16,12 @@ import {
   DEEPEN_COMPLETENESS_JOB_PROMPT,
   DEEPEN_COMPLETENESS_PRESET_LABEL,
 } from '../lib/deepenComplete';
+import {
+  VERIFY_STRICT_PROFILE_JOB_PROMPT,
+  VERIFY_STRICT_PROFILE_LABEL,
+  applyVerifyStrictProfile,
+} from '../lib/verifyStrictProfile';
+import { TASK_GRAPH_PATH, formatTaskGraphPrompt, parseTaskGraph } from '../lib/taskGraph';
 
 interface Props {
   jobs: Job[];
@@ -36,6 +42,7 @@ const PROMPT_EXAMPLES = [
   'Find TODO comments under src/ and group by file',
   'Read package.json and suggest a minimal cleanup PR',
   DEEPEN_COMPLETENESS_JOB_PROMPT,
+  VERIFY_STRICT_PROFILE_JOB_PROMPT,
 ];
 
 /** Short chip labels; full prompt may be longer for the completeness preset. */
@@ -44,6 +51,7 @@ const PROMPT_EXAMPLE_LABELS = [
   'Find TODO comments under src/ and group by file',
   'Read package.json and suggest a minimal cleanup PR',
   DEEPEN_COMPLETENESS_PRESET_LABEL,
+  VERIFY_STRICT_PROFILE_LABEL,
 ];
 
 function relativeTime(ts: number, now: number): string {
@@ -70,6 +78,8 @@ export function JobsScreen({ jobs, onJobsChange, onSettingsChange }: Props) {
   const [statusFilter, setStatusFilter] = useState<FilterTab>('all');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [appRoot, setAppRoot] = useState(bridge.currentAppRoot);
+  const [graphPrompt, setGraphPrompt] = useState('');
+  const [forceReplanFlash, setForceReplanFlash] = useState('');
 
   useEffect(() => subscribeJobs(onJobsChange), [onJobsChange]);
   useEffect(() => bridge.onAppRootChange(setAppRoot), []);
@@ -84,6 +94,33 @@ export function JobsScreen({ jobs, onJobsChange, onSettingsChange }: Props) {
     const id = window.setTimeout(() => setFlash(null), 2200);
     return () => window.clearTimeout(id);
   }, [flash]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!openId || !bridge.connected) {
+        if (!cancelled) setGraphPrompt('');
+        return;
+      }
+      const job = jobs.find((j) => j.id === openId);
+      if (!job?.multiAgent && job?.status !== 'running') {
+        // still show graph if file exists for MA jobs or any running
+      }
+      try {
+        const raw = await bridge.readFile(TASK_GRAPH_PATH);
+        const g = parseTaskGraph(raw);
+        if (!cancelled) setGraphPrompt(formatTaskGraphPrompt(g));
+      } catch {
+        if (!cancelled) setGraphPrompt('');
+      }
+    };
+    void load();
+    const id = window.setInterval(() => { void load(); }, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [openId, jobs, appRoot]);
+
 
   const run = () => {
     setError('');
@@ -213,6 +250,12 @@ export function JobsScreen({ jobs, onJobsChange, onSettingsChange }: Props) {
                     setSettings(next);
                     onSettingsChange?.(next);
                     setFlash('Completeness deepen enabled (synced with Chat/Settings)');
+                  }
+                  if (ex === VERIFY_STRICT_PROFILE_JOB_PROMPT) {
+                    const next = applyVerifyStrictProfile({ ...getSettings(), verifyStrictProfile: true });
+                    setSettings(next);
+                    onSettingsChange?.(next);
+                    setFlash('Verify-strict profile applied (Build + skills)');
                   }
                 }}
                 className="chip max-w-full truncate hover:border-sky-500/40 hover:text-sky-200"
@@ -379,6 +422,34 @@ export function JobsScreen({ jobs, onJobsChange, onSettingsChange }: Props) {
                           </li>
                         ))}
                       </ul>
+                    </div>
+                  ) : null}
+
+
+                  {(job.multiAgent || graphPrompt) && openId === job.id ? (
+                    <div className="mb-3 rounded-md border border-violet-900/50 bg-violet-950/20 p-2.5">
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <div className="font-mono text-[10px] uppercase tracking-wider text-violet-300 font-semibold">
+                          Task graph{job.fleetId ? ` · ${job.fleetId}` : ''}
+                          {job.role ? ` · role ${job.role}` : ''}
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-ghost h-6 px-2 text-[10px]"
+                          onClick={() => {
+                            setForceReplanFlash('Replan: inject guidance via a new multi-agent job or mid-run note');
+                            setFlash('Force replan: enqueue MA job with REPLAN TRIGGER in prompt, or use Settings multi-agent');
+                          }}
+                        >
+                          Force replan hint
+                        </button>
+                      </div>
+                      {forceReplanFlash && openId === job.id ? (
+                        <div className="mb-1.5 font-mono text-[10px] text-amber-300">{forceReplanFlash}</div>
+                      ) : null}
+                      <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-zinc-300 leading-5">
+                        {graphPrompt || '(no .ablit/task.json yet — multi-agent will seed a fleet plan)'}
+                      </pre>
                     </div>
                   ) : null}
 

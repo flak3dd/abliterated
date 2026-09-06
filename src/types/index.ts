@@ -337,6 +337,8 @@ export interface ClientSettings {
   jobWorktreesEnabled: boolean;
   /** Opt-in multi-agent orchestrator/workers/critic. Default false. */
   multiAgentEnabled: boolean;
+  /** When true, apply verify-strict preset posture (Build + skills auto-inject). Default false. */
+  verifyStrictProfile: boolean;
 }
 
 export type ChatOpenAiToolCall = {

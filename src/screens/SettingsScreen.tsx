@@ -369,11 +369,24 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             help="Send further messages while the agent is busy. It finishes the current step, then integrates your note."
           />
 
+
+          <SwitchRow
+            label="Verify-strict profile"
+            checked={settings.verifyStrictProfile === true}
+            onChange={(v) =>
+              patch(
+                v
+                  ? { ...settings, verifyStrictProfile: true, buildModeEnabled: true, skillsEnabled: true, deepenCompleteness: true, selfDeepenEnabled: true, planModeEnabled: false }
+                  : { verifyStrictProfile: false },
+              )
+            }
+            help="Preset: Build mode + skills + deepen completeness. Auto-injects the verify-strict skill on Build/large Jobs and Chat."
+          />
           <SwitchRow
             label="Job worktrees (experimental)"
             checked={settings.jobWorktreesEnabled === true}
             onChange={(v) => patch({ jobWorktreesEnabled: v })}
-            help="When on, Jobs prepare .ablit/worktrees/<jobId> (git worktree when possible). Bridge still uses a shared ROOT — isolation stub until multi-root."
+            help="When on, Jobs create a real git worktree under .ablit/worktrees/<jobId> and set the bridge workspace root to that tree."
           />
 
           <SwitchRow
