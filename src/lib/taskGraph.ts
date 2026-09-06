@@ -120,6 +120,11 @@ export type TaskSubtask = {
   critiques?: TaskCritique[];
   /** Optional single-writer hint (relative path). */
   lockPath?: string;
+  /** Count of failed verify/critique attempts (replan at 2). */
+  verifyFails?: number;
+  /** Optional step budget for this subtask. */
+  maxSteps?: number;
+  consumedSteps?: number;
 };
 
 export type TaskGraph = {
@@ -379,13 +384,36 @@ export function applyTaskUpdateArgs(graph: TaskGraph, args: Record<string, unkno
 
 export function readySubtasks(graph: TaskGraph): TaskSubtask[] {
   const done = new Set(graph.subtasks.filter((s) => s.status === "done").map((s) => s.id));
+  const locked = new Set(
+    graph.subtasks
+      .filter((s) => s.status === "in_progress" && s.lockPath)
+      .map((s) => (s.lockPath || "").replace(/\\/g, "/").replace(/^\.\//, "")),
+  );
   return graph.subtasks.filter((s) => {
     if (s.status === "done" || s.status === "in_progress") return false;
     if (s.status === "blocked") return false;
     const blockers = s.blockers || [];
-    return blockers.every((b) => done.has(b));
+    if (!blockers.every((b) => done.has(b))) return false;
+    if (s.lockPath) {
+      const key = s.lockPath.replace(/\\/g, "/").replace(/^\.\//, "");
+      if (key && locked.has(key)) return false;
+    }
+    return true;
   });
 }
+
+/** Whether task-graph injection should run (skip trivial one-shots). */
+export function shouldUseTaskGraph(opts: {
+  largeJob?: boolean;
+  buildProcess?: boolean;
+  multiAgent?: boolean;
+  hasExistingGraph?: boolean;
+}): boolean {
+  if (opts.multiAgent) return true;
+  if (opts.largeJob || opts.buildProcess) return true;
+  return false;
+}
+
 
 export function touchHeartbeat(graph: TaskGraph, subtaskId: string): TaskGraph {
   return {

@@ -86,12 +86,12 @@ import { buildFakeToolNudge, looksLikeFakeToolTheater, parseFakeToolCalls } from
 import { detokenizeArtifacts } from '../lib/detokenizeArtifacts';
 import { streamChatCompletion } from '../lib/sse';
 import { getMessages, recordAgentRun, replaceThreadMessages, saveMessage, setSettings, uid, upsertThread } from '../lib/storage';
-import { formatSkillsCatalogPrompt, toCatalogEntries, type SkillCatalogEntry, type SkillRecord } from '../lib/skills';
+import { formatSkillsCatalogPrompt, formatVerifyStrictSkillPrompt, shouldAutoInjectVerifyStrict, toCatalogEntries, type SkillCatalogEntry, type SkillRecord } from '../lib/skills';
 import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from '../lib/projectMemory';
 import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
 import { buildModelAgentProfile } from '../lib/modelAgentProfile';
 import { peekFeatherlessModel } from '../lib/featherlessLimits';
-import { TASK_GRAPH_PATH, formatTaskGraphPrompt, parseTaskGraph } from '../lib/taskGraph';
+import { TASK_GRAPH_PATH, formatTaskGraphPrompt, parseTaskGraph, shouldUseTaskGraph } from '../lib/taskGraph';
 import type { ChatOpenAiMessage, ClientSettings, Message, Tab, Thread, ToolCallPayload } from '../types';
 
 import { PLAN_MODE_TOOLS } from '../types';
@@ -445,6 +445,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     effectiveTools,
   ]);
   const [planChecklist, setPlanChecklist] = useState<string[]>([]);
+  const [skillsRecords, setSkillsRecords] = useState<SkillRecord[]>([]);
   const [skillsCatalog, setSkillsCatalog] = useState<SkillCatalogEntry[]>([]);
   const [projectMemoryBlock, setProjectMemoryBlock] = useState('');
   const [taskGraphBlock, setTaskGraphBlock] = useState('');
@@ -743,6 +744,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       }
       if (settings.skillsEnabled === false) {
         if (!cancelled) {
+          setSkillsRecords([]);
           setSkillsCatalog([]);
           setWorkspaceSkillsBlock('');
         }
@@ -751,11 +753,13 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       try {
         const skills = (await bridge.listSkills()) as SkillRecord[];
         if (!cancelled) {
+          setSkillsRecords(skills as SkillRecord[]);
           setSkillsCatalog(toCatalogEntries(skills));
           setWorkspaceSkillsBlock(formatAutoLoadedSkillsPrompt(skills));
         }
       } catch {
         if (!cancelled) {
+          setSkillsRecords([]);
           setSkillsCatalog([]);
           setWorkspaceSkillsBlock('');
         }
@@ -797,15 +801,30 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       planMode && lastUser && /\b(build|implement|apply|write|code)\b/i.test(lastUser.content)
         ? 'Plan mode is still on; only checklist allowed — operator must Approve to write. Do not emit diffs.'
         : '';
+    const injectGraph = shouldUseTaskGraph({
+      largeJob: !!(lastUser && looksLargeJob(lastUser.content)),
+      buildProcess: !!buildProcess,
+    });
+    const injectVerifyStrict =
+      settings.skillsEnabled !== false &&
+      shouldAutoInjectVerifyStrict({
+        buildProcess: !!buildProcess,
+        largeJob: !!(lastUser && looksLargeJob(lastUser.content)),
+        verifyStrictProfile: settings.verifyStrictProfile === true,
+      });
+    const verifyStrictBlock = injectVerifyStrict
+      ? formatVerifyStrictSkillPrompt(skillsRecords, { force: true })
+      : '';
     sys = [
       sys,
       LIVE_WORKSPACE_SUFFIX,
       projectMemoryBlock,
-      taskGraphBlock,
+      injectGraph ? taskGraphBlock : '',
       !agentProfile.compactPrompt && settings.skillsEnabled !== false
         ? formatSkillsCatalogPrompt(skillsCatalog)
         : '',
       !agentProfile.compactPrompt && settings.skillsEnabled !== false ? workspaceSkillsBlock : '',
+      verifyStrictBlock,
 
       autoAcceptEdits ? grokAutoAcceptSuffix(workspaceRoot) : '',
       agentProfile.systemAddendum,

@@ -155,3 +155,47 @@ export function similarSkillExists(
     return sd === desc || sd.includes(desc.slice(0, 48)) || desc.includes(sd.slice(0, 48));
   });
 }
+
+
+/** Skill id for the bundled verify-strict quality loop. */
+export const VERIFY_STRICT_SKILL_ID = 'verify-strict';
+
+/**
+ * Auto-inject verify-strict skill body for Build / large jobs.
+ * Prefers bundled (or merged) skill from listSkills; empty if missing.
+ */
+export function formatVerifyStrictSkillPrompt(
+  skills: SkillRecord[],
+  opts?: { force?: boolean },
+): string {
+  if (!opts?.force && !skills.length) return '';
+  const hit =
+    skills.find((s) => slugifySkillId(s.id) === VERIFY_STRICT_SKILL_ID) ||
+    skills.find((s) => slugifySkillId(s.name).includes('verify-strict')) ||
+    skills.find((s) => /verify[- ]strict/i.test(s.name + ' ' + (s.description || '')));
+  if (!hit) {
+    return [
+      '## Verify-strict quality loop (auto-injected)',
+      'Build/large job: lock acceptance criteria, decompose, explore, implement, then **verify before done**.',
+      'Call the `verify` tool (or shell typecheck/test). Cap / incomplete is not success. Do not self-declare complete without evidence.',
+    ].join('\n');
+  }
+  const body = (hit.body || '').trim().slice(0, 3_500);
+  return [
+    '## Verify-strict quality loop (auto-injected for Build/large)',
+    `Skill \`${hit.id}\` — follow these steps:`,
+    hit.description || '',
+    body || '(see read_skill verify-strict)',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+/** Whether Build/large heuristics say we should inject verify-strict. */
+export function shouldAutoInjectVerifyStrict(opts: {
+  buildProcess?: boolean;
+  largeJob?: boolean;
+  verifyStrictProfile?: boolean;
+}): boolean {
+  return !!(opts.buildProcess || opts.largeJob || opts.verifyStrictProfile);
+}

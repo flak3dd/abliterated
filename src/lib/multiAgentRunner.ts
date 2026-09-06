@@ -21,11 +21,16 @@ import {
 import { AGENT_BUS_PATH, formatBusEvent, type BusEvent } from "./agentBus";
 import {
   defaultFleetPlan,
+  detectReplanTriggers,
   fleetComplete,
   pickNextSubtask,
   roleSystemAddendum,
 } from "./multiAgent";
 import { prepareJobWorktree } from "./jobWorktree";
+import { locksFromSubtasks } from "./writeLocks";
+import { goalKeeperCheck } from "./goalKeeper";
+import { coldVerifierRequiresVerify, buildColdVerifierSystemBlock } from "./verifyDone";
+import { formatReplanPrompt } from "./replanTriggers";
 import { buildModelAgentProfile } from "./modelAgentProfile";
 import { peekFeatherlessModel } from "./featherlessLimits";
 import type { ChatOpenAiMessage, ClientSettings, Job, ToolType } from "../types";
@@ -119,6 +124,7 @@ export async function runMultiAgentFleet(opts: {
     });
   }
 
+  let effectiveRoot = workspaceRoot;
   if (settings.jobWorktreesEnabled === true && bridge.connected) {
     try {
       const prep = await prepareJobWorktree({
@@ -134,8 +140,20 @@ export async function runMultiAgentFleet(opts: {
         },
       });
       job = appendLog(job, `worktree: ${prep.note} (${prep.path})`);
+      if (prep.shouldSetRoot && prep.absPath) {
+        try {
+          const root = await bridge.setRoot(prep.absPath);
+          effectiveRoot = root || prep.absPath;
+          job = appendLog(job, `workspace root set to worktree: ${effectiveRoot}`);
+        } catch (e) {
+          job = appendLog(
+            job,
+            `worktree setRoot failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
     } catch (e) {
-      job = appendLog(job, `worktree stub: ${e instanceof Error ? e.message : String(e)}`);
+      job = appendLog(job, `worktree error: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -164,7 +182,7 @@ export async function runMultiAgentFleet(opts: {
 
   // Phase 1: orchestrator decomposition (short)
   job = appendLog(job, "multi-agent phase: orchestrator");
-  job = await runRoleLoop({
+  job = (await runRoleLoop({
     job,
     settings,
     role: "orchestrator",
@@ -172,36 +190,73 @@ export async function runMultiAgentFleet(opts: {
     persist,
     appendLog,
     abortSignal,
-    workspaceRoot,
+    workspaceRoot: effectiveRoot,
     activeModel: active.defaultModel,
     turnBudget: Math.min(4, turnCap),
     userKickoff:
       `Fleet goal:\n${job.prompt}\n\n` +
       `Current blackboard:\n${formatTaskGraphPrompt(graph)}\n\n` +
-      "Update task.json into a concrete DAG (coder/tester/verifier) with successCriteria. Do not implement code.",
+      "Update task.json into a concrete DAG (coder/tester/verifier) with successCriteria and lockPath on writers. Do not implement code.",
     planMode,
-  });
+  })).job;
   graph = await readGraph();
 
-  // Phase 2: worker loop
+  // Phase 2: worker loop with budgets / heartbeat reclaim / replan
   let rounds = 0;
   const maxRounds = 8;
+  const originalGoal = job.prompt;
   while (rounds < maxRounds && !fleetComplete(graph)) {
     if (abortSignal.aborted) throw new DOMException("Aborted", "AbortError");
     rounds += 1;
+
+    const replans = detectReplanTriggers(graph);
+    if (replans.length) {
+      const ev = replans[0];
+      job = appendLog(job, `multi-agent replan: ${ev.reason} ${ev.nodeId || ""}`);
+      job = (await runRoleLoop({
+        job,
+        settings,
+        role: "orchestrator",
+        graph,
+        persist,
+        appendLog,
+        abortSignal,
+        workspaceRoot: effectiveRoot,
+        activeModel: active.defaultModel,
+        turnBudget: Math.min(3, turnCap),
+        userKickoff: formatReplanPrompt(ev) + `\n\nBlackboard:\n${formatTaskGraphPrompt(graph)}`,
+        planMode,
+      })).job;
+      graph = await readGraph();
+    }
+
     let next = pickNextSubtask(graph);
     if (!next) {
       job = appendLog(job, "multi-agent: no ready subtasks — stopping");
       break;
     }
-    // If pickNext returned a stale reclaim, reset status
+    // If pickNext returned a stale reclaim, reset status via heartbeat
     if (next.status === "pending" || next.status === "in_progress") {
       graph = touchHeartbeat(graph, next.id);
+      // budget: increment consumedSteps when starting
+      graph = {
+        ...graph,
+        updatedAt: Date.now(),
+        subtasks: graph.subtasks.map((s) =>
+          s.id === next!.id
+            ? { ...s, consumedSteps: (s.consumedSteps || 0) + 1, status: "in_progress" as const }
+            : s,
+        ),
+      };
       await writeGraph(graph);
     }
     const role = (next.role || "coder") as AgentRole;
+    const turnBudget = Math.min(
+      turnCap,
+      next.maxSteps && next.maxSteps > 0 ? next.maxSteps : turnCap,
+    );
     job = persist({ ...job, role });
-    job = appendLog(job, `multi-agent phase: ${role} → ${next.id}`);
+    job = appendLog(job, `multi-agent phase: ${role} → ${next.id} (budget ${turnBudget})`);
     await appendBus({
       ts: Date.now(),
       type: "assign",
@@ -209,10 +264,20 @@ export async function runMultiAgentFleet(opts: {
       to: role,
       taskId: next.id,
       fleetId: graph.fleetId,
-      payload: { text: next.text },
+      payload: { text: next.text, lockPath: next.lockPath },
     });
 
-    job = await runRoleLoop({
+    const coldBlock =
+      role === "verifier"
+        ? buildColdVerifierSystemBlock({
+            nodeId: next.id,
+            description: next.text,
+            successCriteria: next.successCriteria,
+            artifacts: next.artifacts,
+          })
+        : "";
+
+    const loopResult = await runRoleLoop({
       job,
       settings,
       role,
@@ -220,45 +285,96 @@ export async function runMultiAgentFleet(opts: {
       persist,
       appendLog,
       abortSignal,
-      workspaceRoot,
+      workspaceRoot: effectiveRoot,
       activeModel: active.defaultModel,
-      turnBudget: turnCap,
+      turnBudget,
       userKickoff:
         `You are ${role} on subtask ${next.id}.\n` +
         `${next.text}\n` +
         (next.successCriteria ? `Success: ${next.successCriteria}\n` : "") +
+        (next.lockPath ? `Write lock path: ${next.lockPath}\n` : "") +
         `\nBlackboard:\n${formatTaskGraphPrompt(graph)}\n` +
+        (coldBlock ? `\n${coldBlock}\n` : "") +
         (role === "verifier"
-          ? "CRITIC: call verify before pass. Reject if evidence missing."
+          ? "CRITIC: you MUST call verify before pass. Reject if evidence missing."
           : "Heartbeat via task_update id+heartbeat. Stay in scope."),
       planMode: planMode && role !== "orchestrator" ? planMode : planMode,
       subtaskId: next.id,
+      requireVerify: role === "verifier",
     });
+    job = loopResult.job;
 
     graph = await readGraph();
-    // Verifier gate: if critique role finished without verify evidence in logs, mark incomplete note
     if (role === "verifier") {
+      const gate = coldVerifierRequiresVerify(loopResult.toolsUsed);
+      job = appendLog(job, `cold verifier: ${gate.reason}`);
+      if (!gate.ok) {
+        // bump verifyFails; do not allow done
+        graph = {
+          ...graph,
+          updatedAt: Date.now(),
+          subtasks: graph.subtasks.map((s) =>
+            s.id === next!.id
+              ? {
+                  ...s,
+                  status: "blocked" as const,
+                  verifyFails: (s.verifyFails || 0) + 1,
+                  critiques: [
+                    ...(s.critiques || []),
+                    {
+                      at: Date.now(),
+                      role: "verifier",
+                      verdict: "reject" as const,
+                      note: gate.reason,
+                    },
+                  ],
+                }
+              : s,
+          ),
+        };
+        await writeGraph(graph);
+      }
       await appendBus({
         ts: Date.now(),
         type: "critique",
         from: "verifier",
         taskId: next.id,
         fleetId: graph.fleetId,
-        payload: { round: rounds },
+        payload: { round: rounds, verifyOk: gate.ok },
       });
     }
   }
 
   graph = await readGraph();
   if (fleetComplete(graph)) {
-    job = persist({
-      ...job,
-      status: "done",
-      stopReason: "done",
-      endedAt: Date.now(),
-      role: job.role,
+    const evidence = graph.subtasks
+      .map((s) => `${s.id} ${s.text} ${(s.artifacts || []).join(" ")} ${(s.critiques || []).map((c) => c.note).join(" ")}`)
+      .join("\n");
+    const gk = goalKeeperCheck({
+      originalGoal,
+      graphGoal: graph.goal || "",
+      evidenceText: evidence,
     });
-    job = appendLog(job, "multi-agent: fleet complete");
+    job = appendLog(job, `goal keeper: ${gk.reason}`);
+    if (!gk.ok) {
+      job = persist({
+        ...job,
+        status: "incomplete",
+        stopReason: "error",
+        error: gk.reason,
+        endedAt: Date.now(),
+      });
+      job = appendLog(job, "multi-agent: fleet blocked by goal keeper");
+    } else {
+      job = persist({
+        ...job,
+        status: "done",
+        stopReason: "done",
+        endedAt: Date.now(),
+        role: job.role,
+      });
+      job = appendLog(job, "multi-agent: fleet complete");
+    }
   } else {
     job = persist({
       ...job,
@@ -271,7 +387,6 @@ export async function runMultiAgentFleet(opts: {
   }
   return job;
 }
-
 async function runRoleLoop(opts: {
   job: Job;
   settings: ClientSettings;
@@ -286,8 +401,10 @@ async function runRoleLoop(opts: {
   userKickoff: string;
   planMode: boolean;
   subtaskId?: string;
-}): Promise<Job> {
+  requireVerify?: boolean;
+}): Promise<{ job: Job; toolsUsed: string[] }> {
   let job = opts.job;
+  const toolsUsed: string[] = [];
   const enabledTools = toolsForRole(opts.role, opts.planMode);
   const peek = peekFeatherlessModel(opts.activeModel);
   const profile = buildModelAgentProfile({
@@ -303,10 +420,16 @@ async function runRoleLoop(opts: {
 
   const system = [
     opts.settings.systemPrompt || "",
-    roleSystemAddendum(opts.role, { goal: opts.graph.goal || opts.job.prompt, subtask: opts.graph.subtasks.find((s) => s.id === opts.subtaskId) }),
+    roleSystemAddendum(opts.role, {
+      goal: opts.graph.goal || opts.job.prompt,
+      subtask: opts.graph.subtasks.find((s) => s.id === opts.subtaskId),
+    }),
     formatTaskGraphPrompt(opts.graph),
     profile.systemAddendum,
     opts.workspaceRoot ? `Workspace root: ${opts.workspaceRoot}` : "",
+    opts.requireVerify
+      ? "Cold verifier: you MUST call the verify tool before declaring pass."
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -342,8 +465,8 @@ async function runRoleLoop(opts: {
       abortSignal: opts.abortSignal,
       enabledTools,
       flightKey: `job:${job.id}:${opts.role}`,
-      onDelta: (t) => {
-        assistantText += t;
+      onDelta: (chunk) => {
+        assistantText += chunk;
       },
     });
 
@@ -351,31 +474,44 @@ async function runRoleLoop(opts: {
       role: "assistant",
       content: assistantText,
       tool_calls: result.toolCalls.length
-        ? result.toolCalls.map((t) => ({
-            id: t.id,
+        ? result.toolCalls.map((tc) => ({
+            id: tc.id,
             type: "function" as const,
-            function: { name: t.name, arguments: JSON.stringify(t.arguments ?? {}) },
+            function: { name: tc.name, arguments: JSON.stringify(tc.arguments ?? {}) },
           }))
         : undefined,
     });
 
     if (!result.toolCalls.length) {
+      if (opts.requireVerify && !toolsUsed.includes("verify")) {
+        history.push({
+          role: "user",
+          content:
+            "Cold verifier gate: call the verify tool now before finishing. Self-declared pass is not allowed.",
+        });
+        job = opts.appendLog(job, `${opts.role}: verify required — nudge`);
+        continue;
+      }
       job = opts.appendLog(job, `${opts.role}: no tools — phase done`);
       break;
     }
 
     for (const tc of result.toolCalls) {
       if (opts.abortSignal.aborted) throw new DOMException("Aborted", "AbortError");
-      // Allow task_update even when auto-accept off (blackboard)
+      toolsUsed.push(tc.name);
       const exec = await executeAgentTool(tc, {
         enabledTools,
-        autoAcceptEdits: opts.settings.autoAcceptEdits || tc.name === "task_update" || tc.name === "task_read",
-        autoRunShell: opts.settings.autoRunShell || opts.role === "verifier" || opts.role === "tester",
+        autoAcceptEdits:
+          opts.settings.autoAcceptEdits || tc.name === "task_update" || tc.name === "task_read",
+        autoRunShell:
+          opts.settings.autoRunShell || opts.role === "verifier" || opts.role === "tester",
         settings: opts.settings,
         workspaceRoot: opts.workspaceRoot,
         mode: "headless",
         checkpointNamespace: `ma ${job.id} ${opts.role}`,
         executeMcpTool: executeMcpToolCall,
+        writeLocks: locksFromSubtasks(opts.graph.subtasks),
+        writeLockOwner: opts.subtaskId || opts.role,
       });
       job = opts.appendLog(
         job,
@@ -388,7 +524,7 @@ async function runRoleLoop(opts: {
       });
     }
   }
-  return job;
+  return { job, toolsUsed };
 }
 
 /** Whether a Job should use the multi-agent runner. */
