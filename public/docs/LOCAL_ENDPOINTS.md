@@ -69,6 +69,8 @@ OpenAI-compatible image server for the Images tab and the `generate_image` tool.
 - **Address:** `http://127.0.0.1:7860`
 - **Paths:** `POST /v1/images/generations` (returns `b64_json`), `GET /v1/models`, `GET /v1/progress`, `GET /health`
 - **Model ids:** `krea2-turbo-nvfp4` (Krea 2 Turbo NVFP4 + uncensor LoRA) and `z-image-turbo-nsfw-nvfp4` (Z-Image Turbo NVFP4 drafts)
+- **Package ops:** `spark-install/install.sh`, `start.sh`, `status.sh`, `stop.sh` (Mac: `bash spark-install/push.sh ALIAS --start`)
+- **Serve scripts:** `serve-spark.sh`, `serve-comfy.sh`, `serve-openai-bridge.py`
 - **Mock (no GPU):** `npm run image:mock` from the repo root serves a stub PNG on the same port
 - **Verify:** `curl http://127.0.0.1:7860/health`
 - **IDE wiring:** in DEV requests go through the `/image-v1` proxy; a blank 5xx from the proxy usually means nothing is listening on `:7860`

@@ -17,6 +17,8 @@ export type ImageGenResult = {
   b64?: string;
   url?: string;
   revisedPrompt?: string;
+  /** Present when the API returned multiple images (n>1). First entry matches top-level fields. */
+  images?: Array<{ b64?: string; url?: string; revisedPrompt?: string }>;
 };
 
 function imageEndpointUrl(settings: ClientSettings, suffix: string): string {
@@ -56,7 +58,7 @@ function friendlyHttpError(status: number, body: string, requestUrl: string): st
       `Image server unreachable (HTTP ${status}).`,
       'Nothing is listening on the image base URL (default http://127.0.0.1:7860).',
       'Start a mock: `cd spark-image && ABLITERATED_IMAGE_MOCK=1 python3 serve-openai-bridge.py`',
-      'Or full FLUX on a GPU host — see spark-image/README.md.',
+      'Or Spark Comfy/bridge via spark-install — see spark-install/README.md (start/status/stop) and spark-image/README.md.',
       `Request: ${requestUrl}`,
     ].join('\n');
   }
@@ -139,6 +141,8 @@ export async function generateImage(args: ImageGenArgs): Promise<ImageGenResult>
     });
   } catch (err) {
     stopPoll?.();
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
+    if (err instanceof Error && err.name === 'AbortError') throw err;
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
       [
@@ -161,13 +165,21 @@ export async function generateImage(args: ImageGenArgs): Promise<ImageGenResult>
   } catch {
     throw new Error('Invalid JSON from image endpoint');
   }
-  const first = json.data?.[0];
+  const mapped = (json.data || [])
+    .map((d) => ({
+      b64: d.b64_json || undefined,
+      url: d.url || undefined,
+      revisedPrompt: d.revised_prompt || undefined,
+    }))
+    .filter((d) => d.b64 || d.url);
+  const first = mapped[0];
   if (!first) throw new Error('Empty image response');
   onProgress?.(100, false);
   return {
-    b64: first.b64_json || undefined,
-    url: first.url || undefined,
-    revisedPrompt: first.revised_prompt || undefined,
+    b64: first.b64,
+    url: first.url,
+    revisedPrompt: first.revisedPrompt,
+    images: mapped.length > 1 ? mapped : undefined,
   };
 }
 
@@ -179,6 +191,24 @@ export function imageResultToMarkdown(result: ImageGenResult, prompt: string): s
     return `![${prompt.slice(0, 80)}](${result.url})\n\nurl: ${result.url}`;
   }
   return 'no image data';
+}
+
+export async function pingImageEndpoint(
+  settings: ClientSettings,
+  abortSignal?: AbortSignal,
+): Promise<{ ok: boolean; note: string }> {
+  const url = imageEndpointUrl(settings, '/models');
+  const headers: Record<string, string> = {};
+  const token = (settings.imageToken || '').trim();
+  if (token) headers.Authorization = 'Bearer ' + token;
+  try {
+    const res = await fetch(url, { method: 'GET', headers, signal: abortSignal });
+    // Any HTTP response means the host answered (same rule as providerHealth).
+    return { ok: true, note: `reachable HTTP ${res.status}` };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, note: msg || 'unreachable' };
+  }
 }
 
 export { imageEndpointUrl };

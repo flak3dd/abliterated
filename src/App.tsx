@@ -775,7 +775,7 @@ export default function App() {
             ) : null}
             {visitedTabs.has('api') ? (
               <div className={panelClass('api')}>
-                <ApiScreen settings={settings} onSettingsChange={applySettings} />
+                <ApiScreen settings={settings} onSettingsChange={applySettings} onOpenTab={setTab} />
               </div>
             ) : null}
             {visitedTabs.has('images') ? (

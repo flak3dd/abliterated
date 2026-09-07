@@ -10,9 +10,18 @@ import {
   saveGeneratedImage,
   type StoredImageMeta,
 } from '../lib/imageLibrary';
-import { sparkComfyUrl } from '../lib/sparkInstall';
 import { setSettings } from '../lib/storage';
+import {
+  DRAFT_IMAGE_MODEL,
+  IMAGE_MODEL_OPTIONS,
+  UNCENSORED_IMAGE_MODEL,
+  sparkBridgeDownHint,
+  sparkImageSettingsPatch,
+  sparkOpsCheatSheet,
+  sparkPushCommand,
+} from '../lib/sparkInstall';
 import type { ClientSettings } from '../types';
+
 
 interface Props {
   settings: ClientSettings;
@@ -292,6 +301,9 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
             ? `~${progress}% (est.)`
             : `${progress}%`;
 
+  const bridgeHint = sparkBridgeDownHint(settings);
+  const ops = sparkOpsCheatSheet();
+
   if (!settings.imageGenEnabled) {
     return (
       <div className="h-full overflow-auto p-4">
@@ -299,26 +311,54 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
           <div className="flex items-center gap-2 page-header-title">
             <ImageIcon size={14} /> Images
           </div>
-          <p className="page-header-sub">Local OpenAI-compatible image generation (not cloud).</p>
+          <p className="page-header-sub">
+            Local Spark / OpenAI-compatible image generation (not cloud). Rail shortcut Cmd-6.
+          </p>
         </header>
 
         <div className="section-card max-w-xl">
           <div className="section-card-title text-amber-300">Image generation disabled</div>
           <p className="section-card-hint mt-2">
-            api.abliteration.ai has no <code className="text-zinc-400">/v1/images/generations</code> — cloud chat
-            supports multimodal <em>input</em> only. Run a local OpenAI-compatible server (abliterated FLUX.2 Klein in{' '}
-            <code className="text-zinc-400">spark-image/</code>).
+            Cloud chat has multimodal input only — no{" "}
+            <code className="text-zinc-400">/v1/images/generations</code>. Point this tab at Spark bridge{" "}
+            <code className="text-zinc-400">:7860</code> (Krea quality / Z-Image draft).
           </p>
-          <div className="section-card-body">
-            <button type="button" onClick={() => patch({ imageGenEnabled: true })} className="btn-primary w-fit">
-              Enable image generator
+          <div className="section-card-body space-y-2">
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => patch(sparkImageSettingsPatch(settings, UNCENSORED_IMAGE_MODEL))}
+                className="btn-primary w-fit"
+              >
+                Enable Spark image gen
+              </button>
+              <button
+                type="button"
+                onClick={() => patch(sparkImageSettingsPatch(settings, DRAFT_IMAGE_MODEL))}
+                className="btn-ghost w-fit"
+              >
+                Enable Spark draft gen
+              </button>
+              <button type="button" onClick={() => patch({ imageGenEnabled: true })} className="btn-ghost w-fit">
+                Enable only
+              </button>
+            </div>
+            <p className="font-mono text-[11px] text-muted whitespace-pre-wrap">{bridgeHint}</p>
+            <ul className="space-y-1 font-mono text-[10px] text-zinc-400">
+              {ops.map((row) => (
+                <li key={row.label}>
+                  <span className="text-zinc-500">{row.label}:</span>{" "}
+                  <code className="text-zinc-300">{row.cmd}</code>
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={() => void navigator.clipboard.writeText(sparkPushCommand(settings.sparkSshAlias))}
+              className="btn-ghost w-fit h-7 px-2 text-[10px]"
+            >
+              Copy push + start
             </button>
-            <p className="font-mono text-[11px] text-muted">
-              No GPU? Secondary tip:{' '}
-              <code className="text-zinc-300">npm run image:mock</code> or set up{' '}
-              <code className="text-zinc-300">spark-image/</code>. A blank HTTP 500 usually means nothing is listening
-              on :7860.
-            </p>
           </div>
         </div>
       </div>
@@ -331,7 +371,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         <div className="flex items-center gap-2 page-header-title">
           <ImageIcon size={14} /> Images
         </div>
-        <p className="page-header-sub">Prompt to local endpoint to preview. Cmd/Ctrl+Enter to generate.</p>
+        <p className="page-header-sub">Spark bridge on :7860 · Cmd/Ctrl+Enter · quality krea2-turbo-nvfp4 / draft z-image-turbo-nsfw-nvfp4</p>
       </header>
 
       <div className="grid max-w-4xl gap-4 md:grid-cols-2">
@@ -363,19 +403,54 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                 </div>
               </label>
               <label className="block font-mono text-[10px] uppercase text-muted">
+                Model / workflow
+                <select
+                  value={
+                    IMAGE_MODEL_OPTIONS.some((m) => m.id === settings.imageModel)
+                      ? settings.imageModel
+                      : UNCENSORED_IMAGE_MODEL
+                  }
+                  onChange={(e) => patch({ imageModel: e.target.value })}
+                  className="field mt-1"
+                >
+                  {IMAGE_MODEL_OPTIONS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block font-mono text-[10px] uppercase text-muted">
                 Size
                 <select
                   value={size}
                   onChange={(e) => setSize(e.target.value as (typeof SIZES)[number])}
                   className="field mt-1"
                 >
-                  {SIZES.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
+                  {SIZES.map((sz) => (
+                    <option key={sz} value={sz}>
+                      {sz}
                     </option>
                   ))}
                 </select>
               </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn-ghost h-7 px-2 text-[10px]"
+                  onClick={() => patch(sparkImageSettingsPatch(settings, UNCENSORED_IMAGE_MODEL))}
+                >
+                  Use Spark quality
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost h-7 px-2 text-[10px]"
+                  onClick={() => patch(sparkImageSettingsPatch(settings, DRAFT_IMAGE_MODEL))}
+                >
+                  Use Spark draft
+                </button>
+              </div>
+
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
@@ -435,9 +510,9 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
           <div className="section-card">
             <div className="section-card-title">Endpoint</div>
             <p className="section-card-hint">
-              Spark default is uncensored <code>krea2-turbo-nvfp4</code> (Krea 2 Turbo NVFP4 + one
-              uncensor LoRA). Draft / high-volume: <code>z-image-turbo-nsfw-nvfp4</code>. No safety
-              checker.
+              Spark default <code>krea2-turbo-nvfp4</code> (quality) or <code>z-image-turbo-nsfw-nvfp4</code>{' '}
+              (draft). Bridge <code>:7860</code> / Comfy <code>:8188</code>. Package{' '}
+              <code>spark-install/</code> — install / start / status / stop match README.
             </p>
             <div className="section-card-body">
               <div className="switch-row">
@@ -489,24 +564,6 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                 <p className="switch-row-help">DEV same-origin rewrite for local image servers.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  className="btn-ghost h-7 px-2 text-[10px]"
-                  onClick={() => {
-                    const url = sparkComfyUrl(settings);
-                    void (async () => {
-                      try {
-                        const opened = await window.ablitDesktop?.openExternal?.(url);
-                        if (opened) return;
-                      } catch {
-                        /* fall through */
-                      }
-                      window.open(url, '_blank', 'noopener,noreferrer');
-                    })();
-                  }}
-                >
-                  Open ComfyUI
-                </button>
                 <div className="truncate font-mono text-[10px] text-zinc-500">
                   POST {imageEndpointUrl(settings, '/images/generations')}
                 </div>
@@ -524,6 +581,9 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
               {testNote && (testDetailOpen || testOk === true) ? (
                 <pre className="whitespace-pre-wrap font-mono text-[10px] text-zinc-400">{testNote}</pre>
               ) : null}
+              {testOk === false ? (
+                <pre className="whitespace-pre-wrap font-mono text-[10px] leading-4 text-amber-200/90">{bridgeHint}</pre>
+              ) : null}
               {testOk === false && !testDetailOpen ? (
                 <button
                   type="button"
@@ -533,6 +593,23 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                   Show error details
                 </button>
               ) : null}
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  className="btn-ghost h-7 px-2 text-[10px]"
+                  onClick={() => void navigator.clipboard.writeText(sparkPushCommand(settings.sparkSshAlias))}
+                >
+                  Copy push + start
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost h-7 px-2 text-[10px]"
+                  onClick={() => void window.ablitDesktop?.revealSparkInstall?.()}
+                >
+                  Reveal spark-install
+                </button>
+              </div>
+
             </div>
           </div>
         </div>
@@ -571,11 +648,15 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                 </div>
               </div>
             ) : (
-              <div className="image-empty">
+              <div className="image-empty gap-2 px-4 text-center">
                 <div className="image-empty-frame" aria-hidden />
                 <span>No image yet</span>
+                <p className="font-mono text-[10px] text-zinc-500">
+                  Start the image bridge on 7860, or use the mock server.
+                </p>
               </div>
             )}
+
           </div>
         </div>
       </div>

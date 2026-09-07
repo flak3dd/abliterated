@@ -1,4 +1,4 @@
-# Abliterated image generation (FLUX.2 Klein)
+# Abliterated image generation (Spark Comfy / OpenAI bridge)
 
 `api.abliteration.ai` has **no** `/v1/images/generations` — cloud images are multimodal *input* only. This folder serves an optional **local** OpenAI-compatible image API for the IDE Images tab / `generate_image` tool.
 
@@ -23,7 +23,7 @@ cp .env.example .env
 # edit HF token / encoder repo if needed
 ./pull-models.sh          # on the GPU host only
 python serve-openai-bridge.py
-# listens http://127.0.0.1:7860  model id: abliterated-flux-klein
+# listens http://127.0.0.1:7860  model id: krea2-turbo-nvfp4 (quality) / z-image-turbo-nsfw-nvfp4 (draft)
 ```
 
 Or Docker:
@@ -44,14 +44,14 @@ npm run image:mock
 ABLITERATED_IMAGE_MOCK=1 python3 serve-openai-bridge.py
 ```
 
-Listens on `http://127.0.0.1:7860` (model id `abliterated-flux-klein`) and returns a stub PNG.
+Listens on `http://127.0.0.1:7860` (IDE default model `krea2-turbo-nvfp4`) and returns a stub PNG.
 A blank HTTP 500 from the IDE Vite `/image-v1` proxy usually means nothing is listening on :7860.
 
 ## IDE wiring
 
 1. Images tab → enable image generator  
 2. Base URL `http://127.0.0.1:7860/v1` (DEV uses Vite `/image-v1` proxy when Via proxy is on)  
-3. Model `abliterated-flux-klein`  
+3. Model `krea2-turbo-nvfp4` (or `z-image-turbo-nsfw-nvfp4` for drafts)  
 4. Test / Generate  
 
 Chat tool `generate_image` is exposed only when image gen is enabled.
@@ -84,3 +84,14 @@ Use [`spark-install/`](../spark-install/) — `push.sh` from the Mac, `install.s
 | Draft model | `z-image-turbo-nsfw-nvfp4` |
 
 Workflows: `workflows/txt2img-krea2-turbo-nvfp4.json` (default, 8 Euler steps) and `workflows/txt2img-zimage-turbo-nvfp4.json`. Palette **Use Spark image gen** / **Use Spark draft gen**.
+
+## Ops (discoverable)
+
+| Action | Command |
+| --- | --- |
+| Push from Mac | `bash spark-install/push.sh YOUR_SYNC_ALIAS --start` |
+| Install on Spark | `cd ~/abliterated-spark/spark-install && ./install.sh --start` |
+| Start | `./start.sh` |
+| Status | `./status.sh` |
+| Stop | `./stop.sh` |
+| Local serve scripts | `spark-image/serve-spark.sh`, `serve-comfy.sh`, `serve-openai-bridge.py` |

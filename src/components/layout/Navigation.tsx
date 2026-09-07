@@ -9,7 +9,7 @@ const ITEMS: { id: Tab; label: string; shortcut: string; icon: typeof Terminal }
   { id: 'models', label: 'Models', shortcut: '⌘3', icon: Cpu },
   { id: 'jobs', label: 'Jobs', shortcut: '⌘4', icon: ListTodo },
   { id: 'api', label: 'API Endpoints', shortcut: '⌘5', icon: Radio },
-  { id: 'images', label: 'Images', shortcut: '⌘6', icon: ImageIcon },
+  { id: 'images', label: 'Images (Spark)', shortcut: '⌘6', icon: ImageIcon },
   { id: 'settings', label: 'Settings', shortcut: '⌘7', icon: Settings },
 ];
 

@@ -13,8 +13,16 @@ import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide
 import { formatFeatherlessProbeReport, probeFeatherlessChat } from '../lib/featherlessDebug';
 import { extractHttpErrorMessage } from '../lib/providerError';
 import { recommendedApiPatch } from '../lib/modelSettingsGuide';
-import { sparkPushCommand } from '../lib/sparkInstall';
-import type { ClientSettings, ReasoningLevel } from '../types';
+import {
+  DRAFT_IMAGE_MODEL,
+  UNCENSORED_IMAGE_MODEL,
+  sparkBridgeDownHint,
+  sparkImageSettingsPatch,
+  sparkOpsCheatSheet,
+  sparkPushCommand,
+} from '../lib/sparkInstall';
+
+import type { ClientSettings, ReasoningLevel, Tab } from '../types';
 import {
   DEFAULT_FEATHERLESS_MODEL,
   FEATHERLESS_EMPTY_STATE,
@@ -29,6 +37,7 @@ import {
 interface Props {
   settings: ClientSettings;
   onSettingsChange: (s: ClientSettings) => void;
+  onOpenTab?: (tab: Tab) => void;
 }
 
 const REASONING: ReasoningLevel[] = ['off', 'low', 'high', 'max'];
@@ -42,7 +51,7 @@ function isLocalFeatherOAuthBase(baseUrl: string): boolean {
 }
 
 
-export function ApiScreen({ settings, onSettingsChange }: Props) {
+export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
   const [draft, setDraft] = useState(settings);
   const [result, setResult] = useState('');
   const [testing, setTesting] = useState(false);
@@ -976,6 +985,27 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
             </button>
           </>
         )}
+
+        <div className="rounded border border-border bg-background/40 p-3 space-y-2">
+          <div className="font-mono text-[10px] uppercase text-muted">Local image generation (Spark)</div>
+          <p className="font-mono text-[10px] leading-4 text-muted">
+            Separate from chat providers (Platform / Custom / Featherless). Bridge on :7860, Comfy on :8188.
+            Defaults: krea2-turbo-nvfp4 (quality) and z-image-turbo-nsfw-nvfp4 (draft).
+          </p>
+          <p className="font-mono text-[10px] text-zinc-400 whitespace-pre-wrap">{sparkBridgeDownHint(draft)}</p>
+          <ul className="space-y-1 font-mono text-[10px] text-zinc-400">
+            {sparkOpsCheatSheet().map((row) => (
+              <li key={row.label}>
+                <span className="text-zinc-500">{row.label}:</span> <code className="text-zinc-300">{row.cmd}</code>
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => patch(sparkImageSettingsPatch(draft, UNCENSORED_IMAGE_MODEL))} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Use Spark image gen</button>
+            <button type="button" onClick={() => patch(sparkImageSettingsPatch(draft, DRAFT_IMAGE_MODEL))} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Use Spark draft gen</button>
+            <button type="button" onClick={() => onOpenTab?.('images')} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Open Images tab</button>
+          </div>
+        </div>
 
         <label className="block font-mono text-[10px] uppercase text-muted">
           Reasoning
