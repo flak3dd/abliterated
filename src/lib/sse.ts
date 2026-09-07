@@ -688,7 +688,7 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     (provider === 'dgx-spark' && !settings.sparkEnabled) ||
     (provider === 'featherless' && settings.featherlessEnabled === false);
   // remoteHostEnabled only gates Abliteration/Custom; Spark/Featherless use their own toggles.
-  const needsRemoteToggle = provider === 'abliteration' || provider === 'custom';
+  const needsRemoteToggle = provider === 'abliteration' || provider === 'platform' || provider === 'custom';
   const offline =
     !active.baseUrl.trim() ||
     providerInactive ||

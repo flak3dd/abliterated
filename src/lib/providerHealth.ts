@@ -175,7 +175,7 @@ export function healthMapToEntries(
   const push = (key: keyof ProviderHealthMap, label: string) => {
     out.push({ key, label, state: map[key] });
   };
-  if (active.provider === 'abliteration' || active.provider === 'custom') push('abliteration', active.label);
+  if (active.provider === 'abliteration' || active.provider === 'platform' || active.provider === 'custom') push('abliteration', active.label);
   else push(active.provider === 'dgx-spark' ? 'spark' : 'featherless', active.label);
   if (s.sparkEnabled && active.provider !== 'dgx-spark') push('spark', 'spark');
   if (s.featherlessEnabled !== false && active.provider !== 'featherless') push('featherless', 'featherless');

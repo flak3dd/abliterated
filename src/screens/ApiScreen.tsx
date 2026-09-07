@@ -6,6 +6,7 @@ import {
   resolveActiveSettings,
 } from '../lib/activeEndpoint';
 import { endpointUrl, formatFetchError } from '../lib/apiUrl';
+import { fetchPlatformCredentials } from '../lib/authApi';
 import { coalesceFetch } from '../lib/coalesceFetch';
 import { setSettings } from '../lib/storage';
 import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
@@ -430,6 +431,61 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
     }
   };
 
+
+  const connectPlatform = async () => {
+    setTesting(true);
+    setResult('');
+    try {
+      const deviceId = (draft.deviceId || '').trim() || 'desktop-device-unknown';
+      if (deviceId.length < 8) {
+        setResult('Set a deviceId via Settings → Account (sign in) before connecting Platform.');
+        return;
+      }
+      const body =
+        draft.loginId?.trim()
+          ? { loginId: draft.loginId.trim(), deviceId }
+          : draft.licenseKey?.trim()
+            ? { licenseKey: draft.licenseKey.trim(), deviceId }
+            : draft.accountEmail?.trim()
+              ? null
+              : null;
+      if (!body) {
+        setResult(
+          'Sign in or activate a license first (Settings → Account / License), then Connect Platform.',
+        );
+        return;
+      }
+      // Email+password is not stored in settings; loginId or licenseKey path only.
+      const creds = await fetchPlatformCredentials(
+        { billingSiteUrl: draft.billingSiteUrl },
+        body,
+      );
+      const next = {
+        ...draft,
+        inferenceProvider: 'platform' as const,
+        remoteHostEnabled: true,
+        baseUrl: creds.baseUrl,
+        token: creds.apiKey,
+        defaultModel: creds.defaultModel || 'standard',
+      };
+      setDraft(next);
+      setSettings(next);
+      onSettingsChange(next);
+      setResult(
+        'Platform connected. keyId=' +
+          creds.keyId +
+          ' baseUrl=' +
+          creds.baseUrl +
+          (creds.maxBudget != null ? ' max_budget=$' + String(creds.maxBudget) : '') +
+          '\nVirtual key stored in local settings (not logged). Featherless Scale ToS applies.',
+      );
+    } catch (err) {
+      setResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const provider = draft.inferenceProvider || 'abliteration';
   const selectedModelId =
     provider === 'featherless'
@@ -744,6 +800,59 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
             </div>
           </>
 
+        ) : provider === 'platform' ? (
+          <>
+            <p className="font-mono text-[10px] text-muted">
+              Abliterated Cloud via LiteLLM gateway (virtual key + budget). Auth with license/account —
+              not a pasted Featherless master key. Featherless Scale ToS applies to platform traffic.
+            </p>
+            <label className="block font-mono text-[10px] uppercase text-muted">
+              Gateway base URL
+              <input
+                value={draft.baseUrl}
+                onChange={(e) => patch({ baseUrl: e.target.value })}
+                placeholder="https://abliterated.app/api/v1"
+                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+              />
+            </label>
+            <label className="block font-mono text-[10px] uppercase text-muted">
+              Virtual key (from Connect)
+              <input
+                type="password"
+                value={draft.token}
+                onChange={(e) => patch({ token: e.target.value })}
+                autoComplete="off"
+                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+              />
+            </label>
+            <label className="block font-mono text-[10px] uppercase text-muted">
+              Default model alias
+              <input
+                value={draft.defaultModel}
+                onChange={(e) => patch({ defaultModel: e.target.value })}
+                placeholder="standard"
+                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+              />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void connectPlatform()}
+                disabled={testing}
+                className="w-fit rounded border border-emerald-500/50 bg-emerald-500/10 px-3 py-1 font-mono text-[11px] text-emerald-200 disabled:opacity-50"
+              >
+                {testing ? 'Connecting…' : 'Connect with account'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void testCloudOrCustom()}
+                disabled={testing}
+                className="w-fit rounded bg-zinc-100 px-3 py-1 font-mono text-[11px] font-medium text-zinc-900 disabled:opacity-50"
+              >
+                {testing ? 'Testing…' : 'Test connection'}
+              </button>
+            </div>
+          </>
         ) : provider === 'custom' ? (
           <>
             <p className="font-mono text-[10px] text-muted">

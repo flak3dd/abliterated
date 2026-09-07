@@ -318,3 +318,97 @@ export async function loginWithLoginId(
         : payload.deviceId,
   };
 }
+
+/** Platform gateway credential exchange (LiteLLM virtual key). */
+export type PlatformCredentialsResponse = {
+  configured: boolean;
+  baseUrl: string;
+  keyId: string;
+  apiKey: string;
+  models: string[];
+  defaultModel?: string;
+  maxBudget?: number;
+  budgetDuration?: string;
+  plan?: string | null;
+  created?: boolean;
+  note?: string;
+};
+
+export function gatewayCredentialsUrl(
+  settingsOrUrl?: AuthSiteSettings | string | null,
+): string {
+  return billingApiUrl(settingsOrUrl, '/api/gateway/credentials');
+}
+
+/**
+ * Exchange account/license session for a LiteLLM virtual key.
+ * Never log apiKey from the response.
+ */
+export async function fetchPlatformCredentials(
+  settingsOrUrl: AuthSiteSettings | string | null | undefined,
+  body: {
+    email?: string;
+    password?: string;
+    loginId?: string;
+    licenseKey?: string;
+    deviceId: string;
+  },
+): Promise<PlatformCredentialsResponse> {
+  const deviceId = String(body.deviceId || '').trim();
+  if (deviceId.length < 8) {
+    throw new AuthApiError('deviceId required (min 8 chars)', 400);
+  }
+  const payload: Record<string, string> = { deviceId };
+  if (body.email && body.password) {
+    payload.email = String(body.email).trim().toLowerCase();
+    payload.password = String(body.password);
+  } else if (body.loginId) {
+    payload.loginId = String(body.loginId).trim();
+  } else if (body.licenseKey) {
+    payload.licenseKey = String(body.licenseKey).trim();
+  } else {
+    throw new AuthApiError(
+      'Provide email+password, loginId, or licenseKey with deviceId',
+      400,
+    );
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(gatewayCredentialsUrl(settingsOrUrl), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    throw new AuthApiError(
+      err instanceof Error ? err.message : 'Network error talking to gateway credentials API',
+      0,
+    );
+  }
+  const json = await readJson(res);
+  if (!res.ok) {
+    throw errorFromBody(json, 'Platform credentials failed', res.status);
+  }
+  const apiKey = typeof json.apiKey === 'string' ? json.apiKey : '';
+  const baseUrl = typeof json.baseUrl === 'string' ? json.baseUrl : '';
+  const keyId = typeof json.keyId === 'string' ? json.keyId : '';
+  if (!apiKey || !baseUrl) {
+    throw new AuthApiError('Credentials response missing apiKey/baseUrl', res.status);
+  }
+  return {
+    configured: json.configured !== false,
+    baseUrl,
+    keyId,
+    apiKey,
+    models: Array.isArray(json.models)
+      ? (json.models as unknown[]).filter((m): m is string => typeof m === 'string')
+      : [],
+    defaultModel: typeof json.defaultModel === 'string' ? json.defaultModel : 'standard',
+    maxBudget: typeof json.maxBudget === 'number' ? json.maxBudget : undefined,
+    budgetDuration: typeof json.budgetDuration === 'string' ? json.budgetDuration : undefined,
+    plan: typeof json.plan === 'string' ? json.plan : null,
+    created: Boolean(json.created),
+    note: typeof json.note === 'string' ? json.note : undefined,
+  };
+}

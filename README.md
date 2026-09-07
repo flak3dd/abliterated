@@ -140,3 +140,7 @@ args: -y @modelcontextprotocol/server-filesystem .
 
 Additional tools: `git_diff` (staged/unstaged/path), `checkpoint_save` / `checkpoint_restore` (`.ablit/checkpoints/`), `create_pr` (`gh pr create` when `gh` is on PATH; gated like `git_commit`).
 
+## Platform / Abliterated Cloud (LiteLLM)
+
+Select **API → Platform** to use the multi-tenant gateway (virtual key + budget). Connect with account after license/login. Gateway URL default: `VITE_PLATFORM_GATEWAY_URL` or `https://abliterated.app/api/v1`. Custom and Featherless BYOK remain unchanged. Ops/compose: see `abliterated-site/litellm/README.md`. Featherless Scale ToS applies to platform traffic.
+

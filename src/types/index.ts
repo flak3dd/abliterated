@@ -295,7 +295,7 @@ export interface McpServerConfig {
   enabled: boolean;
 }
 
-export type InferenceProvider = 'abliteration' | 'dgx-spark' | 'featherless' | 'custom';
+export type InferenceProvider = 'abliteration' | 'platform' | 'dgx-spark' | 'featherless' | 'custom';
 
 export interface ClientSettings {
   baseUrl: string;

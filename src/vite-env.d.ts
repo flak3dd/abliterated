@@ -6,6 +6,7 @@ interface ImportMetaEnv {
   readonly VITE_ABLITERATED_MODEL?: string;
   readonly VITE_ABLITERATED_ADMIN_USER?: string;
   readonly VITE_ABLITERATED_ADMIN_PASSWORD?: string;
+  readonly VITE_PLATFORM_GATEWAY_URL?: string;
 }
 
 interface ImportMeta {

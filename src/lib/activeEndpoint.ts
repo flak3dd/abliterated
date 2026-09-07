@@ -75,6 +75,23 @@ export function resolveActiveSettings(settings: ClientSettings): ActiveEndpoint 
     };
   }
 
+
+  if (provider === 'platform') {
+    const defaultBase =
+      (import.meta.env.VITE_PLATFORM_GATEWAY_URL as string | undefined)?.trim() ||
+      'https://abliterated.app/api/v1';
+    return {
+      baseUrl: settings.baseUrl?.trim() || defaultBase,
+      token: settings.token ?? '',
+      defaultModel: settings.defaultModel?.trim() || 'standard',
+      label: 'platform:' + (settings.defaultModel?.trim() || 'standard'),
+      provider,
+      active: true,
+      sparkViaProxy: false,
+      featherlessViaProxy: false,
+    };
+  }
+
   if (provider === 'custom') {
     return {
       baseUrl: settings.baseUrl,
@@ -102,24 +119,53 @@ export function resolveActiveSettings(settings: ClientSettings): ActiveEndpoint 
 }
 
 export const INFERENCE_PROVIDERS: { id: InferenceProvider; label: string }[] = [
+  { id: 'platform', label: 'Platform' },
   { id: 'abliteration', label: 'Abliteration' },
   { id: 'dgx-spark', label: 'DGX Spark' },
-  { id: 'featherless', label: 'Featherless' },
-  { id: 'custom', label: 'Custom' },
+  { id: 'featherless', label: 'Featherless (BYOK)' },
+  { id: 'custom', label: 'Custom (BYOK)' },
 ];
 
 /** Apply a provider switch with the flags needed so resolveActiveSettings is live. */
+const DEFAULT_PLATFORM_GATEWAY =
+  (import.meta.env.VITE_PLATFORM_GATEWAY_URL as string | undefined)?.trim() ||
+  'https://abliterated.app/api/v1';
+
 export function applyInferenceProvider(
   settings: ClientSettings,
   provider: InferenceProvider,
 ): ClientSettings {
-  const patch: Partial<ClientSettings> =
-    provider === 'featherless'
-      ? { inferenceProvider: provider, featherlessEnabled: true, remoteHostEnabled: true }
-      : provider === 'dgx-spark'
-        ? { inferenceProvider: provider, sparkEnabled: true, remoteHostEnabled: true }
-        : { inferenceProvider: provider, remoteHostEnabled: true };
-  return { ...settings, ...patch };
+  if (provider === 'featherless') {
+    return {
+      ...settings,
+      inferenceProvider: provider,
+      featherlessEnabled: true,
+      remoteHostEnabled: true,
+    };
+  }
+  if (provider === 'dgx-spark') {
+    return {
+      ...settings,
+      inferenceProvider: provider,
+      sparkEnabled: true,
+      remoteHostEnabled: true,
+    };
+  }
+  if (provider === 'platform') {
+    const prev = settings.baseUrl?.trim() || '';
+    const keep =
+      prev &&
+      !prev.includes('api.abliteration.ai') &&
+      !prev.includes('api.featherless.ai');
+    return {
+      ...settings,
+      inferenceProvider: provider,
+      remoteHostEnabled: true,
+      baseUrl: keep ? prev : DEFAULT_PLATFORM_GATEWAY,
+      defaultModel: settings.defaultModel?.trim() || 'standard',
+    };
+  }
+  return { ...settings, inferenceProvider: provider, remoteHostEnabled: true };
 }
 
 export function providerShortLabel(settings: ClientSettings): string {
@@ -142,6 +188,12 @@ export function missingInferenceAuthError(active: ActiveEndpoint): string | null
     return (
       'Featherless requires a cloud API key. Local admin login (Settings) only unlocks the IDE license — it does not sign you into Featherless. ' +
       'Open API → Featherless and paste a key, or switch the provider to Abliteration.'
+    );
+  }
+  if (active.provider === 'platform') {
+    return (
+      'Platform gateway key is missing. Sign in / activate a license, then use API → Platform → Connect with account ' +
+      '(exchanges login for a virtual key). Local admin login alone is not enough.'
     );
   }
   if (active.provider === 'abliteration' || host === 'api.abliteration.ai') {

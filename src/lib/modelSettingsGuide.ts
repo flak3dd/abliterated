@@ -6,7 +6,7 @@ const THINKING_MODEL_RE =
 export type ModelFamily = 'thinking' | 'instruct' | 'code' | 'vision' | 'base';
 export type GuideStatus = 'ok' | 'warn' | 'block';
 export type GuideReasoning = 'off' | 'low' | 'high' | 'max';
-export type GuideProvider = 'abliteration' | 'dgx-spark' | 'featherless' | 'custom';
+export type GuideProvider = 'abliteration' | 'platform' | 'dgx-spark' | 'featherless' | 'custom';
 export type GuideTab = 'api' | 'settings';
 
 /** Subset of ClientSettings used to recommend API settings for a model. */
@@ -278,7 +278,7 @@ export function buildModelSettingsGuide(model: string, settings: GuideSettings):
       fixLabel: settings.sparkEnabled ? undefined : 'Enable',
       fix: settings.sparkEnabled ? undefined : { kind: 'patch', patch: { sparkEnabled: true } },
     });
-  } else if (provider === 'abliteration' || provider === 'custom') {
+  } else if (provider === 'abliteration' || provider === 'platform' || provider === 'custom') {
     const hostOk = provider === 'custom' || tokenPresent(settings);
     items.push({
       id: 'endpoint',

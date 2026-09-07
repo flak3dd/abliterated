@@ -20,9 +20,14 @@ export function currentTokenPeriod(): string {
 }
 
 export function isBuiltinEndpoint(active: ActiveEndpoint): boolean {
-  if (active.provider === 'abliteration') return true;
+  if (active.provider === 'abliteration' || active.provider === 'platform') return true;
   try {
-    return new URL(active.baseUrl).hostname.toLowerCase() === 'api.abliteration.ai';
+    const host = new URL(active.baseUrl).hostname.toLowerCase();
+    return (
+      host === 'api.abliteration.ai' ||
+      host === 'abliterated.app' ||
+      host === 'gateway.abliterated.app'
+    );
   } catch {
     return false;
   }
