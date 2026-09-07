@@ -1,6 +1,7 @@
 {
   "10": {
     "class_type": "UNETLoader",
+    "_meta": { "title": "Draft DiT — Z-Image Turbo NSFW NVFP4" },
     "inputs": {
       "unet_name": "z_image_turbo_nvfp4.safetensors",
       "weight_dtype": "default"
@@ -8,6 +9,7 @@
   },
   "11": {
     "class_type": "CLIPLoader",
+    "_meta": { "title": "Z-Image CLIP — qwen_3_4b lumina2" },
     "inputs": {
       "clip_name": "qwen_3_4b_fp8_mixed.safetensors",
       "type": "lumina2",
@@ -16,12 +18,14 @@
   },
   "12": {
     "class_type": "VAELoader",
+    "_meta": { "title": "Z-Image VAE — ae" },
     "inputs": {
       "vae_name": "ae.safetensors"
     }
   },
   "6": {
     "class_type": "CLIPTextEncode",
+    "_meta": { "title": "User prompt (no enhance)" },
     "inputs": {
       "clip": ["11", 0],
       "text": "PROMPT"
@@ -29,12 +33,14 @@
   },
   "13": {
     "class_type": "ConditioningZeroOut",
+    "_meta": { "title": "Negative = zero (unrestricted)" },
     "inputs": {
       "conditioning": ["6", 0]
     }
   },
   "5": {
     "class_type": "EmptyLatentImage",
+    "_meta": { "title": "Latent canvas (size from OpenAI request)" },
     "inputs": {
       "width": 1024,
       "height": 1024,
@@ -43,6 +49,7 @@
   },
   "3": {
     "class_type": "KSampler",
+    "_meta": { "title": "8-step Euler simple CFG 1 (~5s sketch)" },
     "inputs": {
       "cfg": 1,
       "denoise": 1,
@@ -58,6 +65,7 @@
   },
   "8": {
     "class_type": "VAEDecode",
+    "_meta": { "title": "Decode" },
     "inputs": {
       "samples": ["3", 0],
       "vae": ["12", 0]
@@ -65,6 +73,7 @@
   },
   "9": {
     "class_type": "SaveImage",
+    "_meta": { "title": "Save for /view" },
     "inputs": {
       "filename_prefix": "ablit-zimage",
       "images": ["8", 0]

@@ -1,6 +1,7 @@
 {
   "10": {
     "class_type": "UNETLoader",
+    "_meta": { "title": "Quality DiT — Krea 2 Turbo NVFP4" },
     "inputs": {
       "unet_name": "krea2_turbo_nvfp4.safetensors",
       "weight_dtype": "default"
@@ -8,6 +9,7 @@
   },
   "11": {
     "class_type": "CLIPLoader",
+    "_meta": { "title": "Abliterated Qwen3-VL-4B (krea2 CLIP)" },
     "inputs": {
       "clip_name": "Huihui-Qwen3-VL-4B-Instruct-abliterated-fp8_scaled.safetensors",
       "type": "krea2",
@@ -16,12 +18,14 @@
   },
   "12": {
     "class_type": "VAELoader",
+    "_meta": { "title": "Krea VAE — qwen_image_vae" },
     "inputs": {
       "vae_name": "qwen_image_vae.safetensors"
     }
   },
   "15": {
     "class_type": "LoraLoaderModelOnly",
+    "_meta": { "title": "One uncensor LoRA @ 1.0" },
     "inputs": {
       "model": ["10", 0],
       "lora_name": "krea2_uncensor.safetensors",
@@ -30,6 +34,7 @@
   },
   "6": {
     "class_type": "CLIPTextEncode",
+    "_meta": { "title": "User prompt (no enhance, no safety text)" },
     "inputs": {
       "clip": ["11", 0],
       "text": "PROMPT"
@@ -37,12 +42,14 @@
   },
   "13": {
     "class_type": "ConditioningZeroOut",
+    "_meta": { "title": "Negative = zero (unrestricted)" },
     "inputs": {
       "conditioning": ["6", 0]
     }
   },
   "5": {
     "class_type": "EmptyLatentImage",
+    "_meta": { "title": "Latent canvas (size from OpenAI request)" },
     "inputs": {
       "width": 1024,
       "height": 1024,
@@ -51,6 +58,7 @@
   },
   "3": {
     "class_type": "KSampler",
+    "_meta": { "title": "8-step Euler simple CFG 1" },
     "inputs": {
       "cfg": 1,
       "denoise": 1,
@@ -66,6 +74,7 @@
   },
   "8": {
     "class_type": "VAEDecode",
+    "_meta": { "title": "Decode" },
     "inputs": {
       "samples": ["3", 0],
       "vae": ["12", 0]
@@ -73,6 +82,7 @@
   },
   "9": {
     "class_type": "SaveImage",
+    "_meta": { "title": "Save for /view" },
     "inputs": {
       "filename_prefix": "ablit-krea2",
       "images": ["8", 0]

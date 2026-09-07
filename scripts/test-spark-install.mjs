@@ -18,7 +18,7 @@ assert.equal(manifest.image.draftModelId, 'z-image-turbo-nsfw-nvfp4');
 assert.equal(manifest.image.uncensoredOnly, true);
 assert.ok(manifest.image.forbiddenCheckpoints.includes('DreamShaper_8_pruned.safetensors'));
 
-for (const name of ['install.sh', 'start.sh', 'stop.sh', 'status.sh', 'push.sh', 'README.md']) {
+for (const name of ['install.sh', 'start.sh', 'stop.sh', 'status.sh', 'push.sh', 'README.md', 'nvsync/port-8188.bash', 'nvsync/port-7860.bash', 'nvsync/README.md']) {
   const p = path.join(installDir, name);
   assert.ok(fs.existsSync(p), `missing ${name}`);
 }
@@ -34,6 +34,13 @@ assert.match(pullSh, /z_image_turbo_nvfp4\.safetensors/);
 assert.match(pullSh, /krea2_uncensor\.safetensors/);
 assert.match(pullSh, /Huihui-Qwen3-VL-4B-Instruct-abliterated/);
 
+const sync8188 = fs.readFileSync(path.join(installDir, 'nvsync', 'port-8188.bash'), 'utf8');
+assert.match(sync8188, /serve-comfy\.sh/);
+assert.match(sync8188, /trap cleanup/);
+const sync7860 = fs.readFileSync(path.join(installDir, 'nvsync', 'port-7860.bash'), 'utf8');
+assert.match(sync7860, /serve-spark\.sh/);
+assert.match(sync7860, /krea2-turbo-nvfp4/);
+
 const pushSh = fs.readFileSync(path.join(installDir, 'push.sh'), 'utf8');
 assert.match(pushSh, /rsync/);
 assert.match(pushSh, /--exclude '\.venv'/);
@@ -46,6 +53,14 @@ assert.equal(krea['10'].inputs.unet_name, 'krea2_turbo_nvfp4.safetensors');
 assert.equal(krea['15'].class_type, 'LoraLoaderModelOnly');
 assert.equal(krea['15'].inputs.lora_name, 'krea2_uncensor.safetensors');
 assert.equal(krea['11'].inputs.type, 'krea2');
+assert.equal(krea['15']._meta.title.includes('uncensor'), true);
+
+const genDoc = fs.readFileSync(path.join(imageDir, 'workflows', 'IMAGE_GEN.md'), 'utf8');
+assert.match(genDoc, /krea2-turbo-nvfp4/);
+assert.match(genDoc, /z-image-turbo-nsfw-nvfp4/);
+assert.match(genDoc, /ConditioningZeroOut/);
+assert.match(genDoc, /LoraLoaderModelOnly/);
+assert.doesNotMatch(genDoc, /DreamShaper_8_pruned/);
 
 const zimg = JSON.parse(
   fs.readFileSync(path.join(imageDir, 'workflows', 'txt2img-zimage-turbo-nvfp4.json'), 'utf8'),

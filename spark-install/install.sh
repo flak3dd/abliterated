@@ -175,6 +175,11 @@ cat > "$HERE/installed.json" <<EOF
 }
 EOF
 
+if [[ -x "$HERE/nvsync/install-scripts.sh" ]]; then
+  chmod +x "$HERE/nvsync/"*.bash "$HERE/nvsync/install-scripts.sh"
+  "$HERE/nvsync/install-scripts.sh" || true
+fi
+
 echo "Install complete."
 echo "  ComfyUI UI:  http://<spark-ip>:8188"
 echo "  OpenAI images: http://<spark-ip>:7860/v1"

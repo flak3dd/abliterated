@@ -18,6 +18,8 @@ Both NVFP4 models fit in a sliver of the Spark’s 128 GB unified memory and sta
 
 DreamShaper and other filtered checkpoints are not installed. Unknown `model` ids coerce to `krea2-turbo-nvfp4`. Send `z-image-turbo-nsfw-nvfp4` (or `draft` / `sketch`) for the sketch model.
 
+**Node-by-node graph, file layout, HTTP mapping, sampler table:** [`spark-image/workflows/IMAGE_GEN.md`](../spark-image/workflows/IMAGE_GEN.md).
+
 ## From the Abliterated app (Mac / Windows)
 
 1. Pair the Spark in [NVIDIA Sync](https://build.nvidia.com/spark/connect-to-your-spark/sync) so `ssh <alias>` works.
@@ -49,6 +51,16 @@ cd ~/abliterated-spark/spark-install
 | ComfyUI graph UI | `http://<spark-ip>:8188` (same uncensored node) |
 
 Palette: **Use Spark image gen** (Krea 2 Turbo NVFP4), **Use Spark draft gen** (Z-Image Turbo NSFW NVFP4), **Use Spark ComfyUI** (enables image settings and opens the graph UI at `:8188`), **Use Qwen on Spark**.
+
+## NVIDIA Sync Custom apps
+
+Sync **Settings → Custom** is a name, a port, and a bash Launch Script that runs on the Spark when you open the app. That is the supported one-click start for this stack. Paste-ready scripts and fields: [`nvsync/README.md`](nvsync/README.md).
+
+| Sync name | Port | Script |
+| --- | --- | --- |
+| Abliterated ComfyUI | 8188 | `nvsync/port-8188.bash` |
+| Abliterated Images | 7860 | `nvsync/port-7860.bash` (starts Comfy first) |
+| Abliterated Qwen | 8000 | `nvsync/port-8000.bash` (optional) |
 
 ## Layout after push
 

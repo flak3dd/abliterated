@@ -2,7 +2,15 @@
 # Launch ComfyUI on DGX Spark (NVIDIA playbook: --listen 0.0.0.0, port 8188).
 set -euo pipefail
 ROOT="${COMFY_ROOT:-$HOME/ComfyUI}"
-VENV="${COMFY_VENV:-$HOME/spark-image/.venv}"
+if [[ -z "${COMFY_VENV:-}" ]]; then
+  if [[ -x "$HOME/abliterated-spark/spark-image/.venv/bin/python" ]]; then
+    VENV="$HOME/abliterated-spark/spark-image/.venv"
+  else
+    VENV="$HOME/spark-image/.venv"
+  fi
+else
+  VENV="$COMFY_VENV"
+fi
 export TRITON_PTXAS_PATH="${TRITON_PTXAS_PATH:-/usr/local/cuda/bin/ptxas}"
 export TORCH_FLOAT32_MATMUL_PRECISION="${TORCH_FLOAT32_MATMUL_PRECISION:-high}"
 if [[ -d "${HOME}/opt/python-dev/usr/include/python3.12" ]]; then
