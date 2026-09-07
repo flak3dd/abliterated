@@ -317,7 +317,7 @@ Flagship **numeric cells unchanged** from 2026-09-06; no invented deltas.
 | MCP | `mcpClient.ts`, `daemon/mcp.js` |
 | License / tokens | `license.ts`, `builtinTokens.ts` |
 | Electron | `electron/`, `package.json` desktop scripts |
-| Promo charts | [harness](docs/assets/harness-2026-09-07.png) · [restrictive posture](docs/assets/restrictive-posture-2026-09-06.png) · site `public/benchmark/` |
+| Promo charts | [harness](docs/assets/harness-2026-09-07.png) · [restrictive posture](docs/assets/restrictive-posture-2026-09-07.png) · site `public/benchmark/` |
 
 ---
 
