@@ -344,6 +344,10 @@ export interface ClientSettings {
   sparkModel: string;
   /** When true (default), DEV rewrites local Spark URLs to same-origin `/spark-v1`. */
   sparkViaProxy: boolean;
+  /** Spark LAN hostname or IP (no scheme), e.g. 192.168.4.101. Empty = 127.0.0.1. */
+  sparkLanHost: string;
+  /** NVIDIA Sync / ssh Host alias used by spark-install/push.sh. */
+  sparkSshAlias: string;
   /** Master availability for Featherless. Default true when selected. */
   featherlessEnabled: boolean;
   featherlessBaseUrl: string;

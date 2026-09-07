@@ -1,5 +1,6 @@
 import type { ClientSettings } from '../types';
 import { endpointUrl } from './apiUrl';
+import { resolveSparkImageModel } from './sparkInstall';
 
 export type ImageGenArgs = {
   settings: ClientSettings;
@@ -27,10 +28,10 @@ function imageEndpointUrl(settings: ClientSettings, suffix: string): string {
     try {
       const url = new URL(joined);
       const port = url.port || (url.protocol === 'https:' ? '443' : '80');
-      const local =
-        (url.hostname === '127.0.0.1' || url.hostname === 'localhost') &&
-        (port === '7860' || settings.imageViaProxy === true);
-      if (local || settings.imageViaProxy === true) {
+      const loopback = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
+      const local = loopback && (port === '7860' || settings.imageViaProxy === true);
+      // Never rewrite a LAN Spark URL through the Vite :7860 proxy.
+      if (local) {
         let path = url.pathname;
         if (path.startsWith('/v1')) path = '/image-v1' + path.slice(3);
         else if (path === '/' || path === '') path = '/image-v1';
@@ -115,7 +116,7 @@ export async function generateImage(args: ImageGenArgs): Promise<ImageGenResult>
   if (token) headers.Authorization = 'Bearer ' + token;
 
   const body = {
-    model: (model || settings.imageModel || 'abliterated-flux-klein').trim(),
+    model: resolveSparkImageModel(model || settings.imageModel),
     prompt,
     size,
     n: Math.min(4, Math.max(1, Math.floor(n) || 1)),

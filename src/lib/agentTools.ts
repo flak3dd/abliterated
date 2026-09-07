@@ -467,7 +467,7 @@ export async function executeAgentTool(
           await saveGeneratedImage({
             prompt,
             size,
-            model: settings.imageModel || 'abliterated-flux-klein',
+            model: settings.imageModel || 'krea2-turbo-nvfp4',
             b64: result.b64,
             url: result.url,
           });

@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('ablitDesktop', {
   getVersion: () => ipcRenderer.invoke('ablit:getVersion'),
   webSearch: (opts) => ipcRenderer.invoke('ablit:webSearch', opts),
   openExternal: (url) => ipcRenderer.invoke('ablit:openExternal', url),
+  sparkInstallPath: () => ipcRenderer.invoke('ablit:sparkInstallPath'),
+  revealSparkInstall: () => ipcRenderer.invoke('ablit:revealSparkInstall'),
   onLicenseDeepLink: (cb) => {
     if (typeof cb !== 'function') return () => {};
     const handler = (_event, key) => {

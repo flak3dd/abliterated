@@ -55,3 +55,32 @@ A blank HTTP 500 from the IDE Vite `/image-v1` proxy usually means nothing is li
 4. Test / Generate  
 
 Chat tool `generate_image` is exposed only when image gen is enabled.
+
+## DGX Spark (GB10)
+
+Copy this folder to the Spark (do not pull weights onto the IDE box). Native venv — stock `pytorch/pytorch` CUDA 12.4 images are amd64.
+
+```bash
+# on Spark
+cd ~/spark-image
+python3 -m venv .venv
+.venv/bin/pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+.venv/bin/pip install fastapi 'uvicorn[standard]' pydantic 'diffusers>=0.32.0' 'transformers>=4.45.0' accelerate safetensors Pillow huggingface_hub
+./pull-models.sh
+ABLITERATED_IMAGE_HOST=0.0.0.0 ./serve-spark.sh
+```
+
+Listens `http://<spark-ip>:7860/v1`. Spark image gen is **Krea 2 Turbo NVFP4 + one uncensor LoRA** (`krea2-turbo-nvfp4`) by default, with **Z-Image Turbo NSFW NVFP4** (`z-image-turbo-nsfw-nvfp4`) kept loaded for high-volume drafts. Palette **Use Spark image gen** / **Use Spark draft gen**. **Via Vite proxy off**.
+
+## ComfyUI on Spark (install package)
+
+Use [`spark-install/`](../spark-install/) — `push.sh` from the Mac, `install.sh --start` on the Spark. That pulls **Krea 2 Turbo NVFP4** + Huihui abliterated Qwen3-VL + **one uncensor LoRA**, and **Z-Image Turbo NVFP4** for drafts. Do not pull those weights onto the IDE box.
+
+| Surface | URL |
+| --- | --- |
+| ComfyUI graph UI | `http://<spark-ip>:8188` |
+| OpenAI images API | `http://<spark-ip>:7860/v1` |
+| Quality model | `krea2-turbo-nvfp4` |
+| Draft model | `z-image-turbo-nsfw-nvfp4` |
+
+Workflows: `workflows/txt2img-krea2-turbo-nvfp4.json` (default, 8 Euler steps) and `workflows/txt2img-zimage-turbo-nvfp4.json`. Palette **Use Spark image gen** / **Use Spark draft gen**.

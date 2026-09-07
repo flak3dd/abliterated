@@ -6,6 +6,13 @@ import { resumeJobQueue } from './lib/jobRunner';
 import { syncMcpServers } from './lib/mcpClient';
 import { bridge, type BridgeStatus } from './lib/bridgeClient';
 import { applyInferenceProvider, INFERENCE_PROVIDERS, resolveActiveSettings } from './lib/activeEndpoint';
+import {
+  DRAFT_IMAGE_MODEL,
+  UNCENSORED_IMAGE_MODEL,
+  sparkChatUrl,
+  sparkImageSettingsPatch,
+  sparkPushCommand,
+} from './lib/sparkInstall';
 import { cn } from './lib/cn';
 import {
   DEFAULT_SETTINGS,
@@ -578,7 +585,44 @@ export default function App() {
           applySettings({
             ...applyInferenceProvider(settingsRef.current, 'dgx-spark'),
             sparkModel: 'qwen-abliterated',
+            sparkBaseUrl: sparkChatUrl(settingsRef.current),
+            sparkViaProxy: false,
           }),
+      },
+      {
+        id: 'use-spark-image-gen',
+        label: 'Use Spark image gen',
+        keywords: 'krea turbo nvfp4 spark-image generate_image uncensored lora',
+        run: () => patchSettings(sparkImageSettingsPatch(settingsRef.current, UNCENSORED_IMAGE_MODEL)),
+      },
+      {
+        id: 'use-spark-draft-gen',
+        label: 'Use Spark draft gen',
+        keywords: 'z-image turbo nsfw nvfp4 draft sketch spark',
+        run: () => patchSettings(sparkImageSettingsPatch(settingsRef.current, DRAFT_IMAGE_MODEL)),
+      },
+      {
+        id: 'use-spark-comfy',
+        label: 'Use Spark ComfyUI',
+        keywords: 'comfy comfyui workflow spark image krea z-image 8188',
+        run: () => patchSettings(sparkImageSettingsPatch(settingsRef.current, UNCENSORED_IMAGE_MODEL)),
+      },
+      {
+        id: 'copy-spark-install',
+        label: 'Copy Spark install command',
+        keywords: 'spark-install push rsync nvidia sync package',
+        run: () => {
+          const cmd = sparkPushCommand(settingsRef.current.sparkSshAlias);
+          void navigator.clipboard.writeText(cmd);
+        },
+      },
+      {
+        id: 'reveal-spark-install',
+        label: 'Reveal Spark install package',
+        keywords: 'spark-install folder extraResources',
+        run: () => {
+          void window.ablitDesktop?.revealSparkInstall?.();
+        },
       },
       {
         id: 'toggle-spark-available',

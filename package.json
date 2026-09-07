@@ -28,8 +28,10 @@
     "test:context": "node scripts/test-context-window.mjs",
     "test:model-profile": "node scripts/test-model-agent-profile.mjs",
     "test:task-graph": "node scripts/test-task-graph.mjs",
-    "test": "npm run smoke && npm run test:agent && npm run test:reasoning && npm run test:sse && npm run test:model-guide && npm run test:context && npm run test:model-profile && npm run test:task-graph && npm run test:build && npm run test:workspace && npm run test:grok-edits && npm run test:memory && npm run test:mempalace && npm run test:vdone && npm run test:multi-agent && npm run test:featherless-qwen && npm run test:prove-improve && npm run test:eval-fixtures && npm run test:capability-router",
+    "test": "npm run smoke && npm run test:agent && npm run test:reasoning && npm run test:sse && npm run test:model-guide && npm run test:context && npm run test:model-profile && npm run test:task-graph && npm run test:build && npm run test:workspace && npm run test:grok-edits && npm run test:memory && npm run test:mempalace && npm run test:vdone && npm run test:multi-agent && npm run test:featherless-qwen && npm run test:prove-improve && npm run test:eval-fixtures && npm run test:capability-router && npm run test:spark-install",
     "image:mock": "cd spark-image && ABLITERATED_IMAGE_MOCK=1 ABLITERATED_IMAGE_HOST=127.0.0.1 ABLITERATED_IMAGE_PORT=7860 python3 serve-openai-bridge.py",
+    "spark:push": "bash spark-install/push.sh",
+    "test:spark-install": "node scripts/test-spark-install.mjs",
     "featherless-oauth": "node featherless-oauth/server.mjs",
     "debug:featherless": "node scripts/debug-featherless.mjs",
     "bridge:install": "cp scripts/ai.abliteration.bridge.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.abliteration.bridge.plist || launchctl load -w ~/Library/LaunchAgents/ai.abliteration.bridge.plist",
@@ -102,6 +104,23 @@
     "asarUnpack": [
       "daemon/**/*",
       "node_modules/ws/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "spark-install",
+        "to": "spark-install",
+        "filter": ["**/*", "!.venv/**", "!**/__pycache__/**"]
+      },
+      {
+        "from": "spark-image",
+        "to": "spark-image",
+        "filter": ["**/*", "!.venv/**", "!**/__pycache__/**", "!logs/**"]
+      },
+      {
+        "from": "spark",
+        "to": "spark",
+        "filter": ["**/*", "!.venv/**", "!**/__pycache__/**", "!models/**"]
+      }
     ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "nsis": {

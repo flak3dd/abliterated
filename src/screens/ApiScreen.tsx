@@ -13,6 +13,7 @@ import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide
 import { formatFeatherlessProbeReport, probeFeatherlessChat } from '../lib/featherlessDebug';
 import { extractHttpErrorMessage } from '../lib/providerError';
 import { recommendedApiPatch } from '../lib/modelSettingsGuide';
+import { sparkPushCommand } from '../lib/sparkInstall';
 import type { ClientSettings, ReasoningLevel } from '../types';
 import {
   DEFAULT_FEATHERLESS_MODEL,
@@ -595,6 +596,45 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
               />
               Proxy via Vite /spark-v1
             </label>
+            <label className="block font-mono text-[10px] uppercase text-muted">
+              Spark LAN host
+              <input
+                value={draft.sparkLanHost}
+                onChange={(e) => patch({ sparkLanHost: e.target.value })}
+                placeholder="192.168.4.101"
+                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+              />
+            </label>
+            <label className="block font-mono text-[10px] uppercase text-muted">
+              NVIDIA Sync SSH alias
+              <input
+                value={draft.sparkSshAlias}
+                onChange={(e) => patch({ sparkSshAlias: e.target.value })}
+                placeholder="flak3dd"
+                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+              />
+            </label>
+            <p className="font-mono text-[10px] leading-4 text-muted">
+              Install package lives in spark-install/. Push from this machine (weights stay on Spark):
+              <br />
+              <code className="text-zinc-300">{sparkPushCommand(draft.sparkSshAlias)}</code>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void navigator.clipboard.writeText(sparkPushCommand(draft.sparkSshAlias))}
+                className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200"
+              >
+                Copy install command
+              </button>
+              <button
+                type="button"
+                onClick={() => void window.ablitDesktop?.revealSparkInstall?.()}
+                className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200"
+              >
+                Reveal package
+              </button>
+            </div>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"

@@ -104,7 +104,7 @@ DEV uses Vite path /spark-v1 for localhost Spark.
 
 ## Optional abliterated image gen
 
-`api.abliteration.ai` does **not** offer `/v1/images/generations`. Enable the **Images** tab and point it at a local OpenAI-compatible server. See [`spark-image/`](spark-image/) for FLUX.2 Klein + abliterated text encoder (`abliterated-flux-klein` on port **7860**). DEV proxies `/image-v1` → `ABLITERATED_IMAGE_URL` or `http://127.0.0.1:7860`.
+`api.abliteration.ai` does **not** offer `/v1/images/generations`. Enable the **Images** tab and point it at a local OpenAI-compatible server. See [`spark-install/`](spark-install/) for the DGX Spark package: Krea 2 Turbo NVFP4 + uncensor LoRA (`krea2-turbo-nvfp4`) and Z-Image Turbo NSFW NVFP4 drafts (`z-image-turbo-nsfw-nvfp4`) on port **7860**. DEV proxies `/image-v1` → `ABLITERATED_IMAGE_URL` or `http://127.0.0.1:7860`.
 
 Without a GPU, start a tiny PNG mock on **:7860**:
 

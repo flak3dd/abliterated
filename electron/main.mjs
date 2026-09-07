@@ -286,6 +286,13 @@ function createWindow() {
   });
 }
 
+function sparkInstallDir() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'spark-install');
+  }
+  return path.join(APP_ROOT, 'spark-install');
+}
+
 function registerIpc() {
   ipcMain.handle('ablit:getLicense', () => readStoredLicense());
   ipcMain.handle('ablit:setLicense', (_e, key) => {
@@ -310,6 +317,13 @@ function registerIpc() {
     const modPath = path.join(APP_ROOT_FS, 'daemon', 'webSearch.js');
     const mod = await import(pathToFileURL(modPath).href);
     return mod.searchWeb(opts && typeof opts === 'object' ? opts : {});
+  });
+  ipcMain.handle('ablit:sparkInstallPath', () => sparkInstallDir());
+  ipcMain.handle('ablit:revealSparkInstall', async () => {
+    const dir = sparkInstallDir();
+    if (!fs.existsSync(dir)) return { ok: false, path: dir };
+    await shell.openPath(dir);
+    return { ok: true, path: dir };
   });
 }
 

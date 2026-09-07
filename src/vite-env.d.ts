@@ -28,6 +28,8 @@ interface AblitDesktopApi {
     braveKey?: string;
     searxUrl?: string;
   }) => Promise<string>;
+  sparkInstallPath?: () => Promise<string>;
+  revealSparkInstall?: () => Promise<{ ok: boolean; path: string }>;
   platform: string;
 }
 

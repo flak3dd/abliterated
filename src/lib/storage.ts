@@ -84,6 +84,8 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   sparkToken: '',
   sparkModel: 'qwen-abliterated',
   sparkViaProxy: true,
+  sparkLanHost: '',
+  sparkSshAlias: '',
   featherlessEnabled: true,
   featherlessBaseUrl: 'https://api.featherless.ai/v1',
   featherlessToken: '',
@@ -92,7 +94,7 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   imageGenEnabled: false,
   imageBaseUrl: 'http://127.0.0.1:7860/v1',
   imageToken: '',
-  imageModel: 'abliterated-flux-klein',
+  imageModel: 'krea2-turbo-nvfp4',
   imageViaProxy: true,
   mcpServers: [],
   skillsEnabled: true,
@@ -295,6 +297,8 @@ export function getSettings(): ClientSettings {
     sparkToken: stored.sparkToken ?? DEFAULT_SETTINGS.sparkToken,
     sparkModel: stored.sparkModel?.trim() || DEFAULT_SETTINGS.sparkModel,
     sparkViaProxy: stored.sparkViaProxy !== false,
+    sparkLanHost: stored.sparkLanHost?.trim() || DEFAULT_SETTINGS.sparkLanHost,
+    sparkSshAlias: stored.sparkSshAlias?.trim() || DEFAULT_SETTINGS.sparkSshAlias,
     featherlessEnabled: stored.featherlessEnabled !== false,
     featherlessBaseUrl: (() => {
       const raw = stored.featherlessBaseUrl?.trim() || '';
@@ -318,7 +322,17 @@ export function getSettings(): ClientSettings {
     imageGenEnabled: stored.imageGenEnabled === true,
     imageBaseUrl: stored.imageBaseUrl?.trim() || DEFAULT_SETTINGS.imageBaseUrl,
     imageToken: stored.imageToken ?? DEFAULT_SETTINGS.imageToken,
-    imageModel: stored.imageModel?.trim() || DEFAULT_SETTINGS.imageModel,
+    imageModel: (() => {
+      const raw = stored.imageModel?.trim() || DEFAULT_SETTINGS.imageModel;
+      if (
+        raw === 'comfy-dreamshaper' ||
+        raw === 'DreamShaper_8_pruned' ||
+        raw === 'abliterated-flux-klein'
+      ) {
+        return 'krea2-turbo-nvfp4';
+      }
+      return raw;
+    })(),
     imageViaProxy: stored.imageViaProxy !== false,
     mcpServers: Array.isArray(stored.mcpServers) ? stored.mcpServers : [],
     skillsEnabled: stored.skillsEnabled !== false,

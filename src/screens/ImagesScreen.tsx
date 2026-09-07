@@ -104,7 +104,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
       await saveGeneratedImage({
         prompt: p,
         size: sz,
-        model: settings.imageModel || 'abliterated-flux-klein',
+        model: settings.imageModel || 'krea2-turbo-nvfp4',
         b64: result.b64,
         url: result.url,
       });
@@ -433,7 +433,11 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
 
           <div className="section-card">
             <div className="section-card-title">Endpoint</div>
-            <p className="section-card-hint">Local OpenAI-compatible image API settings.</p>
+            <p className="section-card-hint">
+              Spark default is uncensored <code>krea2-turbo-nvfp4</code> (Krea 2 Turbo NVFP4 + one
+              uncensor LoRA). Draft / high-volume: <code>z-image-turbo-nsfw-nvfp4</code>. No safety
+              checker.
+            </p>
             <div className="section-card-body">
               <div className="switch-row">
                 <label className="switch-row-main">

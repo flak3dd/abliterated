@@ -1,0 +1,36 @@
+{
+  "name": "abliterated-spark",
+  "version": "1.0.0",
+  "description": "DGX Spark install package for Abliterated: uncensored image gen + optional abliterated chat.",
+  "image": {
+    "modelId": "krea2-turbo-nvfp4",
+    "draftModelId": "z-image-turbo-nsfw-nvfp4",
+    "uncensoredOnly": true,
+    "quality": {
+      "dit": "Comfy-Org/Krea-2 krea2_turbo_nvfp4.safetensors",
+      "textEncoder": "Huihui-Qwen3-VL-4B-Instruct-abliterated-fp8_scaled.safetensors",
+      "lora": "krea2_uncensor.safetensors",
+      "steps": 8
+    },
+    "draft": {
+      "dit": "Comfy-Org/z_image_turbo z_image_turbo_nvfp4.safetensors",
+      "steps": 8,
+      "note": "High-volume ~5s sketches; both NVFP4 models share a sliver of 128 GB"
+    },
+    "openaiPort": 7860,
+    "comfyPort": 8188,
+    "workflow": "spark-image/workflows/txt2img-krea2-turbo-nvfp4.json",
+    "draftWorkflow": "spark-image/workflows/txt2img-zimage-turbo-nvfp4.json",
+    "forbiddenCheckpoints": ["DreamShaper_8_pruned.safetensors"]
+  },
+  "text": {
+    "modelId": "qwen-abliterated",
+    "repo": "THe-Plague/Qwen3.6-35B-A3B-abliterated-NVFP4-MTP",
+    "port": 8000
+  },
+  "requires": {
+    "arch": ["aarch64", "arm64"],
+    "cuda": "13",
+    "gpu": "NVIDIA GB10 / DGX Spark"
+  }
+}

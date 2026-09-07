@@ -1,0 +1,55 @@
+{
+  "quality": {
+    "id": "krea2-turbo-nvfp4",
+    "role": "default",
+    "label": "Krea 2 Turbo NVFP4 + uncensor LoRA",
+    "steps": 8,
+    "cfg": 1,
+    "sampler": "euler",
+    "scheduler": "simple",
+    "workflow": "workflows/txt2img-krea2-turbo-nvfp4.json",
+    "files": [
+      {
+        "url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_turbo_nvfp4.safetensors",
+        "dest": "diffusion_models/krea2_turbo_nvfp4.safetensors"
+      },
+      {
+        "url": "https://huggingface.co/ahmed22xa/Huihui-Qwen3-VL-4B-Instruct-abliterated-comfy/resolve/main/Huihui-Qwen3-VL-4B-Instruct-abliterated-fp8_scaled.safetensors",
+        "dest": "text_encoders/Huihui-Qwen3-VL-4B-Instruct-abliterated-fp8_scaled.safetensors"
+      },
+      {
+        "url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/vae/qwen_image_vae.safetensors",
+        "dest": "vae/qwen_image_vae.safetensors"
+      }
+    ],
+    "uncensorLora": {
+      "dest": "loras/krea2_uncensor.safetensors",
+      "civitaiModelVersion": 3084588,
+      "note": "One DiT uncensor LoRA (Krea2 NSFW+). Abliterated Qwen3-VL is the text-encoder uncensor."
+    }
+  },
+  "draft": {
+    "id": "z-image-turbo-nsfw-nvfp4",
+    "role": "draft",
+    "label": "Z-Image Turbo NSFW NVFP4 (high-volume sketches)",
+    "steps": 8,
+    "cfg": 1,
+    "sampler": "euler",
+    "scheduler": "simple",
+    "workflow": "workflows/txt2img-zimage-turbo-nvfp4.json",
+    "files": [
+      {
+        "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_nvfp4.safetensors",
+        "dest": "diffusion_models/z_image_turbo_nvfp4.safetensors"
+      },
+      {
+        "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors",
+        "dest": "text_encoders/qwen_3_4b_fp8_mixed.safetensors"
+      },
+      {
+        "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors",
+        "dest": "vae/ae.safetensors"
+      }
+    ]
+  }
+}

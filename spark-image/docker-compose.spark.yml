@@ -1,0 +1,15 @@
+# DGX Spark overlay: GPU + LAN bind. Native venv (serve-spark.sh) is preferred
+# because stock pytorch/pytorch CUDA 12.4 images are amd64.
+# Usage on Spark: docker compose -f docker-compose.yml -f docker-compose.spark.yml up --build
+services:
+  abliterated-image:
+    environment:
+      ABLITERATED_IMAGE_HOST: "0.0.0.0"
+      ABLITERATED_IMAGE_PORT: "7860"
+      COMFY_URL: "http://127.0.0.1:8188"
+      FLUX_MODEL_ID: "abliterated-flux-klein"
+      TRITON_PTXAS_PATH: /usr/local/cuda/bin/ptxas
+    ports:
+      - "7860:7860"
+    gpus: all
+    ipc: host
