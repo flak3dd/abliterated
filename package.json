@@ -2,7 +2,7 @@
   "name": "abliterated-ide",
   "private": true,
   "version": "1.0.1",
-  "description": "Uncensored unrestricted local agent IDE for abliterated models \u2014 chat, tools, Jobs, MCP, and a localhost bridge.",
+  "description": "Uncensored unrestricted local agent IDE for abliterated models — chat, tools, Jobs, MCP, and a localhost bridge.",
   "author": {
     "name": "flak3dd",
     "url": "https://github.com/flak3dd"
@@ -59,6 +59,7 @@
     "ws": "^8.18.1"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "@types/node": "^22.20.1",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
@@ -91,7 +92,11 @@
         "dir",
         "dmg"
       ],
-      "icon": "build/icon.icns"
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "win": {
       "target": [
@@ -109,17 +114,31 @@
       {
         "from": "spark-install",
         "to": "spark-install",
-        "filter": ["**/*", "!.venv/**", "!**/__pycache__/**"]
+        "filter": [
+          "**/*",
+          "!.venv/**",
+          "!**/__pycache__/**"
+        ]
       },
       {
         "from": "spark-image",
         "to": "spark-image",
-        "filter": ["**/*", "!.venv/**", "!**/__pycache__/**", "!logs/**"]
+        "filter": [
+          "**/*",
+          "!.venv/**",
+          "!**/__pycache__/**",
+          "!logs/**"
+        ]
       },
       {
         "from": "spark",
         "to": "spark",
-        "filter": ["**/*", "!.venv/**", "!**/__pycache__/**", "!models/**"]
+        "filter": [
+          "**/*",
+          "!.venv/**",
+          "!**/__pycache__/**",
+          "!models/**"
+        ]
       }
     ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
@@ -141,6 +160,7 @@
           "abliterated"
         ]
       }
-    ]
+    ],
+    "afterSign": "scripts/notarize.cjs"
   }
 }
