@@ -36,7 +36,7 @@ export function DesktopRail({ current, onChange, jobsActive, onOpenShortcuts }: 
       >
         <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-sky-500/10 to-indigo-500/0 opacity-0 transition-opacity group-hover:opacity-100" />
         <img
-          src="/logo-skull-blue.png"
+          src={`${import.meta.env.BASE_URL}logo-skull-blue.png`}
           alt="Abliterated"
           width={22}
           height={22}
