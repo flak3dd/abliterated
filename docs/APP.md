@@ -113,7 +113,7 @@ Chat overlays from Home. Esc stops a busy agent or returns to sessions.
 `featherless` — local OAuth proxy `http://127.0.0.1:3000`. Redirect URI **exact**: `http://localhost:3000/callback`. IDE base `http://127.0.0.1:3000/v1`; token empty when proxy signs in. DEV `/featherless-v1` + `/featherless-oauth`. Never commit secrets / `tokens.json`.
 
 ### Custom
-Uses Abliteration-slot baseUrl/token/model fields.
+Uses Abliteration-slot baseUrl/token/model fields. Form defaults are empty (placeholders only); saved values still load when present. Empty baseUrl → local dummy.
 
 ### Local dummy
 Empty baseUrl or `remoteHostEnabled` false → `[Local Dummy] Echo` (no tools).

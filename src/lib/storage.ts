@@ -54,14 +54,13 @@ export function generatePairingCode(): string {
   return randomPairingCode();
 }
 
-const envToken = (import.meta.env.VITE_ABLITERATED_TOKEN as string | undefined)?.trim() || '';
-const envBase = (import.meta.env.VITE_ABLITERATED_BASE_URL as string | undefined)?.trim() || 'https://api.abliteration.ai/v1';
-const envModel = (import.meta.env.VITE_ABLITERATED_MODEL as string | undefined)?.trim() || 'abliterated-model';
-
 export const DEFAULT_SETTINGS: ClientSettings = {
-  baseUrl: envBase,
-  token: envToken,
-  defaultModel: envModel,
+  // Shared Abliteration/Custom slot: ship empty so Custom is not prefilled with cloud samples.
+  // Abliteration requests fall back via resolveActiveSettings (cloud URL/model).
+  // Never default-in VITE_ABLITERATED_TOKEN (would bake secrets into the SPA).
+  baseUrl: '',
+  token: '',
+  defaultModel: '',
   reasoning: 'off',
   systemPrompt: SYSTEM_PROMPT,
   remoteHostEnabled: true,

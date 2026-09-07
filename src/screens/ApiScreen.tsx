@@ -744,6 +744,49 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
             </div>
           </>
 
+        ) : provider === 'custom' ? (
+          <>
+            <p className="font-mono text-[10px] text-muted">
+              OpenAI-compatible endpoint. Fields start empty — enter your base URL, API key, and model id.
+            </p>
+            <label className="block font-mono text-[10px] uppercase text-muted">
+              Base URL
+              <input
+                value={draft.baseUrl}
+                onChange={(e) => patch({ baseUrl: e.target.value })}
+                placeholder="https://api.example.com/v1"
+                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+              />
+            </label>
+            <label className="block font-mono text-[10px] uppercase text-muted">
+              Token
+              <input
+                type="password"
+                value={draft.token}
+                onChange={(e) => patch({ token: e.target.value })}
+                placeholder="sk-..."
+                autoComplete="off"
+                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+              />
+            </label>
+            <label className="block font-mono text-[10px] uppercase text-muted">
+              Default model
+              <input
+                value={draft.defaultModel}
+                onChange={(e) => patch({ defaultModel: e.target.value })}
+                placeholder="model-id"
+                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => void testCloudOrCustom()}
+              disabled={testing}
+              className="w-fit rounded bg-zinc-100 px-3 py-1 font-mono text-[11px] font-medium text-zinc-900 disabled:opacity-50"
+            >
+              {testing ? 'Testing…' : 'Test connection'}
+            </button>
+          </>
         ) : (
           <>
             <label className="block font-mono text-[10px] uppercase text-muted">
@@ -770,6 +813,7 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
               <input
                 value={draft.defaultModel}
                 onChange={(e) => patch({ defaultModel: e.target.value })}
+                placeholder="abliterated-model"
                 className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
               />
             </label>

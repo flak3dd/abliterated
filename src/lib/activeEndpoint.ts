@@ -1,6 +1,13 @@
 import type { ClientSettings, InferenceProvider } from '../types';
 import { resolveFeatherlessModelId } from './featherlessQwen.js';
 
+/** Resolve-time Abliteration cloud fallbacks only — not form defaults (Custom tab stays empty). */
+const ABLITERATION_DEFAULT_BASE_URL =
+  (import.meta.env.VITE_ABLITERATED_BASE_URL as string | undefined)?.trim() ||
+  'https://api.abliteration.ai/v1';
+const ABLITERATION_DEFAULT_MODEL =
+  (import.meta.env.VITE_ABLITERATED_MODEL as string | undefined)?.trim() || 'abliterated-model';
+
 export type ActiveEndpoint = {
   baseUrl: string;
   token: string;
@@ -81,10 +88,11 @@ export function resolveActiveSettings(settings: ClientSettings): ActiveEndpoint 
     };
   }
 
+  // Abliteration: empty form fields still resolve to cloud defaults (Custom keeps raw empties).
   return {
-    baseUrl: settings.baseUrl,
-    token: settings.token,
-    defaultModel: settings.defaultModel,
+    baseUrl: settings.baseUrl?.trim() || ABLITERATION_DEFAULT_BASE_URL,
+    token: settings.token ?? '',
+    defaultModel: settings.defaultModel?.trim() || ABLITERATION_DEFAULT_MODEL,
     label: 'ablit',
     provider: 'abliteration',
     active: true,
