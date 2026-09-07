@@ -26,7 +26,7 @@ Usage: install.sh [--with-text] [--start] [--skip-pull]
   --skip-pull   Skip Hugging Face weight downloads (reuse cache)
 
 Run this on the Spark host after spark-install/push.sh copies the package.
-Image gen: krea2-turbo-nvfp4 (default) + z-image-turbo-nsfw-nvfp4 (draft). Uncensored only.
+Image gen: krea2-raw-fp8 (default Build D) + turbo fast + z-image draft. Uncensored only.
 EOF
 }
 
@@ -168,7 +168,8 @@ cat > "$HERE/installed.json" <<EOF
   "imageDir": "$IMAGE_DIR",
   "comfyRoot": "$COMFY_ROOT",
   "venv": "$VENV",
-  "imageModel": "krea2-turbo-nvfp4",
+  "imageModel": "krea2-raw-fp8",
+  "fastModel": "krea2-turbo-nvfp4",
   "draftModel": "z-image-turbo-nsfw-nvfp4",
   "uncensoredOnly": true,
   "withText": $([[ "$WITH_TEXT" -eq 1 ]] && echo true || echo false)
@@ -183,7 +184,7 @@ fi
 echo "Install complete."
 echo "  ComfyUI UI:  http://<spark-ip>:8188"
 echo "  OpenAI images: http://<spark-ip>:7860/v1"
-echo "    quality krea2-turbo-nvfp4   draft z-image-turbo-nsfw-nvfp4"
+echo "    quality krea2-raw-fp8   fast krea2-turbo-nvfp4   draft z-image-turbo-nsfw-nvfp4"
 if [[ "$WITH_TEXT" -eq 1 ]]; then
   echo "  vLLM chat:   http://<spark-ip>:8000/v1   model=qwen-abliterated"
 fi

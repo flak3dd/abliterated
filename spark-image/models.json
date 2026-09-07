@@ -1,17 +1,21 @@
 {
   "quality": {
-    "id": "krea2-turbo-nvfp4",
+    "id": "krea2-raw-fp8",
     "role": "default",
-    "label": "Krea 2 Turbo NVFP4 + uncensor LoRA",
-    "steps": 8,
-    "cfg": 1,
+    "build": "D",
+    "label": "Krea 2 RAW FP8 + uncensor LoRA @ 0.75 (Build D hero)",
+    "steps": 24,
+    "cfg": 3.5,
     "sampler": "euler",
-    "scheduler": "simple",
-    "workflow": "workflows/txt2img-krea2-turbo-nvfp4.json",
+    "scheduler": "beta",
+    "defaultSize": "1328x1328",
+    "maxEdge": 1536,
+    "loraStrength": 0.75,
+    "workflow": "workflows/txt2img-krea2-raw-fp8.json",
     "files": [
       {
-        "url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_turbo_nvfp4.safetensors",
-        "dest": "diffusion_models/krea2_turbo_nvfp4.safetensors"
+        "url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_raw_fp8_scaled.safetensors",
+        "dest": "diffusion_models/krea2_raw_fp8_scaled.safetensors"
       },
       {
         "url": "https://huggingface.co/ahmed22xa/Huihui-Qwen3-VL-4B-Instruct-abliterated-comfy/resolve/main/Huihui-Qwen3-VL-4B-Instruct-abliterated-fp8_scaled.safetensors",
@@ -25,13 +29,63 @@
     "uncensorLora": {
       "dest": "loras/krea2_uncensor.safetensors",
       "civitaiModelVersion": 3084588,
-      "note": "One DiT uncensor LoRA (Krea2 NSFW+). Abliterated Qwen3-VL is the text-encoder uncensor."
+      "strength": 0.75,
+      "note": "Filter-bypass / uncensor LoRA. Optional nudes LoRA (BetterNudes / RawGirlSpicy / Famegrid Spice) can stack at 0.7-1.0."
     }
+  },
+  "klein": {
+    "id": "flux2-klein-9b",
+    "role": "adherence",
+    "build": "D",
+    "label": "FLUX.2 Klein 9B base + NSFW UNLOCKED LoRA (stub)",
+    "steps": 28,
+    "cfg": 3.5,
+    "sampler": "euler",
+    "scheduler": "beta",
+    "workflow": "workflows/txt2img-flux2-klein-9b.json",
+    "status": "stub",
+    "files": [
+      {
+        "url": "TODO_HF_FLUX2_KLEIN_9B_BASE",
+        "dest": "diffusion_models/flux2_klein_9b_base.safetensors",
+        "note": "TODO: confirm Comfy-Org / BFL HF path for Klein 9B base (not 4-step distilled, not 4B)."
+      }
+    ],
+    "lora": {
+      "dest": "loras/flux2_klein_nsfw_unlocked.safetensors",
+      "strength": 0.7,
+      "note": "NSFW UNLOCKED Klein LoRA @ 0.5-0.9"
+    }
+  },
+  "fast": {
+    "id": "krea2-turbo-nvfp4",
+    "role": "fast",
+    "label": "Krea 2 Turbo NVFP4 (8-step CFG1) \u2014 demoted from default",
+    "steps": 8,
+    "cfg": 1,
+    "sampler": "euler",
+    "scheduler": "simple",
+    "workflow": "workflows/txt2img-krea2-turbo-nvfp4.json",
+    "optional": true,
+    "aliases": [
+      "krea2-turbo-int8"
+    ],
+    "files": [
+      {
+        "url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_turbo_nvfp4.safetensors",
+        "dest": "diffusion_models/krea2_turbo_nvfp4.safetensors"
+      },
+      {
+        "url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_turbo_int8_convrot.safetensors",
+        "dest": "diffusion_models/krea2_turbo_int8_convrot.safetensors",
+        "optional": true
+      }
+    ]
   },
   "draft": {
     "id": "z-image-turbo-nsfw-nvfp4",
     "role": "draft",
-    "label": "Z-Image Turbo NSFW NVFP4 (high-volume sketches)",
+    "label": "Z-Image Turbo NSFW NVFP4 (sketches only)",
     "steps": 8,
     "cfg": 1,
     "sampler": "euler",
@@ -51,5 +105,41 @@
         "dest": "vae/ae.safetensors"
       }
     ]
+  },
+  "qwen_image": {
+    "id": "qwen-image-2512-fp8",
+    "role": "type",
+    "status": "stub",
+    "label": "Qwen-Image 2512 FP8 (bilingual / type stills) \u2014 TODO pull",
+    "files": [
+      {
+        "url": "TODO_HF_QWEN_IMAGE_2512_FP8",
+        "dest": "diffusion_models/qwen_image_2512_fp8.safetensors"
+      }
+    ]
+  },
+  "qwen_edit": {
+    "id": "qwen-edit-2511-fp8",
+    "role": "edit",
+    "status": "stub",
+    "label": "Qwen-Edit 2511 FP8 + NSFW LoRA \u2014 TODO workflow",
+    "files": [
+      {
+        "url": "TODO_HF_QWEN_EDIT_2511_FP8",
+        "dest": "diffusion_models/qwen_edit_2511_fp8.safetensors"
+      }
+    ]
+  },
+  "upscale": {
+    "id": "seedvr2-7b-fp8",
+    "role": "upscale",
+    "status": "documented",
+    "label": "SeedVR2 7B FP8 tiled \u2014 optional later; do not sample RAW at 4K"
+  },
+  "anime": {
+    "id": "illustrious-wai-nsfw",
+    "role": "anime",
+    "status": "documented",
+    "label": "Illustrious WAI-NSFW or Pony \u2014 optional slot"
   }
 }

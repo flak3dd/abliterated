@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import random
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -11,7 +13,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-DEFAULT_WORKFLOW = Path(__file__).resolve().parent / "workflows" / "txt2img-krea2-turbo-nvfp4.json"
+DEFAULT_WORKFLOW = Path(__file__).resolve().parent / "workflows" / "txt2img-krea2-raw-fp8.json"
 
 
 def _http_json(method: str, url: str, body: dict[str, Any] | None = None, timeout: float = 30) -> Any:
@@ -38,18 +40,40 @@ def load_workflow(path: str | Path | None = None) -> dict[str, Any]:
     return json.loads(p.read_text(encoding="utf-8"))
 
 
+def _hygiene_prompt(prompt: str) -> str:
+    """Trim and collapse whitespace only — no safety/refusal injection."""
+    return re.sub(r"[ \t]+", " ", (prompt or "").strip())
+
+
 def apply_prompt(
     workflow: dict[str, Any],
     prompt: str,
     *,
     negative: str = "",
-    width: int = 1024,
-    height: int = 1024,
+    width: int = 1328,
+    height: int = 1328,
     seed: int | None = None,
     steps: int | None = None,
+    cfg: float | None = None,
+    sampler_name: str | None = None,
+    scheduler: str | None = None,
+    lora_strength: float | None = None,
 ) -> dict[str, Any]:
     wf = copy.deepcopy(workflow)
+    prompt = _hygiene_prompt(prompt)
     seed_v = int(seed) if seed is not None else random.randint(0, 2**31 - 1)
+
+    if steps is None and os.environ.get("COMFY_STEPS", "").strip():
+        steps = int(os.environ["COMFY_STEPS"])
+    if cfg is None and os.environ.get("COMFY_CFG", "").strip():
+        cfg = float(os.environ["COMFY_CFG"])
+    if sampler_name is None and os.environ.get("COMFY_SAMPLER", "").strip():
+        sampler_name = os.environ["COMFY_SAMPLER"].strip()
+    if scheduler is None and os.environ.get("COMFY_SCHEDULER", "").strip():
+        scheduler = os.environ["COMFY_SCHEDULER"].strip()
+    if lora_strength is None and os.environ.get("COMFY_LORA_STRENGTH", "").strip():
+        lora_strength = float(os.environ["COMFY_LORA_STRENGTH"])
+
     for node in wf.values():
         if not isinstance(node, dict):
             continue
@@ -64,6 +88,8 @@ def apply_prompt(
             inputs["seed"] = seed_v
             if steps is not None:
                 inputs["steps"] = int(steps)
+            if cfg is not None and "cfg" in inputs:
+                inputs["cfg"] = float(cfg)
             if "negative" in inputs:
                 inputs["negative"] = negative
         elif kind == "CLIPTextEncode":
@@ -80,6 +106,17 @@ def apply_prompt(
             inputs["seed"] = seed_v
             if steps is not None:
                 inputs["steps"] = int(steps)
+            if cfg is not None:
+                inputs["cfg"] = float(cfg)
+            if sampler_name:
+                inputs["sampler_name"] = sampler_name
+            if scheduler:
+                inputs["scheduler"] = scheduler
+        elif kind == "LoraLoaderModelOnly" and lora_strength is not None:
+            inputs["strength_model"] = float(lora_strength)
+        elif kind == "LoraLoader" and lora_strength is not None:
+            if "strength_model" in inputs:
+                inputs["strength_model"] = float(lora_strength)
     return wf
 
 
@@ -88,12 +125,16 @@ def generate_png(
     prompt: str,
     *,
     negative: str = "",
-    width: int = 1024,
-    height: int = 1024,
+    width: int = 1328,
+    height: int = 1328,
     seed: int | None = None,
     steps: int | None = None,
+    cfg: float | None = None,
+    sampler_name: str | None = None,
+    scheduler: str | None = None,
+    lora_strength: float | None = None,
     workflow_path: str | None = None,
-    timeout_s: float = 180,
+    timeout_s: float = 300,
     on_progress: Any = None,
 ) -> bytes:
     base = comfy_url.rstrip("/")
@@ -105,6 +146,10 @@ def generate_png(
         height=height,
         seed=seed,
         steps=steps,
+        cfg=cfg,
+        sampler_name=sampler_name,
+        scheduler=scheduler,
+        lora_strength=lora_strength,
     )
     queued = _http_json("POST", base + "/prompt", {"prompt": wf})
     if not isinstance(queued, dict) or not queued.get("prompt_id"):

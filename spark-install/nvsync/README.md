@@ -10,7 +10,7 @@ Abliterated’s image stack maps to two (optional third) Custom apps:
 | **Abliterated Images** | **7860** | [`port-7860.bash`](port-7860.bash) | off (OpenAI API; Abliterated Images tab uses LAN or this tunnel) |
 | Abliterated Qwen | 8000 | [`port-8000.bash`](port-8000.bash) | off |
 
-`port-7860.bash` starts ComfyUI first if `:8188` is down, then the OpenAI bridge (`krea2-turbo-nvfp4` + `z-image-turbo-nsfw-nvfp4`).
+`port-7860.bash` starts ComfyUI first if `:8188` is down, then the OpenAI bridge (`krea2-raw-fp8` + `z-image-turbo-nsfw-nvfp4`).
 
 Scripts stay alive until you **Stop** in Sync (keeps the tunnel). They only kill processes **they** started; a stack already up from `start.sh` is left running so the Abliterated IDE on the LAN keeps working.
 

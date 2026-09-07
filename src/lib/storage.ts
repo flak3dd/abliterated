@@ -94,7 +94,7 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   imageGenEnabled: false,
   imageBaseUrl: 'http://127.0.0.1:7860/v1',
   imageToken: '',
-  imageModel: 'krea2-turbo-nvfp4',
+  imageModel: 'krea2-raw-fp8',
   imageViaProxy: true,
   mcpServers: [],
   skillsEnabled: true,
@@ -327,9 +327,12 @@ export function getSettings(): ClientSettings {
       if (
         raw === 'comfy-dreamshaper' ||
         raw === 'DreamShaper_8_pruned' ||
-        raw === 'abliterated-flux-klein'
+        raw === 'abliterated-flux-klein' ||
+        raw === 'krea2' ||
+        raw === 'krea2-turbo' ||
+        raw === 'quality'
       ) {
-        return 'krea2-turbo-nvfp4';
+        return 'krea2-raw-fp8';
       }
       return raw;
     })(),

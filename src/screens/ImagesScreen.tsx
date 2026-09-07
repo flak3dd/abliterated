@@ -31,7 +31,9 @@ import {
 } from '../lib/imageLibrary';
 import {
   DRAFT_IMAGE_MODEL,
+  FAST_IMAGE_MODEL,
   IMAGE_MODEL_OPTIONS,
+  KLEIN_IMAGE_MODEL,
   UNCENSORED_IMAGE_MODEL,
   sparkComfyUrl,
   sparkImageSettingsPatch,
@@ -47,6 +49,8 @@ interface Props {
 }
 
 const SIZES = [
+  { id: '1328x1328', label: '1:1 1328 (RAW)' },
+  { id: '1536x1536', label: '1:1 1536 max' },
   { id: '1024x1024', label: '1:1 1024' },
   { id: '768x768', label: '1:1 768' },
   { id: '512x512', label: '1:1 512' },
@@ -567,6 +571,16 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
     else patch({ imageModel: DRAFT_IMAGE_MODEL });
   };
 
+  const applyFast = () => {
+    if ((settings.sparkLanHost || '').trim()) patch(sparkImageSettingsPatch(settings, FAST_IMAGE_MODEL));
+    else patch({ imageModel: FAST_IMAGE_MODEL });
+  };
+
+  const applyKlein = () => {
+    if ((settings.sparkLanHost || '').trim()) patch(sparkImageSettingsPatch(settings, KLEIN_IMAGE_MODEL));
+    else patch({ imageModel: KLEIN_IMAGE_MODEL });
+  };
+
   const applySparkLan = () => {
     const p = sparkImageSettingsPatch(settings, UNCENSORED_IMAGE_MODEL);
     patch(p);
@@ -746,7 +760,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
           <div className="section-card-title text-amber-300">Image generation disabled</div>
           <p className="section-card-hint mt-2">
             Pair the IDE with Spark image gen: quality{' '}
-            <code className="text-zinc-400">{UNCENSORED_IMAGE_MODEL}</code> (Krea 2 Turbo NVFP4) or draft{" "}
+            <code className="text-zinc-400">{UNCENSORED_IMAGE_MODEL}</code> (Krea 2 RAW FP8 Build D) or draft{" "}
             <code className="text-zinc-400">{DRAFT_IMAGE_MODEL}</code> (Z-Image). Cloud chat has vision <em>input</em>{" "}
             only — no hosted <code className="text-zinc-400">/v1/images/generations</code>.
           </p>
@@ -924,7 +938,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
             {endpointOpen ? (
               <>
                 <p className="section-card-hint">
-                  Quality default <code>krea2-turbo-nvfp4</code>; draft <code>z-image-turbo-nsfw-nvfp4</code>. No safety checker.
+                  Quality default <code>krea2-raw-fp8</code> (24/CFG3.5/euler-beta); Fast <code>krea2-turbo-nvfp4</code>; draft <code>z-image-turbo-nsfw-nvfp4</code>. Prefer max edge 1536 for RAW. No safety checker.
                 </p>
                 <div className="section-card-body">
                   <div className="switch-row">

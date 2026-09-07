@@ -8,6 +8,8 @@ import { bridge, type BridgeStatus } from './lib/bridgeClient';
 import { applyInferenceProvider, INFERENCE_PROVIDERS, resolveActiveSettings } from './lib/activeEndpoint';
 import {
   DRAFT_IMAGE_MODEL,
+  FAST_IMAGE_MODEL,
+  KLEIN_IMAGE_MODEL,
   UNCENSORED_IMAGE_MODEL,
   sparkChatUrl,
   sparkComfyUrl,
@@ -592,9 +594,21 @@ export default function App() {
       },
       {
         id: 'use-spark-image-gen',
-        label: 'Use Spark image gen',
-        keywords: 'krea turbo nvfp4 spark-image generate_image uncensored lora',
+        label: 'Use Spark image gen (RAW)',
+        keywords: 'krea raw fp8 build-d spark-image generate_image uncensored lora',
         run: () => patchSettings(sparkImageSettingsPatch(settingsRef.current, UNCENSORED_IMAGE_MODEL)),
+      },
+      {
+        id: 'use-spark-fast-gen',
+        label: 'Use Spark fast gen',
+        keywords: 'krea turbo nvfp4 fast spark-image',
+        run: () => patchSettings(sparkImageSettingsPatch(settingsRef.current, FAST_IMAGE_MODEL)),
+      },
+      {
+        id: 'use-spark-klein-gen',
+        label: 'Use Spark Klein gen',
+        keywords: 'flux2 klein 9b adherence spark-image',
+        run: () => patchSettings(sparkImageSettingsPatch(settingsRef.current, KLEIN_IMAGE_MODEL)),
       },
       {
         id: 'use-spark-draft-gen',

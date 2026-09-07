@@ -13,11 +13,16 @@ fi
 
 export ABLITERATED_IMAGE_HOST="${ABLITERATED_IMAGE_HOST:-0.0.0.0}"
 export ABLITERATED_IMAGE_PORT="${ABLITERATED_IMAGE_PORT:-7860}"
-# ComfyUI on :8188 runs Krea 2 Turbo NVFP4 + uncensor LoRA (default) and Z-Image Turbo NVFP4 (draft).
+# ComfyUI on :8188: Krea 2 Turbo INT8 (quality default), NVFP4 (fast), Z-Image Turbo NVFP4 (draft).
 export COMFY_URL="${COMFY_URL:-http://127.0.0.1:8188}"
-export FLUX_MODEL_ID="${FLUX_MODEL_ID:-krea2-turbo-nvfp4}"
-export COMFY_MODEL_ID="${COMFY_MODEL_ID:-krea2-turbo-nvfp4}"
-export COMFY_WORKFLOW="${COMFY_WORKFLOW:-$(cd "$(dirname "$0")" && pwd)/workflows/txt2img-krea2-turbo-nvfp4.json}"
+export FLUX_MODEL_ID="${FLUX_MODEL_ID:-krea2-raw-fp8}"
+export COMFY_MODEL_ID="${COMFY_MODEL_ID:-krea2-raw-fp8}"
+export COMFY_STEPS="${COMFY_STEPS:-24}"
+export COMFY_CFG="${COMFY_CFG:-3.5}"
+export COMFY_SAMPLER="${COMFY_SAMPLER:-euler}"
+export COMFY_SCHEDULER="${COMFY_SCHEDULER:-beta}"
+export COMFY_LORA_STRENGTH="${COMFY_LORA_STRENGTH:-0.75}"
+export COMFY_WORKFLOW="${COMFY_WORKFLOW:-$(cd "$(dirname "$0")" && pwd)/workflows/txt2img-krea2-raw-fp8.json}"
 export ABLITERATED_SPARK_IMAGE="${ABLITERATED_SPARK_IMAGE:-$(cd "$(dirname "$0")" && pwd)}"
 export TRITON_PTXAS_PATH="${TRITON_PTXAS_PATH:-/usr/local/cuda/bin/ptxas}"
 export TORCH_FLOAT32_MATMUL_PRECISION="${TORCH_FLOAT32_MATMUL_PRECISION:-high}"

@@ -24,8 +24,13 @@ fi
 
 export ABLITERATED_SPARK_IMAGE="$IMAGE_DIR"
 export COMFY_URL="${COMFY_URL:-http://127.0.0.1:8188}"
-export FLUX_MODEL_ID="${FLUX_MODEL_ID:-krea2-turbo-nvfp4}"
-export COMFY_WORKFLOW="${COMFY_WORKFLOW:-$IMAGE_DIR/workflows/txt2img-krea2-turbo-nvfp4.json}"
+export FLUX_MODEL_ID="${FLUX_MODEL_ID:-krea2-raw-fp8}"
+export COMFY_STEPS="${COMFY_STEPS:-24}"
+export COMFY_CFG="${COMFY_CFG:-3.5}"
+export COMFY_SAMPLER="${COMFY_SAMPLER:-euler}"
+export COMFY_SCHEDULER="${COMFY_SCHEDULER:-beta}"
+export COMFY_LORA_STRENGTH="${COMFY_LORA_STRENGTH:-0.75}"
+export COMFY_WORKFLOW="${COMFY_WORKFLOW:-$IMAGE_DIR/workflows/txt2img-krea2-raw-fp8.json}"
 
 wait_http() {
   local url="$1" n="${2:-60}"
@@ -50,11 +55,11 @@ fi
 
 if ! wait_http "http://127.0.0.1:8188/" 90; then
   echo "ComfyUI did not become ready — check $IMAGE_DIR/logs/comfy.log" >&2
-  echo "Image bridge will still start and use direct uncensored FLUX if Comfy is down." >&2
+  echo "Image bridge will start; quality path needs Comfy (set ABLITERATED_IMAGE_ALLOW_KLEIN_FALLBACK=1 for optional Klein)." >&2
 fi
 
 if ! curl -fsS -m 2 http://127.0.0.1:7860/health >/dev/null 2>&1; then
-  echo "Starting OpenAI image bridge on :7860 (krea2-turbo-nvfp4 + z-image draft)"
+  echo "Starting OpenAI image bridge on :7860 (krea2-raw-fp8 quality + turbo fast + z-image draft)"
   nohup "$IMAGE_DIR/serve-spark.sh" >>"$IMAGE_DIR/logs/bridge.log" 2>&1 &
   echo $! >"$IMAGE_DIR/logs/bridge.pid"
 else
@@ -80,4 +85,4 @@ fi
 
 echo "Spark image stack up."
 echo "  ComfyUI:  http://0.0.0.0:8188"
-echo "  Images:   http://0.0.0.0:7860/v1  quality=krea2-turbo-nvfp4  draft=z-image-turbo-nsfw-nvfp4"
+echo "  Images:   http://0.0.0.0:7860/v1  quality=krea2-raw-fp8  fast=krea2-turbo-nvfp4  draft=z-image-turbo-nsfw-nvfp4"

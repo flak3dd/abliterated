@@ -1,19 +1,23 @@
 # Spark image generation workflow
 
-Uncensored two-path ComfyUI stack on DGX Spark (GB10, 128 GB unified). Abliterated talks OpenAI `POST /v1/images/generations` on `:7860`; ComfyUI owns the GPU on `:8188`.
+Uncensored Build D ComfyUI stack on DGX Spark (GB10, 128 GB unified). Abliterated talks OpenAI `POST /v1/images/generations` on `:7860`; ComfyUI owns the GPU on `:8188`.
 
 There is **no** prompt-expansion LLM, **no** safety checker, **no** “assume clothing” system prompt. The official Krea template’s TextGenerate block is omitted on purpose.
 
-## Pairing
+## Pairing (Build D)
 
-| Path | Served id | File | Time | Use |
+| Path | Served id | File | Sampler | Use |
 | --- | --- | --- | --- | --- |
-| **Quality (default)** | `krea2-turbo-nvfp4` | `krea2_turbo_nvfp4.safetensors` (~7.2 GB) + Huihui abliterated Qwen3-VL-4B + **one uncensor LoRA** | 8 Euler steps | Final / high-aesthetic stills |
-| **Draft** | `z-image-turbo-nsfw-nvfp4` | `z_image_turbo_nvfp4.safetensors` (~4.2 GB) | 8 Euler steps, ~5 s | High-volume sketches |
+| **Quality (default)** | `krea2-raw-fp8` | `krea2_raw_fp8_scaled.safetensors` + uncensor LoRA @ 0.75 | 24 / CFG 3.5 / euler+beta | Hero |
+| **Fast** | `krea2-turbo-nvfp4` | turbo NVFP4 | 8 / CFG1 / euler+simple | Speed |
+| **Draft** | `z-image-turbo-nsfw-nvfp4` | Z-Image NVFP4 | 8 Euler | Sketches |
+| **Klein** | `flux2-klein-9b` | 9B base stub | ~28 euler/beta | Adherence |
 
-Both NVFP4 DiTs stay resident. Together they are a sliver of 128 GB.
+Build D keeps RAW FP8 + optional Turbo + Z-Image resident on 128 GB. Do not sample RAW at 4K — upscale with SeedVR2 later.
 
-Aliases → quality: `krea2`, `quality`, `abliterated-flux-klein` (legacy).  
+Aliases → quality: `krea2`, `quality`, `raw`, `hero`, `abliterated-flux-klein` (legacy).
+Aliases → fast: `fast`, `turbo`, `nvfp4`, `krea2-turbo-nvfp4`, `int8`.
+Aliases → klein: `klein`, `flux2-klein-9b`.  
 Aliases → draft: `draft`, `sketch`, `z-image`, `zimage`.
 
 ## Files on the Spark
@@ -21,7 +25,8 @@ Aliases → draft: `draft`, `sketch`, `z-image`, `zimage`.
 ```
 ~/ComfyUI/models/
   diffusion_models/
-    krea2_turbo_nvfp4.safetensors          # quality DiT
+    krea2_raw_fp8_scaled.safetensors       # quality DiT (Build D)
+    krea2_turbo_nvfp4.safetensors          # fast DiT
     z_image_turbo_nvfp4.safetensors        # draft DiT
   text_encoders/
     Huihui-Qwen3-VL-4B-Instruct-abliterated-fp8_scaled.safetensors
@@ -35,29 +40,31 @@ Aliases → draft: `draft`, `sketch`, `z-image`, `zimage`.
 
 Machine graphs (Comfy `/prompt` API format):
 
-- Quality: [`txt2img-krea2-turbo-nvfp4.json`](txt2img-krea2-turbo-nvfp4.json)
-- Quality if LoRA missing: [`txt2img-krea2-turbo-nvfp4-nolor.json`](txt2img-krea2-turbo-nvfp4-nolor.json)
+- Quality: [`txt2img-krea2-raw-fp8.json`](txt2img-krea2-raw-fp8.json)
+- Fast: [`txt2img-krea2-turbo-nvfp4.json`](txt2img-krea2-turbo-nvfp4.json)
+- Klein stub: [`txt2img-flux2-klein-9b.json`](txt2img-flux2-klein-9b.json)
+- Quality if LoRA missing: [`txt2img-krea2-raw-fp8-nolor.json`](txt2img-krea2-raw-fp8-nolor.json)
 - Draft: [`txt2img-zimage-turbo-nvfp4.json`](txt2img-zimage-turbo-nvfp4.json)
 
 `spark_models.workflow_for()` picks quality vs draft vs no-LoRA at request time.
 
-## Quality path — Krea 2 Turbo NVFP4 + uncensor LoRA
+## Quality path — Krea 2 RAW FP8 + uncensor LoRA (Build D)
 
-8-step distilled DiT. CFG 1, Euler / simple, denoise 1. Negative is **zeroed** (`ConditioningZeroOut`) so the sampler does not steer away from the prompt. Uncensor is two-layer:
+RAW (not turbo): **24 steps**, **CFG 3.5**, **euler + beta**, denoise 1. Canvas prefer 1328–1536 max edge. Negative is **zeroed** (`ConditioningZeroOut`) so the sampler does not steer away from the prompt. Uncensor is two-layer:
 
 1. **Text encoder** — Huihui abliterated Qwen3-VL-4B (`CLIPLoader` type `krea2`). This is where Krea 2’s filter lives.
-2. **DiT LoRA** — `krea2_uncensor.safetensors` at strength **1.0** (`LoraLoaderModelOnly`). One LoRA only.
+2. **DiT LoRA** — `krea2_uncensor.safetensors` at strength **0.75** (`LoraLoaderModelOnly`). One LoRA only.
 
 ```
-UNETLoader (10)  krea2_turbo_nvfp4.safetensors
+UNETLoader (10)  krea2_raw_fp8_scaled.safetensors
         |
         v
-LoraLoaderModelOnly (15)  krea2_uncensor.safetensors  strength_model=1
+LoraLoaderModelOnly (15)  krea2_uncensor.safetensors  strength_model=0.75
         |
         +----------------------------+
         v                            |
 KSampler (3)                         |
-  steps=8 cfg=1 euler/simple         |
+  steps=24 cfg=3.5 euler/beta         |
   denoise=1                          |
         ^                            |
         | model                      |
@@ -147,7 +154,7 @@ If Comfy is down, the bridge falls back to the local uncensored FLUX helper only
 # quality
 curl -sS http://192.168.4.101:7860/v1/images/generations \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"a red cube on a steel bench, studio light","model":"krea2-turbo-nvfp4","size":"1024x1024"}'
+  -d '{"prompt":"a red cube on a steel bench, studio light","model":"krea2-raw-fp8","size":"1024x1024"}'
 
 # draft / sketch
 curl -sS http://192.168.4.101:7860/v1/images/generations \
@@ -158,7 +165,7 @@ curl -sS http://192.168.4.101:7860/v1/images/generations \
 ### IDE
 
 1. API tab → Spark LAN host (e.g. `192.168.4.101`), SSH alias, **Copy Spark install command**.
-2. Palette **Use Spark image gen** → `krea2-turbo-nvfp4`, base `http://<host>:7860/v1`, proxy off.
+2. Palette **Use Spark image gen** → `krea2-raw-fp8`, base `http://<host>:7860/v1`, proxy off.
 3. Palette **Use Spark draft gen** → `z-image-turbo-nsfw-nvfp4`.
 4. Images tab: prompt, size 1024 / 768 / 512, Generate. Chat tool `generate_image` uses the same model id.
 
@@ -190,7 +197,7 @@ See [`spark-install/nvsync/README.md`](../../spark-install/nvsync/README.md).
 bash spark-install/push.sh YOUR_SYNC_ALIAS --start
 # Spark: ComfyUI :8188, OpenAI images :7860
 curl -sS http://<spark-ip>:7860/health
-# {"ok":true,"model":"krea2-turbo-nvfp4","draftModel":"z-image-turbo-nsfw-nvfp4","backend":"comfy","uncensored":true,...}
+# {"ok":true,"model":"krea2-raw-fp8","draftModel":"z-image-turbo-nsfw-nvfp4","backend":"comfy","uncensored":true,...}
 ```
 
 ComfyUI graph UI (same weights): `http://<spark-ip>:8188` — load the JSON via the API or rebuild the node table above.

@@ -24,8 +24,13 @@ export ABLITERATED_SPARK_IMAGE="$IMAGE_DIR"
 export COMFY_VENV="${COMFY_VENV:-$IMAGE_DIR/.venv}"
 export COMFY_ROOT="${COMFY_ROOT:-$HOME/ComfyUI}"
 export COMFY_URL="${COMFY_URL:-http://127.0.0.1:8188}"
-export FLUX_MODEL_ID="${FLUX_MODEL_ID:-krea2-turbo-nvfp4}"
-export COMFY_WORKFLOW="${COMFY_WORKFLOW:-$IMAGE_DIR/workflows/txt2img-krea2-turbo-nvfp4.json}"
+export FLUX_MODEL_ID="${FLUX_MODEL_ID:-krea2-raw-fp8}"
+export COMFY_STEPS="${COMFY_STEPS:-24}"
+export COMFY_CFG="${COMFY_CFG:-3.5}"
+export COMFY_SAMPLER="${COMFY_SAMPLER:-euler}"
+export COMFY_SCHEDULER="${COMFY_SCHEDULER:-beta}"
+export COMFY_LORA_STRENGTH="${COMFY_LORA_STRENGTH:-0.75}"
+export COMFY_WORKFLOW="${COMFY_WORKFLOW:-$IMAGE_DIR/workflows/txt2img-krea2-raw-fp8.json}"
 mkdir -p "$IMAGE_DIR/logs"
 
 STARTED_COMFY=0
@@ -80,7 +85,7 @@ else
 fi
 
 if ! bridge_up; then
-  echo "Starting Abliterated image bridge on :7860 (krea2-turbo-nvfp4 + z-image draft)"
+  echo "Starting Abliterated image bridge on :7860 (krea2-raw-fp8 + turbo fast + z-image draft)"
   chmod +x "$IMAGE_DIR/serve-spark.sh"
   nohup "$IMAGE_DIR/serve-spark.sh" >>"$IMAGE_DIR/logs/bridge.log" 2>&1 &
   echo $! >"$BRIDGE_PID"
@@ -100,6 +105,6 @@ fi
 curl -fsS http://127.0.0.1:7860/health || true
 echo
 echo "Abliterated Images  http://127.0.0.1:7860/v1"
-echo "  quality krea2-turbo-nvfp4   draft z-image-turbo-nsfw-nvfp4"
+echo "  quality krea2-raw-fp8   fast krea2-turbo-nvfp4   draft z-image-turbo-nsfw-nvfp4"
 echo "Stop in NVIDIA Sync ends this session (only stops processes this script started)."
 while :; do sleep 86400; done

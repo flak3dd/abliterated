@@ -15,6 +15,8 @@ import { extractHttpErrorMessage } from '../lib/providerError';
 import { recommendedApiPatch } from '../lib/modelSettingsGuide';
 import {
   DRAFT_IMAGE_MODEL,
+  FAST_IMAGE_MODEL,
+  KLEIN_IMAGE_MODEL,
   UNCENSORED_IMAGE_MODEL,
   sparkBridgeDownHint,
   sparkImageSettingsPatch,
@@ -990,7 +992,7 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
           <div className="font-mono text-[10px] uppercase text-muted">Local image generation (Spark)</div>
           <p className="font-mono text-[10px] leading-4 text-muted">
             Separate from chat providers (Platform / Custom / Featherless). Bridge on :7860, Comfy on :8188.
-            Defaults: krea2-turbo-nvfp4 (quality) and z-image-turbo-nsfw-nvfp4 (draft).
+            Defaults: krea2-raw-fp8 (Build D quality), krea2-turbo-nvfp4 (fast), z-image-turbo-nsfw-nvfp4 (draft).
           </p>
           <p className="font-mono text-[10px] text-zinc-400 whitespace-pre-wrap">{sparkBridgeDownHint(draft)}</p>
           <ul className="space-y-1 font-mono text-[10px] text-zinc-400">
@@ -1002,6 +1004,7 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
           </ul>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => patch(sparkImageSettingsPatch(draft, UNCENSORED_IMAGE_MODEL))} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Use Spark image gen</button>
+            <button type="button" onClick={() => patch(sparkImageSettingsPatch(draft, FAST_IMAGE_MODEL))} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Use Spark fast gen</button>
             <button type="button" onClick={() => patch(sparkImageSettingsPatch(draft, DRAFT_IMAGE_MODEL))} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Use Spark draft gen</button>
             <button type="button" onClick={() => onOpenTab?.('images')} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Open Images tab</button>
           </div>
