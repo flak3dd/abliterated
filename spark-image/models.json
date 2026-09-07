@@ -30,7 +30,8 @@
       "dest": "loras/krea2_uncensor.safetensors",
       "civitaiModelVersion": 3084588,
       "strength": 0.75,
-      "note": "Filter-bypass / uncensor LoRA. Optional nudes LoRA (BetterNudes / RawGirlSpicy / Famegrid Spice) can stack at 0.7-1.0."
+      "note": "Filter-bypass / uncensor LoRA. Primary: HuggingFace mirror (no auth). Fallback: Civitai modelVersion 3084588 with CIVITAI_API_TOKEN (curl Bearer only; never wget). Optional nudes LoRA (BetterNudes / RawGirlSpicy / Famegrid Spice) can stack at 0.7-1.0.",
+      "url": "https://huggingface.co/Sentinel7/krea2/resolve/main/2742640/3084588/Krea2%20NSFW%2B.safetensors"
     }
   },
   "klein": {
