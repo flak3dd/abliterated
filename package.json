@@ -2,6 +2,12 @@
   "name": "abliterated-ide",
   "private": true,
   "version": "1.0.1",
+  "description": "Uncensored unrestricted local agent IDE for abliterated models \u2014 chat, tools, Jobs, MCP, and a localhost bridge.",
+  "author": {
+    "name": "flak3dd",
+    "url": "https://github.com/flak3dd"
+  },
+  "homepage": "https://abliterated.app",
   "type": "module",
   "scripts": {
     "dev": "vite",
