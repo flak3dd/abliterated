@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-07 (Australia/Melbourne)  
 **Source of truth for Abliterated:** Mac checkout `/Users/adminuser/abliterated` (code + docs inventory)  
-**Prior report:** [`docs/flagship-benchmark-2026-09-06.md`](docs/flagship-benchmark-2026-09-06.md) · dated copy: [`docs/flagship-benchmark-2026-09-07.md`](docs/flagship-benchmark-2026-09-07.md)
+**Prior report:** [`flagship-benchmark-2026-09-06.md`](./flagship-benchmark-2026-09-06.md) · summary also in root [`BENCHMARK.md`](../BENCHMARK.md)
 
 ## Honest notes (read first)
 
@@ -317,7 +317,7 @@ Flagship **numeric cells unchanged** from 2026-09-06; no invented deltas.
 | MCP | `mcpClient.ts`, `daemon/mcp.js` |
 | License / tokens | `license.ts`, `builtinTokens.ts` |
 | Electron | `electron/`, `package.json` desktop scripts |
-| Promo charts | [harness](docs/assets/harness-2026-09-07.png) · [restrictive posture](docs/assets/restrictive-posture-2026-09-06.png) · site `public/benchmark/` |
+| Promo charts | [harness](./assets/harness-2026-09-07.png) · [restrictive posture](./assets/restrictive-posture-2026-09-06.png) · site `public/benchmark/` |
 
 ---
 
