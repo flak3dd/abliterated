@@ -7,7 +7,7 @@ services:
       ABLITERATED_IMAGE_HOST: "0.0.0.0"
       ABLITERATED_IMAGE_PORT: "7860"
       COMFY_URL: "http://127.0.0.1:8188"
-      FLUX_MODEL_ID: "abliterated-flux-klein"
+      FLUX_MODEL_ID: "krea2-turbo-nvfp4"
       TRITON_PTXAS_PATH: /usr/local/cuda/bin/ptxas
     ports:
       - "7860:7860"

@@ -28,6 +28,14 @@ assert.match(installSh, /krea2-turbo-nvfp4/);
 assert.match(installSh, /z-image-turbo-nsfw-nvfp4/);
 assert.doesNotMatch(installSh, /DreamShaper_8_pruned/);
 
+const envExample = fs.readFileSync(path.join(installDir, "env.example"), "utf8");
+assert.match(envExample, /krea2-turbo-nvfp4/);
+assert.doesNotMatch(envExample, /FLUX_MODEL_ID=abliterated-flux-klein/);
+const composeSpark = fs.readFileSync(path.join(imageDir, "docker-compose.spark.yml"), "utf8");
+assert.match(composeSpark, /krea2-turbo-nvfp4/);
+assert.doesNotMatch(composeSpark, /abliterated-flux-klein/);
+
+
 const pullSh = fs.readFileSync(path.join(imageDir, 'pull-models.sh'), 'utf8');
 assert.match(pullSh, /krea2_turbo_nvfp4\.safetensors/);
 assert.match(pullSh, /z_image_turbo_nvfp4\.safetensors/);
