@@ -22,7 +22,7 @@ export type ChunkApplyResult = {
 };
 
 const THINKING_MODEL_RE =
-  /qwen3|qwq[-_]?|deepseek-r1|deepseek-reasoner|hunyuan-t1|glm-4\.5|glm-5|magistral/i;
+  /qwen3|qwen-abliterated|qwq[-_]?|deepseek-r1|deepseek-reasoner|hunyuan-t1|glm-4\.5|glm-5|magistral/i;
 
 export function isThinkingFamilyModel(model: string): boolean {
   return THINKING_MODEL_RE.test(model || '');

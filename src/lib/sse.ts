@@ -728,8 +728,9 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  // X-Retention / X-Reasoning are Abliteration-only; Featherless ignores or can stall on them.
-  if (active.provider !== 'featherless') {
+  // X-Retention / X-Reasoning are Abliteration-only. Spark vLLM CORS allow-headers
+  // is content-type only — extra headers fail the browser preflight.
+  if (active.provider !== 'featherless' && active.provider !== 'dgx-spark') {
     headers['X-Retention'] = 'none';
     if (settings.reasoning !== 'off') {
       headers['X-Reasoning'] = settings.reasoning;
@@ -844,9 +845,16 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
   if (usingBuiltin) {
     body.stream_options = { include_usage: true };
   }
-  if (featherless) {
+  if (featherless || active.provider === 'dgx-spark') {
     const kwargs = thinkingChatTemplateKwargs(model, settings.reasoning);
-    if (kwargs) body.chat_template_kwargs = kwargs;
+    if (kwargs) {
+      // Spark Qwen chat_template.jinja only honors enable_thinking (no thinking_budget /
+      // preserve_thinking). Extra kwargs are usually ignored, but keep the Spark body minimal.
+      body.chat_template_kwargs =
+        active.provider === 'dgx-spark'
+          ? { enable_thinking: kwargs.enable_thinking }
+          : kwargs;
+    }
   }
   const applyFit = (window: number, charsPerToken?: number) => {
     const fitted = fitChatPayload({
