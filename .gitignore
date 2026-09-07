@@ -21,4 +21,6 @@ spark-image/.env
 # Code signing secrets (never commit)
 build/signing/
 *.p12
+*.pem
+*.key
 *.cer

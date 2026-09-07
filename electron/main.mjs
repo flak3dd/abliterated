@@ -258,6 +258,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webSecurity: true,
     },
   });
 
@@ -271,6 +272,21 @@ function createWindow() {
       /* deny malformed */
     }
     return { action: 'deny' };
+  });
+
+  // Block in-window navigation away from the packaged app / Vite origin.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    try {
+      const u = new URL(url);
+      if (DEV) {
+        if (u.origin === 'http://127.0.0.1:5173' || u.origin === 'http://localhost:5173') return;
+      } else if (u.protocol === 'file:') {
+        return;
+      }
+    } catch {
+      /* fall through to prevent */
+    }
+    event.preventDefault();
   });
 
   if (DEV) {
@@ -309,9 +325,20 @@ function registerIpc() {
     } catch {
       return false;
     }
-    if (!['https:', 'http:', 'solana:'].includes(parsed.protocol)) return false;
-    await shell.openExternal(s);
-    return true;
+    if (parsed.protocol === 'https:' || parsed.protocol === 'solana:') {
+      await shell.openExternal(s);
+      return true;
+    }
+    // http: only loopback (local OAuth / Spark helpers) — never arbitrary LAN/WAN http.
+    if (parsed.protocol === 'http:') {
+      const host = (parsed.hostname || '').toLowerCase();
+      if (host === '127.0.0.1' || host === 'localhost' || host === '[::1]') {
+        await shell.openExternal(s);
+        return true;
+      }
+      return false;
+    }
+    return false;
   });
   ipcMain.handle('ablit:webSearch', async (_e, opts) => {
     const modPath = path.join(APP_ROOT_FS, 'daemon', 'webSearch.js');

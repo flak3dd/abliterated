@@ -117,7 +117,9 @@
         "filter": [
           "**/*",
           "!.venv/**",
-          "!**/__pycache__/**"
+          "!**/__pycache__/**",
+          "!.env",
+          "!.env.local"
         ]
       },
       {
@@ -127,7 +129,10 @@
           "**/*",
           "!.venv/**",
           "!**/__pycache__/**",
-          "!logs/**"
+          "!logs/**",
+          "!.env",
+          "!.env.local",
+          "!.env.*.local"
         ]
       },
       {
@@ -137,7 +142,10 @@
           "**/*",
           "!.venv/**",
           "!**/__pycache__/**",
-          "!models/**"
+          "!models/**",
+          "!.env",
+          "!.env.local",
+          "!.env.*.local"
         ]
       }
     ],

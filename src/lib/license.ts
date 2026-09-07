@@ -133,6 +133,8 @@ export function normalizeLicenseKey(key: string): string {
 }
 
 export function verifyAdminLogin(username: string, password: string): boolean {
+  // Local admin login is a Vite-dev convenience only — never honor in production bundles.
+  if (!isDevRuntime()) return false;
   const expected = adminCredentials();
   const user = username.trim().toLowerCase();
   const pass = password.trim();
@@ -176,7 +178,10 @@ export function isRecognizedLicenseFormat(key: string): boolean {
 export function resolveLicenseTier(key: string): LicenseTier {
   const k = normalizeLicenseKey(key);
   if (k === 'ABLIT-FREE') return 'free';
-  if (k === ADMIN_LICENSE_KEY || k === 'ABLIT-DEV-UNLOCK') return 'admin';
+  // Dev unlock keys must never grant admin in production builds.
+  if (k === ADMIN_LICENSE_KEY || k === 'ABLIT-DEV-UNLOCK') {
+    return isDevRuntime() ? 'admin' : 'free';
+  }
   if (/^ABLIT-TEAM-/.test(k)) return 'team';
   if (/^ABLIT-PRO-/.test(k)) return 'pro';
   if (/^ABLIT-STARTER-/.test(k)) return 'starter';
