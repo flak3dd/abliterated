@@ -171,6 +171,8 @@ const abliterationProxy = {
   '/image-v1': {
     target: process.env.ABLITERATED_IMAGE_URL || 'http://127.0.0.1:7860',
     changeOrigin: true,
+    timeout: 0,
+    proxyTimeout: 0,
     rewrite: (p: string) => p.replace(/^\/image-v1/, '/v1'),
     configure: (proxy: { on: (event: string, listener: (...args: never[]) => void) => void }) => {
       proxy.on('error', ((err: Error, _req: unknown, res: unknown) => {

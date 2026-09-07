@@ -58,7 +58,9 @@ function friendlyHttpError(status: number, body: string, requestUrl: string): st
       `Image server unreachable (HTTP ${status}).`,
       'Nothing is listening on the image base URL (default http://127.0.0.1:7860).',
       'Start a mock: `cd spark-image && ABLITERATED_IMAGE_MOCK=1 python3 serve-openai-bridge.py`',
-      'Or Spark Comfy/bridge via spark-install — see spark-install/README.md (start/status/stop) and spark-image/README.md.',
+      'Or palette Use Spark image gen (LAN :7860, Via proxy off).',
+      'Or NVIDIA Sync Custom app Abliterated Images (tunnels :7860).',
+      'Or Spark: ~/abliterated-spark/spark-install/start.sh — see spark-install/README.md.',
       `Request: ${requestUrl}`,
     ].join('\n');
   }

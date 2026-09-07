@@ -3,6 +3,7 @@
  * Resolves `mempalace` / uvx / python -m and runs search, wake-up, status, save, init.
  */
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -66,23 +67,71 @@ export function formatWakePrompt(text) {
   ].join('\n');
 }
 
+/** Dirs Electron GUI apps often omit from PATH (uv lives in ~/.local/bin). */
+export function extraBinDirs() {
+  const home = os.homedir();
+  return [
+    path.join(home, '.local', 'bin'),
+    path.join(home, '.cargo', 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+  ];
+}
+
+export function withExtraPath(env = process.env) {
+  const extra = extraBinDirs().join(path.delimiter);
+  const cur = env.PATH || env.Path || '';
+  return { ...env, PATH: extra + (cur ? path.delimiter + cur : '') };
+}
+
+export function resolveUvBin() {
+  const forced = String(process.env.ABLIT_UV_BIN || '').trim();
+  if (forced) return forced;
+  for (const dir of extraBinDirs()) {
+    for (const name of process.platform === 'win32' ? ['uv.exe'] : ['uv']) {
+      const p = path.join(dir, name);
+      if (existsSync(p)) return p;
+    }
+  }
+  return 'uv';
+}
+
+function uvxFromUv(uvBin) {
+  if (uvBin.endsWith('uv.exe')) return uvBin.replace(/uv\.exe$/i, 'uvx.exe');
+  if (uvBin.endsWith('uv')) return uvBin.replace(/uv$/, 'uvx');
+  return 'uvx';
+}
+
+function execOpts(extra = {}) {
+  const { env, ...rest } = extra;
+  return {
+    windowsHide: true,
+    ...rest,
+    env: withExtraPath(env || process.env),
+  };
+}
+
 /** Probe PATH / uv / python for a MemPalace launcher. Cached. */
 export async function resolveLauncher() {
   if (cachedLauncher !== undefined) return cachedLauncher;
   const envBin = String(process.env.ABLIT_MEMPALACE_BIN || '').trim();
   const candidates = [];
   if (envBin) candidates.push({ cmd: envBin, prefix: [] });
+  for (const dir of extraBinDirs()) {
+    const mp = path.join(dir, process.platform === 'win32' ? 'mempalace.exe' : 'mempalace');
+    if (existsSync(mp)) candidates.push({ cmd: mp, prefix: [] });
+  }
   candidates.push({ cmd: 'mempalace', prefix: [] });
+  candidates.push({ cmd: resolveUvBin(), prefix: ['tool', 'run', 'mempalace'] });
   candidates.push({ cmd: 'python3', prefix: ['-m', 'mempalace'] });
   candidates.push({ cmd: 'python', prefix: ['-m', 'mempalace'] });
 
   for (const c of candidates) {
     try {
-      await execFileAsync(c.cmd, [...c.prefix, '--help'], {
+      await execFileAsync(c.cmd, [...c.prefix, '--help'], execOpts({
         timeout: 12_000,
         maxBuffer: 256 * 1024,
-        windowsHide: true,
-      });
+      }));
       cachedLauncher = c;
       return c;
     } catch (err) {
@@ -111,13 +160,16 @@ async function runCli(args, opts = {}) {
   const env = { ...process.env };
   const palace = String(opts.palacePath || '').trim();
   if (palace) env.MEMPALACE_PALACE_PATH = palace;
-  const { stdout, stderr } = await execFileAsync(launcher.cmd, [...launcher.prefix, ...args], {
-    timeout,
-    maxBuffer: MAX_BUFFER,
-    windowsHide: true,
-    env,
-    cwd: opts.cwd || os.homedir(),
-  });
+  const { stdout, stderr } = await execFileAsync(
+    launcher.cmd,
+    [...launcher.prefix, ...args],
+    execOpts({
+      timeout,
+      maxBuffer: MAX_BUFFER,
+      env,
+      cwd: opts.cwd || os.homedir(),
+    }),
+  );
   const out = String(stdout || '').trim();
   const err = String(stderr || '').trim();
   return { stdout: out, stderr: err, combined: [out, err].filter(Boolean).join('\n') };
@@ -206,11 +258,11 @@ export async function mempalaceInit(projectDir, opts = {}) {
 export async function mempalaceInstall() {
   resetLauncherCache();
   try {
-    const { stdout, stderr } = await execFileAsync('uv', ['tool', 'install', 'mempalace'], {
+    const uv = resolveUvBin();
+    const { stdout, stderr } = await execFileAsync(uv, ['tool', 'install', 'mempalace'], execOpts({
       timeout: INSTALL_TIMEOUT_MS,
       maxBuffer: MAX_BUFFER,
-      windowsHide: true,
-    });
+    }));
     resetLauncherCache();
     const which = await mempalaceWhich();
     return {
@@ -228,9 +280,10 @@ export function mcpServerSpec(palacePath) {
   const env = {};
   const palace = String(palacePath || '').trim();
   if (palace) env.MEMPALACE_PALACE_PATH = palace;
+  const uvx = uvxFromUv(resolveUvBin());
   return {
     name: 'mempalace',
-    command: 'uvx',
+    command: existsSync(uvx) ? uvx : 'uvx',
     args: ['--from', 'mempalace', 'python', '-m', 'mempalace.mcp_server'],
     env,
   };
