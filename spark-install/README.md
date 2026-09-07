@@ -48,7 +48,7 @@ cd ~/abliterated-spark/spark-install
 | Chat | API → DGX Spark, base `http://<spark-ip>:8000/v1`, model `qwen-abliterated` |
 | ComfyUI graph UI | `http://<spark-ip>:8188` (same uncensored node) |
 
-Palette: **Use Spark image gen** (Krea 2 Turbo NVFP4), **Use Spark draft gen** (Z-Image Turbo NSFW NVFP4), **Use Spark ComfyUI**, **Use Qwen on Spark**.
+Palette: **Use Spark image gen** (Krea 2 Turbo NVFP4), **Use Spark draft gen** (Z-Image Turbo NSFW NVFP4), **Use Spark ComfyUI** (enables image settings and opens the graph UI at `:8188`), **Use Qwen on Spark**.
 
 ## Layout after push
 

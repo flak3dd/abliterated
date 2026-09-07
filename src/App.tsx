@@ -10,6 +10,7 @@ import {
   DRAFT_IMAGE_MODEL,
   UNCENSORED_IMAGE_MODEL,
   sparkChatUrl,
+  sparkComfyUrl,
   sparkImageSettingsPatch,
   sparkPushCommand,
 } from './lib/sparkInstall';
@@ -605,7 +606,19 @@ export default function App() {
         id: 'use-spark-comfy',
         label: 'Use Spark ComfyUI',
         keywords: 'comfy comfyui workflow spark image krea z-image 8188',
-        run: () => patchSettings(sparkImageSettingsPatch(settingsRef.current, UNCENSORED_IMAGE_MODEL)),
+        run: () => {
+          patchSettings(sparkImageSettingsPatch(settingsRef.current, UNCENSORED_IMAGE_MODEL));
+          const url = sparkComfyUrl(settingsRef.current);
+          void (async () => {
+            try {
+              const opened = await window.ablitDesktop?.openExternal?.(url);
+              if (opened) return;
+            } catch {
+              /* fall through */
+            }
+            window.open(url, '_blank', 'noopener,noreferrer');
+          })();
+        },
       },
       {
         id: 'copy-spark-install',

@@ -10,6 +10,7 @@ import {
   saveGeneratedImage,
   type StoredImageMeta,
 } from '../lib/imageLibrary';
+import { sparkComfyUrl } from '../lib/sparkInstall';
 import { setSettings } from '../lib/storage';
 import type { ClientSettings } from '../types';
 
@@ -488,6 +489,24 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                 <p className="switch-row-help">DEV same-origin rewrite for local image servers.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="btn-ghost h-7 px-2 text-[10px]"
+                  onClick={() => {
+                    const url = sparkComfyUrl(settings);
+                    void (async () => {
+                      try {
+                        const opened = await window.ablitDesktop?.openExternal?.(url);
+                        if (opened) return;
+                      } catch {
+                        /* fall through */
+                      }
+                      window.open(url, '_blank', 'noopener,noreferrer');
+                    })();
+                  }}
+                >
+                  Open ComfyUI
+                </button>
                 <div className="truncate font-mono text-[10px] text-zinc-500">
                   POST {imageEndpointUrl(settings, '/images/generations')}
                 </div>
