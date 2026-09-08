@@ -11,8 +11,7 @@ import {
   FAST_IMAGE_MODEL,
   KLEIN_IMAGE_MODEL,
   UNCENSORED_IMAGE_MODEL,
-  sparkChatUrl,
-  sparkComfyUrl,
+  sparkChatSettingsPatch,
   sparkImageSettingsPatch,
   sparkPushCommand,
 } from './lib/sparkInstall';
@@ -583,14 +582,8 @@ export default function App() {
       {
         id: 'use-qwen-spark',
         label: 'Use Qwen on Spark',
-        keywords: 'provider qwen abliterated spark nim',
-        run: () =>
-          applySettings({
-            ...applyInferenceProvider(settingsRef.current, 'dgx-spark'),
-            sparkModel: 'qwen-abliterated',
-            sparkBaseUrl: sparkChatUrl(settingsRef.current),
-            sparkViaProxy: false,
-          }),
+        keywords: 'provider qwen abliterated spark vllm 8000',
+        run: () => applySettings({ ...settingsRef.current, ...sparkChatSettingsPatch(settingsRef.current) }),
       },
       {
         id: 'use-spark-image-gen',
@@ -600,7 +593,7 @@ export default function App() {
       },
       {
         id: 'use-spark-fast-gen',
-        label: 'Use Spark fast gen',
+        label: 'Use Spark Fast (Krea Turbo)',
         keywords: 'krea turbo nvfp4 fast spark-image',
         run: () => patchSettings(sparkImageSettingsPatch(settingsRef.current, FAST_IMAGE_MODEL)),
       },
@@ -612,27 +605,9 @@ export default function App() {
       },
       {
         id: 'use-spark-draft-gen',
-        label: 'Use Spark draft gen',
-        keywords: 'z-image turbo nsfw nvfp4 draft sketch spark',
+        label: 'Use Spark Draft (Z-Image)',
+        keywords: 'z-image turbo draft nsfw spark',
         run: () => patchSettings(sparkImageSettingsPatch(settingsRef.current, DRAFT_IMAGE_MODEL)),
-      },
-      {
-        id: 'use-spark-comfy',
-        label: 'Use Spark ComfyUI',
-        keywords: 'comfy comfyui workflow spark image krea z-image 8188',
-        run: () => {
-          patchSettings(sparkImageSettingsPatch(settingsRef.current, UNCENSORED_IMAGE_MODEL));
-          const url = sparkComfyUrl(settingsRef.current);
-          void (async () => {
-            try {
-              const opened = await window.ablitDesktop?.openExternal?.(url);
-              if (opened) return;
-            } catch {
-              /* fall through */
-            }
-            window.open(url, '_blank', 'noopener,noreferrer');
-          })();
-        },
       },
       {
         id: 'copy-spark-install',

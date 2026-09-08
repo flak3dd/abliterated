@@ -1,83 +1,62 @@
 #!/usr/bin/env python3
-"""
-OpenAI-compatible image bridge for Spark — Build D (DGX Spark 128GB resident).
-  Quality default: Krea 2 RAW FP8 + uncensor LoRA @ 0.75 (24 steps, CFG 3.5, euler/beta)
-  Klein:           FLUX.2 Klein 9B base (stub until weights land)
-  Fast:            Krea 2 Turbo NVFP4 / INT8 (8-step CFG1)
-  Draft:           Z-Image Turbo NVFP4
-POST /v1/images/generations -> b64_json
-Binds 127.0.0.1 by default (override ABLITERATED_IMAGE_HOST for Docker).
-
-Set ABLITERATED_IMAGE_MOCK=1 for a tiny PNG stub without GPU/weights.
-Klein/diffusers fallback only when ABLITERATED_IMAGE_ALLOW_KLEIN_FALLBACK=1.
-"""
+"""OpenAI image bridge Build D Diffusers — hero krea2-raw-fp8. No Comfy. Priority: Krea > TE Huihui > sidecar :8000 > Klein/Edit/SeedVR2."""
 from __future__ import annotations
-
-import base64
-import io
-import os
-import re
-import time
+import base64, io, os, re, time
 from typing import Any, Optional
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import uvicorn
-
 from spark_models import (
-    DRAFT_MODEL_ID,
-    FAST_INT8_MODEL_ID,
-    FAST_MODEL_ID,
-    KLEIN_MODEL_ID,
-    QUALITY_MODEL_ID,
-    resolve_model_id,
-    workflow_for,
+    MODEL_IDS, QUALITY_CFG, QUALITY_LORA_STRENGTH, QUALITY_MAX_EDGE, QUALITY_MODEL_ID,
+    QUALITY_SAMPLER, QUALITY_SCHEDULER, QUALITY_STEPS, QUALITY_TE, resolve_model_id, sampler_params,
 )
-from uncensored_flux import generate_png_bytes, load_pipe, strip_safety
+from sampler_runtime import StubModelError, available_model_ids, generate_png_bytes, load_pipe, pipe_info, weights_present
 
 HOST = os.environ.get("ABLITERATED_IMAGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ABLITERATED_IMAGE_PORT", "7860"))
 MOCK = os.environ.get("ABLITERATED_IMAGE_MOCK", "").strip() in ("1", "true", "yes")
-COMFY_URL = os.environ.get("COMFY_URL", "").strip().rstrip("/")
-COMFY_WORKFLOW = os.environ.get("COMFY_WORKFLOW", "").strip()
-NEGATIVE = os.environ.get("COMFY_NEGATIVE", "")
-ALLOW_KLEIN_FALLBACK = os.environ.get("ABLITERATED_IMAGE_ALLOW_KLEIN_FALLBACK", "").strip() in (
-    "1",
-    "true",
-    "yes",
-)
-MODEL_ID = QUALITY_MODEL_ID
+MODEL_ID = (os.environ.get("FLUX_MODEL_ID") or os.environ.get("IMAGE_MODEL_ID") or QUALITY_MODEL_ID).strip() or QUALITY_MODEL_ID
 
-app = FastAPI(title="abliterated-spark-image", version="0.4.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+def _env_int(keys, default):
+    for k in keys:
+        r = os.environ.get(k, "").strip()
+        if r:
+            try: return max(1, int(r))
+            except ValueError: pass
+    return default
 
-_progress_lock = __import__("threading").Lock()
+def _env_float(keys, default):
+    for k in keys:
+        r = os.environ.get(k, "").strip()
+        if r:
+            try: return float(r)
+            except ValueError: pass
+    return default
+
+DEFAULT_STEPS = _env_int(("SAMPLER_STEPS", "FLUX_STEPS"), QUALITY_STEPS)
+DEFAULT_GUIDANCE = _env_float(("SAMPLER_GUIDANCE", "FLUX_GUIDANCE"), QUALITY_CFG)
+DEFAULT_LORA = _env_float(("SAMPLER_LORA_STRENGTH",), QUALITY_LORA_STRENGTH)
+DEFAULT_MAX_EDGE = _env_int(("SAMPLER_MAX_EDGE",), QUALITY_MAX_EDGE)
+DEFAULT_SAMPLER = os.environ.get("SAMPLER_SAMPLER", QUALITY_SAMPLER).strip() or QUALITY_SAMPLER
+DEFAULT_SCHEDULER = os.environ.get("SAMPLER_SCHEDULER", QUALITY_SCHEDULER).strip() or QUALITY_SCHEDULER
+
+app = FastAPI(title="abliterated-spark-image", version="0.6.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+_lock = __import__("threading").Lock()
 _progress = {"progress": 0, "status": "idle", "prompt": ""}
 
-
-def set_progress(progress: float, status: str = "running", prompt: str = "") -> None:
-    with _progress_lock:
+def set_progress(progress, status="running", prompt=""):
+    with _lock:
         _progress["progress"] = max(0, min(100, float(progress)))
         _progress["status"] = status
-        if prompt:
-            _progress["prompt"] = prompt[:200]
+        if prompt: _progress["prompt"] = prompt[:200]
 
-
-def get_progress() -> dict[str, Any]:
-    with _progress_lock:
-        return dict(_progress)
-
+def get_progress():
+    with _lock: return dict(_progress)
 
 def hygiene_prompt(prompt: str) -> str:
-    """Light prompt hygiene only — trim and collapse whitespace. No safety/refusal text."""
     return re.sub(r"[ \t]+", " ", (prompt or "").strip())
-
 
 class ImageRequest(BaseModel):
     prompt: str
@@ -85,243 +64,171 @@ class ImageRequest(BaseModel):
     n: int = Field(default=1, ge=1, le=4)
     size: str = "1328x1328"
     response_format: Optional[str] = "b64_json"
+    # Optional sampler / path overrides from IDE (also accepted nested under extra).
+    steps: Optional[int] = None
+    guidance: Optional[float] = None
+    guidance_scale: Optional[float] = None
+    lora_strength: Optional[float] = None
+    negative: Optional[str] = None
+    intent: Optional[str] = None
+    # Optional reference image for Edit / img2img (raw base64 or data URL).
+    image: Optional[str] = None
+    image_b64: Optional[str] = None
+    extra: Optional[dict[str, Any]] = None
 
-
-def parse_size(size: str) -> tuple[int, int]:
+def parse_size(size: str):
     try:
-        w, h = size.lower().split("x")
-        return max(64, int(w)), max(64, int(h))
+        w, h = size.lower().split("x"); return max(64, int(w)), max(64, int(h))
     except Exception:
         return 1328, 1328
 
-
-def mock_png_b64(prompt: str, w: int, h: int) -> str:
+def mock_png_b64(prompt, w, h):
     from PIL import Image, ImageDraw
-
     img = Image.new("RGB", (min(w, 512), min(h, 512)), (24, 24, 28))
     draw = ImageDraw.Draw(img)
-    draw.rectangle([8, 8, img.width - 8, img.height - 8], outline=(180, 180, 190))
-    draw.text((16, 16), "krea2-raw-fp8 MOCK", fill=(220, 220, 230))
+    draw.text((16, 16), f"{QUALITY_MODEL_ID} MOCK", fill=(220, 220, 230))
     draw.text((16, 40), prompt[:80], fill=(160, 160, 170))
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    buf = io.BytesIO(); img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
-
-def ensure_pipe():
-    pipe = load_pipe()
-    strip_safety(pipe)
-    return pipe
-
-
-def resolve_device() -> str:
-    if MOCK:
-        return "cpu"
+def resolve_device():
+    if MOCK: return "cpu"
     try:
         import torch
-
-        if torch.cuda.is_available():
-            return "cuda"
-        if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
-            return "mps"
-    except Exception:
-        pass
+        if torch.cuda.is_available(): return "cuda"
+        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available(): return "mps"
+    except Exception: pass
     return "cpu"
-
-
-def sampler_params(model_id: str) -> dict[str, Any]:
-    """RAW quality uses 24/CFG3.5/euler/beta; turbo/draft use 8/CFG1/euler/simple."""
-    env_steps = os.environ.get("COMFY_STEPS", "").strip()
-    env_cfg = os.environ.get("COMFY_CFG", "").strip()
-    env_sampler = os.environ.get("COMFY_SAMPLER", "").strip()
-    env_sched = os.environ.get("COMFY_SCHEDULER", "").strip()
-    env_lora = os.environ.get("COMFY_LORA_STRENGTH", "").strip()
-
-    if model_id in (FAST_MODEL_ID, FAST_INT8_MODEL_ID, DRAFT_MODEL_ID):
-        base = {
-            "steps": 8,
-            "cfg": 1.0,
-            "sampler_name": "euler",
-            "scheduler": "simple",
-            "lora_strength": 0.65,
-        }
-    elif model_id == KLEIN_MODEL_ID:
-        base = {
-            "steps": 28,
-            "cfg": 3.5,
-            "sampler_name": "euler",
-            "scheduler": "beta",
-            "lora_strength": 0.7,
-        }
-    else:
-        base = {
-            "steps": 24,
-            "cfg": 3.5,
-            "sampler_name": "euler",
-            "scheduler": "beta",
-            "lora_strength": 0.75,
-        }
-
-    if env_steps:
-        base["steps"] = int(env_steps)
-    if env_cfg:
-        base["cfg"] = float(env_cfg)
-    if env_sampler:
-        base["sampler_name"] = env_sampler
-    if env_sched:
-        base["scheduler"] = env_sched
-    if env_lora:
-        base["lora_strength"] = float(env_lora)
-    return base
-
 
 @app.get("/health")
 def health():
-    backend = "mock" if MOCK else ("comfy" if COMFY_URL else "diffusers")
+    params = sampler_params(MODEL_ID)
+    avail = list(MODEL_IDS) if MOCK else available_model_ids()
     return {
-        "ok": True,
-        "model": MODEL_ID,
-        "kleinModel": KLEIN_MODEL_ID,
-        "fastModel": FAST_MODEL_ID,
-        "draftModel": DRAFT_MODEL_ID,
-        "build": "D",
-        "mock": MOCK,
-        "backend": backend,
-        "comfy": COMFY_URL or None,
-        "uncensored": True,
-        "device": "comfy" if COMFY_URL and not MOCK else resolve_device(),
-        "defaultSteps": sampler_params(QUALITY_MODEL_ID)["steps"],
-        "defaultCfg": sampler_params(QUALITY_MODEL_ID)["cfg"],
+        "ok": True, "model": MODEL_ID, "qualityModel": QUALITY_MODEL_ID, "build": "D",
+        "mock": MOCK, "backend": "mock" if MOCK else "diffusers",
+        "pipelineClass": params.get("pipeline_class"), "uncensored": True,
+        "huihuiTe": QUALITY_TE, "loraStrength": DEFAULT_LORA, "sampler": DEFAULT_SAMPLER,
+        "scheduler": DEFAULT_SCHEDULER, "maxEdge": DEFAULT_MAX_EDGE, "device": resolve_device(),
+        "defaultSteps": DEFAULT_STEPS, "defaultGuidance": DEFAULT_GUIDANCE,
+        "pipe": pipe_info(MODEL_ID) if not MOCK else {}, "comfy": False,
+        "promptLlmPort": 8000, "promptLlmModel": "qwen-abliterated",
+        "availableModels": avail,
+        "priority": ["krea2-raw-fp8", "huihui-te", "qwen-abliterated:8000", "flux2-klein-9b", "qwen-edit-2511-fp8", "seedvr2-7b-fp8"],
     }
-
 
 @app.get("/v1/progress")
 @app.get("/progress")
-def progress():
-    return get_progress()
-
+def progress(): return get_progress()
 
 @app.get("/v1/models")
 def models():
+    data = []
+    for m in MODEL_IDS:
+        ok = True if MOCK else weights_present(m)
+        # Only mark models that can actually load (weights present). Unavailable stay listed with available=false for UI probes.
+        data.append({
+            "id": m,
+            "object": "model",
+            "owned_by": "local",
+            "available": ok,
+            "ready": ok,
+        })
     return {
         "object": "list",
-        "data": [
-            {"id": QUALITY_MODEL_ID, "object": "model", "owned_by": "local"},
-            {"id": KLEIN_MODEL_ID, "object": "model", "owned_by": "local"},
-            {"id": FAST_MODEL_ID, "object": "model", "owned_by": "local"},
-            {"id": FAST_INT8_MODEL_ID, "object": "model", "owned_by": "local"},
-            {"id": DRAFT_MODEL_ID, "object": "model", "owned_by": "local"},
-        ],
+        "data": data,
+        "available": [d["id"] for d in data if d.get("available")],
     }
+
+def _req_num(req: ImageRequest, *keys):
+    extra = req.extra or {}
+    for k in keys:
+        v = getattr(req, k, None)
+        if v is None and isinstance(extra, dict):
+            v = extra.get(k)
+        if v is None: continue
+        try:
+            return float(v) if any(x in k for x in ("guidance", "lora", "cfg")) else int(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+def _req_image_b64(req: ImageRequest) -> Optional[str]:
+    """Pull reference image base64 from top-level or extra (strip data: URL prefix)."""
+    extra = req.extra or {}
+    raw = req.image_b64 or req.image
+    if not raw and isinstance(extra, dict):
+        raw = extra.get("image_b64") or extra.get("image")
+    if not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    if s.startswith("data:") and "," in s:
+        s = s.split(",", 1)[1].strip()
+    return s or None
 
 
 @app.post("/v1/images/generations")
-def generations(req: ImageRequest) -> dict[str, Any]:
+def generations(req: ImageRequest):
     prompt = hygiene_prompt(req.prompt)
-    if not prompt:
-        raise HTTPException(400, "prompt required")
+    if not prompt: raise HTTPException(400, "prompt required")
     w, h = parse_size(req.size)
     served = resolve_model_id(req.model)
-    wf_path = str(workflow_for(served))
     params = sampler_params(served)
-    data = []
-    t0 = time.time()
-    set_progress(1, "running", prompt)
+    steps = DEFAULT_STEPS if served == QUALITY_MODEL_ID else int(params["steps"])
+    guidance = DEFAULT_GUIDANCE if served == QUALITY_MODEL_ID else float(params["guidance"])
+    ov_steps = _req_num(req, "steps")
+    ov_guid = _req_num(req, "guidance", "guidance_scale")
+    if ov_steps is not None: steps = max(1, int(ov_steps))
+    if ov_guid is not None: guidance = float(ov_guid)
+    if os.environ.get("SAMPLER_STEPS", "").strip(): steps = DEFAULT_STEPS
+    if os.environ.get("SAMPLER_GUIDANCE", "").strip(): guidance = DEFAULT_GUIDANCE
+    # Per-request lora_strength (Quality path). Fall back to model/env default.
+    lora = _req_num(req, "lora_strength")
+    if lora is None:
+        lora = float(params.get("lora_strength", DEFAULT_LORA))
+    else:
+        lora = float(lora)
+    # intent/negative accepted for contract/forward-compat.
+    _ = (req.intent, req.negative, (req.extra or {}).get("intent"), (req.extra or {}).get("negative"))
+    image_b64 = _req_image_b64(req)
+    if not MOCK and not weights_present(served):
+        raise HTTPException(503, f"model {served} weights not present — chip disabled until pull")
+    data = []; t0 = time.time(); set_progress(1, "running", prompt)
     try:
         for i in range(req.n):
             if MOCK:
                 for step in range(1, 6):
-                    set_progress(step * 18, "running", prompt)
-                    time.sleep(0.05)
+                    set_progress(step * 18, "running", prompt); time.sleep(0.05)
                 b64 = mock_png_b64(prompt, w, h)
-            elif COMFY_URL:
-                png = None
-                comfy_exc: Exception | None = None
-                try:
-                    from comfy_client import generate_png
-
-                    png = generate_png(
-                        COMFY_URL,
-                        prompt,
-                        negative=NEGATIVE,
-                        width=w,
-                        height=h,
-                        steps=params["steps"],
-                        cfg=params["cfg"],
-                        sampler_name=params["sampler_name"],
-                        scheduler=params["scheduler"],
-                        lora_strength=params["lora_strength"],
-                        workflow_path=COMFY_WORKFLOW or wf_path,
-                        on_progress=lambda p: set_progress(p, "running", prompt),
-                    )
-                except Exception as exc:
-                    comfy_exc = exc
-                    print(f"ComfyUI workflow failed ({exc})")
-                    set_progress(20, "running", prompt)
-                if png is None:
-                    if not ALLOW_KLEIN_FALLBACK:
-                        detail = (
-                            f"ComfyUI path failed for model={served} workflow={wf_path}: "
-                            f"{comfy_exc}. Fix Comfy/weights, or set ABLITERATED_IMAGE_ALLOW_KLEIN_FALLBACK=1."
-                        )
-                        raise HTTPException(502, detail)
-                    print("ABLITERATED_IMAGE_ALLOW_KLEIN_FALLBACK=1 — using FLUX Klein fallback")
-                    fb_steps = int(os.environ.get("FLUX_STEPS", "8"))
-
-                    def _on_step_comfy_fb(pipe_obj, step_idx, timestep, callback_kwargs):  # type: ignore[no-untyped-def]
-                        try:
-                            set_progress(5 + (90 * float(step_idx + 1) / max(1, fb_steps)), "running", prompt)
-                        except Exception:
-                            pass
-                        return callback_kwargs
-
-                    png = generate_png_bytes(
-                        prompt,
-                        width=w,
-                        height=h,
-                        steps=fb_steps,
-                        on_step=_on_step_comfy_fb,
-                    )
-                b64 = base64.b64encode(png).decode("ascii")
             else:
-                fb_steps = int(os.environ.get("FLUX_STEPS", "8"))
-
-                def _on_step(pipe_obj, step_idx, timestep, callback_kwargs):  # type: ignore[no-untyped-def]
-                    try:
-                        set_progress(5 + (90 * float(step_idx + 1) / max(1, fb_steps)), "running", prompt)
-                    except Exception:
-                        pass
+                def _on_step(pipe_obj, step_idx, timestep, callback_kwargs):
+                    try: set_progress(5 + (90 * float(step_idx + 1) / max(1, steps)), "running", prompt)
+                    except Exception: pass
                     return callback_kwargs
-
-                ensure_pipe()
+                try: load_pipe(served)
+                except StubModelError as exc: raise HTTPException(503, str(exc)) from exc
                 png = generate_png_bytes(
-                    prompt,
-                    width=w,
-                    height=h,
-                    steps=fb_steps,
-                    on_step=_on_step,
+                    prompt, model=served, width=w, height=h, steps=steps, guidance=guidance,
+                    lora_strength=lora if served == QUALITY_MODEL_ID else None, on_step=_on_step,
+                    image_b64=image_b64,
                 )
                 b64 = base64.b64encode(png).decode("ascii")
             set_progress(95 if i + 1 < req.n else 100, "running" if i + 1 < req.n else "done", prompt)
             data.append({"b64_json": b64})
         set_progress(100, "done", prompt)
-        return {
-            "created": int(t0),
-            "model": served,
-            "data": data,
-        }
+        return {"created": int(t0), "model": served, "data": data}
     except HTTPException:
-        set_progress(0, "error", prompt)
-        raise
+        set_progress(0, "error", prompt); raise
+    except StubModelError as exc:
+        set_progress(0, "error", prompt); raise HTTPException(503, str(exc)) from exc
     except Exception:
-        set_progress(0, "error", prompt)
-        raise
-
+        set_progress(0, "error", prompt); raise
 
 if __name__ == "__main__":
-    print(
-        f"abliterated image bridge http://{HOST}:{PORT}/v1 "
-        f"quality={MODEL_ID} klein={KLEIN_MODEL_ID} fast={FAST_MODEL_ID} "
-        f"draft={DRAFT_MODEL_ID} build=D mock={MOCK}"
-    )
+    print(f"abliterated image bridge http://{HOST}:{PORT}/v1 quality={MODEL_ID} build=D "
+          f"backend={'mock' if MOCK else 'diffusers'} steps={DEFAULT_STEPS} guidance={DEFAULT_GUIDANCE} "
+          f"sampler={DEFAULT_SAMPLER}/{DEFAULT_SCHEDULER} lora={DEFAULT_LORA} maxEdge={DEFAULT_MAX_EDGE} "
+          f"te={QUALITY_TE} mock={MOCK} comfy=0")
     uvicorn.run(app, host=HOST, port=PORT)

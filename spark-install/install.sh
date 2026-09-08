@@ -1,33 +1,31 @@
 #!/usr/bin/env bash
 # Abliterated Spark installer — run ON the DGX Spark (GB10 / aarch64 / CUDA 13).
-# Installs ComfyUI + Krea 2 Turbo NVFP4 (uncensor LoRA) as the default generator
-# and Z-Image Turbo NSFW NVFP4 as the high-volume draft model.
+# Installs Diffusers Krea 2 RAW OpenAI image bridge (krea2-raw-fp8).
 # Optional --with-text pulls Qwen abliterated vLLM.
 # Never run the weight pull on the IDE / laptop.
+# ComfyUI is out of scope — bridge on :7860 only.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 IMAGE_DIR="${ABLITERATED_SPARK_IMAGE:-$ROOT/spark-image}"
 TEXT_DIR="${ABLITERATED_SPARK_TEXT:-$ROOT/spark}"
-COMFY_ROOT="${COMFY_ROOT:-$HOME/ComfyUI}"
-COMFY_VERSION="${COMFY_VERSION:-}"
-VENV="${COMFY_VENV:-$IMAGE_DIR/.venv}"
+VENV="${IMAGE_VENV:-$IMAGE_DIR/.venv}"
 WITH_TEXT=0
 DO_START=0
 SKIP_PULL=0
 
 usage() {
-  cat <<'EOF'
+  cat <<'USAGE'
 Usage: install.sh [--with-text] [--start] [--skip-pull]
 
   --with-text   Also install the Qwen abliterated vLLM stack (spark/)
-  --start       Start ComfyUI + OpenAI image bridge after install
+  --start       Start the Diffusers OpenAI image bridge after install
   --skip-pull   Skip Hugging Face weight downloads (reuse cache)
 
 Run this on the Spark host after spark-install/push.sh copies the package.
-Image gen: krea2-raw-fp8 (default Build D) + turbo fast + z-image draft. Uncensored only.
-EOF
+Image gen: krea2-raw-fp8 (Build D Diffusers). Uncensored only. No ComfyUI.
+USAGE
 }
 
 while [[ $# -gt 0 ]]; do
@@ -111,7 +109,7 @@ if [[ ! -x "$VENV/bin/python" ]]; then
   python3 -m venv "$VENV"
 fi
 
-echo "Installing torch (CUDA 13) + image stack into $VENV"
+echo "Installing torch (CUDA 13) + Diffusers image stack into $VENV"
 "$VENV/bin/pip" install --upgrade pip wheel
 "$VENV/bin/pip" install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 "$VENV/bin/pip" install -r "$IMAGE_DIR/requirements.txt"
@@ -123,20 +121,8 @@ if not torch.cuda.is_available():
     raise SystemExit("torch CUDA is False — aborting Spark image install")
 PY
 
-if [[ ! -f "$COMFY_ROOT/main.py" ]]; then
-  echo "Cloning ComfyUI ${COMFY_VERSION:-latest} -> $COMFY_ROOT"
-  if [[ -n "$COMFY_VERSION" ]]; then
-    git clone --branch "$COMFY_VERSION" --depth 1 https://github.com/comfyanonymous/ComfyUI.git "$COMFY_ROOT"
-  else
-    git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git "$COMFY_ROOT"
-  fi
-fi
-"$VENV/bin/pip" install -r "$COMFY_ROOT/requirements.txt"
-# Keep the Spark cu130 torch if Comfy requirements tried to replace it.
-"$VENV/bin/pip" install torch torchvision --index-url https://download.pytorch.org/whl/cu130
-
 if [[ "$SKIP_PULL" -eq 0 ]]; then
-  echo "Pulling Krea 2 Turbo NVFP4 + uncensor LoRA + Z-Image Turbo NVFP4 (GPU host only)"
+  echo "Pulling Krea 2 RAW 4B + abliterated text encoder (GPU host only)"
   if [[ -f "$IMAGE_DIR/.env" ]]; then
     set -a
     # shellcheck disable=SC1091
@@ -162,19 +148,17 @@ if [[ "$WITH_TEXT" -eq 1 ]]; then
   "$TEXT_DIR/pull-model.sh"
 fi
 
-cat > "$HERE/installed.json" <<EOF
+cat > "$HERE/installed.json" <<JSON
 {
   "ok": true,
   "imageDir": "$IMAGE_DIR",
-  "comfyRoot": "$COMFY_ROOT",
   "venv": "$VENV",
   "imageModel": "krea2-raw-fp8",
-  "fastModel": "krea2-turbo-nvfp4",
-  "draftModel": "z-image-turbo-nsfw-nvfp4",
+  "backend": "diffusers",
   "uncensoredOnly": true,
   "withText": $([[ "$WITH_TEXT" -eq 1 ]] && echo true || echo false)
 }
-EOF
+JSON
 
 if [[ -x "$HERE/nvsync/install-scripts.sh" ]]; then
   chmod +x "$HERE/nvsync/"*.bash "$HERE/nvsync/install-scripts.sh"
@@ -182,11 +166,9 @@ if [[ -x "$HERE/nvsync/install-scripts.sh" ]]; then
 fi
 
 echo "Install complete."
-echo "  ComfyUI UI:  http://<spark-ip>:8188"
-echo "  OpenAI images: http://<spark-ip>:7860/v1"
-echo "    quality krea2-raw-fp8   fast krea2-turbo-nvfp4   draft z-image-turbo-nsfw-nvfp4"
+echo "  OpenAI images: http://127.0.0.1:7860/v1  quality=krea2-raw-fp8 (Diffusers)"
 if [[ "$WITH_TEXT" -eq 1 ]]; then
-  echo "  vLLM chat:   http://<spark-ip>:8000/v1   model=qwen-abliterated"
+  echo "  vLLM chat:   http://127.0.0.1:8000/v1   model=qwen-abliterated"
 fi
 echo "Start:  $HERE/start.sh"
 

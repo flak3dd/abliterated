@@ -11,7 +11,7 @@ Every network surface Abliterated IDE touches locally, what listens where, and h
 | Bridge daemon | `ws://127.0.0.1:17322` | WebSocket JSON-RPC | Workspace files, shell, git, MCP, checkpoints | `npm run bridge` |
 | DGX Spark inference | `http://127.0.0.1:8000/v1` | OpenAI HTTP + SSE | `qwen-abliterated` chat completions | `spark/` compose on the Spark host |
 | Featherless | `http://127.0.0.1:3000/v1` | OpenAI HTTP + OAuth | `Qwen/Qwen3-32B` chat + OAuth session | featherless-oauth server (see API tab) |
-| Image bridge | `http://127.0.0.1:7860/v1` | OpenAI images API | `krea2-raw-fp8` (Build D default) / `krea2-turbo-nvfp4` (fast) / `z-image-turbo-nsfw-nvfp4` (draft) | `spark-image/serve-openai-bridge.py` |
+| Image bridge | `http://127.0.0.1:7860/v1` | OpenAI images API | `krea2-raw-fp8` (Build D Diffusers hero) | `spark-image/serve-openai-bridge.py` |
 
 Cloud fallback is `https://api.abliteration.ai/v1` (set via `VITE_ABLITERATED_BASE_URL`); it is not a local endpoint but is the default proxy target for `/v1` in DEV.
 
@@ -68,9 +68,9 @@ OpenAI-compatible image server for the Images tab and the `generate_image` tool.
 
 - **Address:** `http://127.0.0.1:7860`
 - **Paths:** `POST /v1/images/generations` (returns `b64_json`), `GET /v1/models`, `GET /v1/progress`, `GET /health`
-- **Model ids:** `krea2-raw-fp8` (RAW FP8 Build D) , `krea2-turbo-nvfp4` (fast), `z-image-turbo-nsfw-nvfp4` (draft)
+- **Model ids:** `krea2-raw-fp8` (Build D Diffusers hero); then: `flux2-klein-9b`, `qwen-image-2512-fp8`, `qwen-edit-2511-fp8`, `seedvr2-7b-fp8`
 - **Package ops:** `spark-install/install.sh`, `start.sh`, `status.sh`, `stop.sh` (Mac: `bash spark-install/push.sh ALIAS --start`)
-- **Serve scripts:** `serve-spark.sh`, `serve-comfy.sh`, `serve-openai-bridge.py`
+- **Serve scripts:** `serve-spark.sh`, `serve-openai-bridge.py` (Diffusers only; ComfyUI removed)
 - **Mock (no GPU):** `npm run image:mock` from the repo root serves a stub PNG on the same port
 - **Verify:** `curl http://127.0.0.1:7860/health`
 - **IDE wiring:** in DEV requests go through the `/image-v1` proxy; a blank 5xx from the proxy usually means nothing is listening on `:7860`

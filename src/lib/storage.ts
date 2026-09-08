@@ -95,7 +95,8 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   imageBaseUrl: 'http://127.0.0.1:7860/v1',
   imageToken: '',
   imageModel: 'krea2-raw-fp8',
-  imageViaProxy: true,
+  // Prefer off: Vite DEV browser still enables via getSettings when unset; Electron stays off.
+  imageViaProxy: false,
   mcpServers: [],
   skillsEnabled: true,
   licenseKey: import.meta.env.DEV ? 'ABLIT-ADMIN' : '',
@@ -325,18 +326,29 @@ export function getSettings(): ClientSettings {
     imageModel: (() => {
       const raw = stored.imageModel?.trim() || DEFAULT_SETTINGS.imageModel;
       if (
-        raw === 'comfy-dreamshaper' ||
+        raw === 'comfy-dreamshaper' || raw === 'flux2-klein-9b' || raw === 'flux2-klein-4b' ||
         raw === 'DreamShaper_8_pruned' ||
         raw === 'abliterated-flux-klein' ||
-        raw === 'krea2' ||
-        raw === 'krea2-turbo' ||
-        raw === 'quality'
+        raw === 'krea2-turbo-nvfp4' ||
+        raw === 'krea2-turbo-int8' ||
+        raw === 'quality' ||
+        raw === 'hero'
       ) {
         return 'krea2-raw-fp8';
       }
       return raw;
     })(),
-    imageViaProxy: stored.imageViaProxy !== false,
+    imageViaProxy: (() => {
+      const isElectron =
+        typeof window !== 'undefined' && !!(window as Window & { ablitDesktop?: unknown }).ablitDesktop;
+      if (typeof stored.imageViaProxy === 'boolean') {
+        // Electron + explicit true kept (warning shown in UI if upstream down).
+        return stored.imageViaProxy;
+      }
+      // Unset: Electron / packaged → off; Vite DEV browser → on (proxy intentional).
+      if (isElectron) return false;
+      return import.meta.env.DEV === true;
+    })(),
     mcpServers: Array.isArray(stored.mcpServers) ? stored.mcpServers : [],
     skillsEnabled: stored.skillsEnabled !== false,
     licenseKey:

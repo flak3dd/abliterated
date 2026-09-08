@@ -42,9 +42,10 @@ if listening; then
 else
   echo "Starting qwen-abliterated on :8000"
   chmod +x "$TEXT_DIR/serve-qwen-abliterated.sh"
-  nohup "$TEXT_DIR/serve-qwen-abliterated.sh" >>"$LOG_DIR/vllm.log" 2>&1 &
-  echo $! >"$PID_FILE"
-  STARTED=1
+  if ! "$TEXT_DIR/serve-qwen-abliterated.sh" >>"$LOG_DIR/vllm.log" 2>&1; then
+    echo "Qwen vLLM failed to start. Weights missing or gated — set HF_TOKEN in spark/.env, accept HF terms, ./pull-model.sh" >&2
+    exit 1
+  fi
 fi
 
 echo "Abliterated Qwen http://127.0.0.1:8000/v1  model=qwen-abliterated"

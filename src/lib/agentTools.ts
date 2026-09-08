@@ -13,6 +13,7 @@ import {
 } from './agentHelpers';
 import { formatSkillFile, similarSkillExists, slugifySkillId, toCatalogEntries } from './skills';
 import { runWebSearch } from './webSearch';
+import { assertSafeFetchUrl } from './urlSafety';
 import { mempalaceOpts } from './mempalace';
 import {
   TASK_GRAPH_PATH,
@@ -467,7 +468,7 @@ export async function executeAgentTool(
           await saveGeneratedImage({
             prompt,
             size,
-            model: settings.imageModel || 'krea2-raw-fp8',
+            model: settings.imageModel || 'flux2-klein-9b',
             b64: result.b64,
             url: result.url,
           });
@@ -683,22 +684,27 @@ export async function executeAgentTool(
     const url = toolArgString(tool.arguments, ['url']);
     if (!url) return err(tool, 'missing url');
     try {
-      let parsed: URL;
-      try {
-        parsed = new URL(url);
-      } catch {
-        throw new Error('invalid url');
+      const MAX_REDIRECTS = 5;
+      let current = url;
+      let res: Response | null = null;
+      for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+        const safe = assertSafeFetchUrl(current);
+        if (!safe.ok) throw new Error(safe.reason);
+        res = await fetch(safe.url.toString(), { redirect: 'manual' });
+        if (res.status >= 300 && res.status < 400) {
+          const loc = res.headers.get('location');
+          if (!loc) throw new Error('redirect without location');
+          current = new URL(loc, safe.url).toString();
+          continue;
+        }
+        break;
       }
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        throw new Error('only http(s) urls are allowed');
+      if (!res) throw new Error('fetch failed');
+      if (res.status >= 300 && res.status < 400) {
+        throw new Error('too many redirects');
       }
-      const host = parsed.hostname.toLowerCase();
-      if (host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '0.0.0.0' || host === '[::1]') {
-        throw new Error('refused: local address');
-      }
-      const res = await fetch(parsed.toString(), { redirect: 'follow' });
-      const text = await res.text();
-      const clipped = text.length > 48_000 ? `${text.slice(0, 48_000)}\n/* truncated */` : text;
+      const body = await res.text();
+      const clipped = body.length > 48_000 ? `${body.slice(0, 48_000)}\n/* truncated */` : body;
       return ok(tool, `HTTP ${res.status}\n${clipped}`);
     } catch (e) {
       return err(tool, e instanceof Error ? e.message : String(e));

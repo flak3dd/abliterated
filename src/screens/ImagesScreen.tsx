@@ -10,16 +10,18 @@ import {
   FolderOpen,
   History,
   ImageIcon,
+  ImagePlus,
   Loader2,
   Maximize2,
   Square,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import { useToast } from '../components/common/Toast';
 import { bridge } from '../lib/bridgeClient';
 import { cn } from '../lib/cn';
-import { generateImage, imageEndpointUrl, pingImageEndpoint } from '../lib/imageGen';
+import { friendlyImageError, generateImage, imageEndpointUrl, isBridgeOfflineError, pingImageEndpoint } from '../lib/imageGen';
 import {
   IMAGE_LIBRARY_MAX,
   deleteLibraryImage,
@@ -30,15 +32,25 @@ import {
   type StoredImageMeta,
 } from '../lib/imageLibrary';
 import {
+  ANIME_IMAGE_MODEL,
+  BUILD_D,
   DRAFT_IMAGE_MODEL,
   FAST_IMAGE_MODEL,
   IMAGE_MODEL_OPTIONS,
   KLEIN_IMAGE_MODEL,
+  PONY_IMAGE_MODEL,
+  QWEN_EDIT_IMAGE_MODEL,
+  QWEN_IMAGE_MODEL,
+  SPARK_CHAT_MODEL,
   UNCENSORED_IMAGE_MODEL,
-  sparkComfyUrl,
+  resolveSparkImageModel,
+  sparkChatSettingsPatch,
   sparkImageSettingsPatch,
+  sparkImageUrl,
   sparkLanHost,
   sparkPushCommand,
+  sparkStartCommand,
+  sparkTunnelStartHint,
 } from '../lib/sparkInstall';
 import { setSettings } from '../lib/storage';
 import type { ClientSettings } from '../types';
@@ -126,10 +138,30 @@ function isAbortError(err: unknown): boolean {
   );
 }
 
-function chipOn(on: boolean) {
+function isElectronDesktop(): boolean {
+  return typeof window !== 'undefined' && !!window.ablitDesktop;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('read failed'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function stripDataUrlBase64(dataUrl: string): string {
+  const s = (dataUrl || '').trim();
+  if (s.startsWith('data:') && s.includes(',')) return s.split(',', 1)[1] || '';
+  return s;
+}
+
+function chipOn(on: boolean, opts?: { muted?: boolean }) {
   return cn(
     'chip',
-    on && 'border-emerald-700/80 bg-emerald-950/50 text-emerald-300 hover:border-emerald-600 hover:text-emerald-200',
+    opts?.muted && 'opacity-40 cursor-not-allowed hover:border-zinc-700 hover:text-zinc-500',
+    on && !opts?.muted && 'border-emerald-700/80 bg-emerald-950/50 text-emerald-300 hover:border-emerald-600 hover:text-emerald-200',
   );
 }
 
@@ -146,6 +178,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
   const [testNote, setTestNote] = useState('');
   const [testOk, setTestOk] = useState<boolean | null>(null);
   const [healthChecking, setHealthChecking] = useState(false);
+  const [availableModels, setAvailableModels] = useState<string[] | null>(null);
   const [testDetailOpen, setTestDetailOpen] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<{ src: string; prompt: string } | null>(null);
   const [comparePair, setComparePair] = useState<{ left: { src: string; prompt: string }; right: { src: string; prompt: string } } | null>(null);
@@ -168,11 +201,17 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
   const [endpointOpen, setEndpointOpen] = useState(true);
   const [endpointUserToggled, setEndpointUserToggled] = useState(false);
   const [copiedInstall, setCopiedInstall] = useState(false);
+  const [recipeOpen, setRecipeOpen] = useState(false);
+  const [refImagePreview, setRefImagePreview] = useState<string | null>(null);
+  const [refImageB64, setRefImageB64] = useState<string | null>(null);
+  const [refDragOver, setRefDragOver] = useState(false);
+  const refFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const thumbCache = useRef<Record<string, string>>({});
   const progressEstRef = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const modelSelectRef = useRef<HTMLSelectElement | null>(null);
   const generateCardRef = useRef<HTMLDivElement | null>(null);
   const healthAbortRef = useRef<AbortController | null>(null);
 
@@ -232,7 +271,12 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         if (ac.signal.aborted) return;
         setTestOk(result.ok);
         setTestNote(result.note);
-        if (!result.ok) setTestDetailOpen(false);
+        if (result.availableModels) setAvailableModels(result.availableModels);
+        else if (result.ok) setAvailableModels(null);
+        if (!result.ok) {
+          setTestDetailOpen(false);
+          setAvailableModels([]);
+        }
         if (!endpointUserToggled) setEndpointOpen(!result.ok);
       } catch {
         if (ac.signal.aborted) return;
@@ -257,6 +301,15 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
       healthAbortRef.current?.abort();
     };
   }, [settings.imageGenEnabled, settings.imageBaseUrl, settings.imageViaProxy, settings.imageToken]);
+
+  // Electron: prefer Via proxy off (Vite /image-v1 is a DEV-browser concern and causes 502s with Sync/tunnel).
+  useEffect(() => {
+    if (!isElectronDesktop()) return;
+    if (settings.imageViaProxy !== true) return;
+    const next = { ...settings, imageViaProxy: false };
+    setSettings(next);
+    onSettingsChange(next);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps — migrate once on mount
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -315,9 +368,34 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
     abortRef.current?.abort();
   };
 
+  const clearRefImage = () => {
+    setRefImagePreview(null);
+    setRefImageB64(null);
+  };
+
+  const loadRefFile = async (file: File | null | undefined) => {
+    if (!file || !file.type.startsWith('image/')) {
+      toast.warning('Pick an image file');
+      return;
+    }
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setRefImagePreview(dataUrl);
+      setRefImageB64(stripDataUrlBase64(dataUrl) || null);
+    } catch (err) {
+      toast.error('Could not read image', err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const generate = async () => {
     const p = prompt.trim();
     if (!p || busy) return;
+    const resolvedForGate = resolveSparkImageModel(settings.imageModel);
+    const editNeedsRef = resolvedForGate === QWEN_EDIT_IMAGE_MODEL;
+    if (editNeedsRef && !refImageB64) {
+      toast.warning('Edit needs a reference image', 'Drop or choose an image above Generate');
+      return;
+    }
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -347,11 +425,31 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
     }, 200);
 
     try {
+      const resolvedModel = resolveSparkImageModel(settings.imageModel);
+      const isQuality = resolvedModel === UNCENSORED_IMAGE_MODEL;
+      const isEdit = resolvedModel === QWEN_EDIT_IMAGE_MODEL;
+      const isDraftOrFast =
+        resolvedModel === DRAFT_IMAGE_MODEL || resolvedModel === FAST_IMAGE_MODEL;
+      const genExtras = isQuality
+        ? {
+            steps: BUILD_D.steps,
+            guidance: BUILD_D.cfg,
+            loraStrength: BUILD_D.loraStrength,
+            intent: 'generate' as const,
+          }
+        : isEdit
+          ? { intent: 'edit' as const }
+          : isDraftOrFast || resolvedModel === QWEN_IMAGE_MODEL
+            ? { intent: 'generate' as const }
+            : {};
       const result = await generateImage({
         settings,
         prompt: p,
         size,
         n: batchN,
+        model: resolvedModel,
+        ...genExtras,
+        ...(isEdit && refImageB64 ? { imageB64: refImageB64 } : {}),
         abortSignal: ac.signal,
         onProgress: (pct, estimated) => {
           progressEstRef.current = estimated;
@@ -380,9 +478,12 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         setProgressFailed(true);
         toast.info('Generation stopped');
       } else {
-        setError(err instanceof Error ? err.message : String(err));
-        setErrorOpen(true);
+        const { friendly, detail } = friendlyImageError(err);
+        setError(detail);
+        setErrorOpen(isBridgeOfflineError(detail) ? false : true);
         setProgressFailed(true);
+        toast.error(friendly.split('.')[0] || 'Generation failed', isBridgeOfflineError(detail) ? 'See status card above' : friendly);
+        if (isBridgeOfflineError(detail) && !endpointUserToggled) setEndpointOpen(true);
       }
     } finally {
       window.clearInterval(tick);
@@ -531,10 +632,12 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         setTestNote('Cancelled');
         setTestOk(null);
       } else {
-        setTestNote(err instanceof Error ? err.message : String(err));
+        const { friendly, detail } = friendlyImageError(err);
+        setTestNote(detail);
         setTestOk(false);
-        setTestDetailOpen(true);
+        setTestDetailOpen(false);
         setProgressFailed(true);
+        toast.error(friendly.split('.')[0] || 'Bridge offline', 'See the status card for Start tunnel / Use LAN');
         if (!endpointUserToggled) setEndpointOpen(true);
       }
     } finally {
@@ -548,8 +651,8 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
     }
   };
 
-  const openComfy = () => {
-    const url = sparkComfyUrl(settings);
+  const openBridge = () => {
+    const url = sparkImageUrl(settings).replace(/\/v1$/, '');
     void (async () => {
       try {
         const opened = await window.ablitDesktop?.openExternal?.(url);
@@ -561,31 +664,93 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
     })();
   };
 
-  const applyQuality = () => {
-    if ((settings.sparkLanHost || '').trim()) patch(sparkImageSettingsPatch(settings, UNCENSORED_IMAGE_MODEL));
-    else patch({ imageModel: UNCENSORED_IMAGE_MODEL });
+  const modelAvailable = (model: string) => {
+    // Quality hero assumed available when bridge is up unless probe explicitly excludes it.
+    if (availableModels == null) return model === UNCENSORED_IMAGE_MODEL;
+    return availableModels.includes(model);
+  };
+  const selectPathOrToast = (model: string, label: string, apply: () => void) => {
+    if (!modelAvailable(model)) {
+      toast.info(`${label} unavailable`, 'Weights not on Spark — chip disabled until pull');
+      return;
+    }
+    apply();
   };
 
-  const applyDraft = () => {
-    if ((settings.sparkLanHost || '').trim()) patch(sparkImageSettingsPatch(settings, DRAFT_IMAGE_MODEL));
-    else patch({ imageModel: DRAFT_IMAGE_MODEL });
+    const applyImageModel = (model: string) => {
+    if ((settings.sparkLanHost || '').trim()) patch(sparkImageSettingsPatch(settings, model));
+    else patch({ imageModel: resolveSparkImageModel(model) });
+  };
+
+  const applyQuality = () => {
+    setSize('1328x1328');
+    applyImageModel(UNCENSORED_IMAGE_MODEL);
+    toast.success(
+      'Quality — Build D hero',
+      `${BUILD_D.steps} steps / CFG ${BUILD_D.cfg} / LoRA ${BUILD_D.loraStrength} · 1328×1328`,
+    );
   };
 
   const applyFast = () => {
-    if ((settings.sparkLanHost || '').trim()) patch(sparkImageSettingsPatch(settings, FAST_IMAGE_MODEL));
-    else patch({ imageModel: FAST_IMAGE_MODEL });
+    selectPathOrToast(FAST_IMAGE_MODEL, 'Fast', () => {
+      applyImageModel(FAST_IMAGE_MODEL);
+      toast.info('Fast — Krea 2 Turbo', FAST_IMAGE_MODEL);
+    });
+  };
+
+  const applyDraft = () => {
+    selectPathOrToast(DRAFT_IMAGE_MODEL, 'Draft', () => {
+      applyImageModel(DRAFT_IMAGE_MODEL);
+      toast.info('Draft — Z-Image Turbo NSFW', DRAFT_IMAGE_MODEL);
+    });
+  };
+
+  const applyInstruction = () => {
+    selectPathOrToast(QWEN_IMAGE_MODEL, 'Instruction', () => {
+      applyImageModel(QWEN_IMAGE_MODEL);
+      toast.info('Instruction — Qwen-Image', QWEN_IMAGE_MODEL);
+    });
+  };
+
+  const applyEdit = () => {
+    selectPathOrToast(QWEN_EDIT_IMAGE_MODEL, 'Edit', () => {
+      applyImageModel(QWEN_EDIT_IMAGE_MODEL);
+      toast.info('Edit — Qwen-Edit', QWEN_EDIT_IMAGE_MODEL);
+    });
   };
 
   const applyKlein = () => {
-    if ((settings.sparkLanHost || '').trim()) patch(sparkImageSettingsPatch(settings, KLEIN_IMAGE_MODEL));
-    else patch({ imageModel: KLEIN_IMAGE_MODEL });
+    selectPathOrToast(KLEIN_IMAGE_MODEL, 'Klein', () => {
+      applyImageModel(KLEIN_IMAGE_MODEL);
+      toast.info('Klein 9B', KLEIN_IMAGE_MODEL);
+    });
+  };
+
+  const applyAnime = () => {
+    const animeOk = modelAvailable(ANIME_IMAGE_MODEL) || modelAvailable(PONY_IMAGE_MODEL);
+    if (!animeOk) {
+      toast.info('Anime unavailable', 'Zoo weights not on Spark — chip disabled until pull');
+      return;
+    }
+    applyImageModel(modelAvailable(ANIME_IMAGE_MODEL) ? ANIME_IMAGE_MODEL : PONY_IMAGE_MODEL);
+    toast.info('Anime — Illustrious WAI-NSFW', `${ANIME_IMAGE_MODEL} (Pony: ${PONY_IMAGE_MODEL})`);
+    window.setTimeout(() => modelSelectRef.current?.focus(), 50);
   };
 
   const applySparkLan = () => {
-    const p = sparkImageSettingsPatch(settings, UNCENSORED_IMAGE_MODEL);
+    const p = {
+      ...sparkImageSettingsPatch(settings, UNCENSORED_IMAGE_MODEL),
+      ...sparkChatSettingsPatch(settings),
+    };
     patch(p);
-    toast.success('Spark LAN image settings applied', sparkLanHost(settings));
+    toast.success('Spark LAN image + Qwen chat', sparkLanHost(settings));
     window.setTimeout(() => void softHealthCheck({ ...settings, ...p }), 50);
+  };
+
+  const applySparkQwen = () => {
+    const p = sparkChatSettingsPatch(settings);
+    patch(p);
+    toast.success('Chat → Spark Qwen', `${p.sparkBaseUrl} · ${SPARK_CHAT_MODEL}`);
   };
 
   const copySparkInstall = async () => {
@@ -598,6 +763,34 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
     } catch {
       toast.error('Clipboard failed', cmd);
     }
+  };
+
+  const copyStartCommand = async () => {
+    const cmd = sparkTunnelStartHint(settings.sparkSshAlias);
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopiedInstall(true);
+      toast.success('Copied start command', sparkStartCommand());
+      window.setTimeout(() => setCopiedInstall(false), 2000);
+    } catch {
+      toast.error('Clipboard failed', cmd);
+    }
+  };
+
+  const startTunnelAction = async () => {
+    const cmd = sparkPushCommand(settings.sparkSshAlias);
+    try {
+      await navigator.clipboard.writeText(cmd);
+      toast.success('Start tunnel', 'Copied Sync/push command — or open Abliterated Images in NVIDIA Sync');
+    } catch {
+      toast.info('Start tunnel', 'NVIDIA Sync → Custom app Abliterated Images (port 7860)');
+    }
+  };
+
+  const openEndpointSection = () => {
+    setEndpointUserToggled(true);
+    setEndpointOpen(true);
+    toast.info('Endpoint', 'URL / token / via-proxy below');
   };
 
   const revealOnDisk = async (entry: StoredImageMeta) => {
@@ -743,7 +936,26 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
       </button>
     ) : null;
 
-  const endpointSummary = `${settings.imageModel || '—'} · ${hostFromBaseUrl(settings.imageBaseUrl)} · ${
+  const resolvedImageModel = resolveSparkImageModel(settings.imageModel);
+  const isQualityPath = resolvedImageModel === UNCENSORED_IMAGE_MODEL;
+  const isEditPath = resolvedImageModel === QWEN_EDIT_IMAGE_MODEL;
+  const isStubPath =
+    resolvedImageModel === DRAFT_IMAGE_MODEL ||
+    resolvedImageModel === FAST_IMAGE_MODEL ||
+    resolvedImageModel === QWEN_IMAGE_MODEL ||
+    resolvedImageModel === QWEN_EDIT_IMAGE_MODEL ||
+    resolvedImageModel === KLEIN_IMAGE_MODEL ||
+    resolvedImageModel === ANIME_IMAGE_MODEL ||
+    resolvedImageModel === PONY_IMAGE_MODEL;
+  const activeModelLabel =
+    IMAGE_MODEL_OPTIONS.find((m) => m.id === resolvedImageModel)?.label ||
+    settings.imageModel ||
+    resolvedImageModel;
+  const proxyOnUpstreamDown =
+    settings.imageViaProxy === true && testOk === false && !healthChecking;
+  const bridgeOffline = settings.imageGenEnabled && testOk === false && !healthChecking;
+
+    const endpointSummary = `${settings.imageModel || '—'} · ${hostFromBaseUrl(settings.imageBaseUrl)} · ${
     healthChecking ? 'checking' : testOk === true ? 'ok' : testOk === false ? 'unreachable' : '—'
   }`;
   if (!settings.imageGenEnabled) {
@@ -760,8 +972,8 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
           <div className="section-card-title text-amber-300">Image generation disabled</div>
           <p className="section-card-hint mt-2">
             Pair the IDE with Spark image gen: quality{' '}
-            <code className="text-zinc-400">{UNCENSORED_IMAGE_MODEL}</code> (Krea 2 RAW FP8 Build D) or draft{" "}
-            <code className="text-zinc-400">{DRAFT_IMAGE_MODEL}</code> (Z-Image). Cloud chat has vision <em>input</em>{" "}
+            <code className="text-zinc-400">{UNCENSORED_IMAGE_MODEL}</code> (Krea 2 RAW FP8 Build D — 24/3.5/LoRA 0.75) or draft{" "}
+            <code className="text-zinc-400">{DRAFT_IMAGE_MODEL}</code> (Z-Image Turbo NSFW sketches). Cloud chat has vision <em>input</em>{" "}
             only — no hosted <code className="text-zinc-400">/v1/images/generations</code>.
           </p>
           <div className="section-card-body">
@@ -792,23 +1004,147 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         </p>
       </header>
 
-      <div className="mb-3 flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 font-mono text-[10px] uppercase text-muted">Spark</span>
-        <button type="button" className={chipOn(settings.imageModel === UNCENSORED_IMAGE_MODEL)} onClick={applyQuality} title={UNCENSORED_IMAGE_MODEL}>
+      {bridgeOffline ? (
+        <div className="mb-3 max-w-3xl rounded border border-amber-700/50 bg-amber-950/30 px-3 py-2.5">
+          <div className="font-mono text-[12px] font-medium text-amber-200">Spark image bridge offline</div>
+          <p className="mt-1 font-mono text-[10px] leading-4 text-zinc-400">
+            Nothing answering on the image endpoint. Start the Sync tunnel, point at Spark LAN, or open Endpoint settings.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <button type="button" className="btn-primary h-7 px-2 text-[10px]" onClick={() => void startTunnelAction()}>
+              Start tunnel
+            </button>
+            <button type="button" className="btn-ghost h-7 px-2 text-[10px]" onClick={applySparkLan}>
+              Use LAN
+            </button>
+            <button type="button" className="btn-ghost h-7 px-2 text-[10px]" onClick={openEndpointSection}>
+              Open Endpoint
+            </button>
+            <button type="button" className="btn-ghost h-7 px-2 text-[10px]" onClick={() => void copyStartCommand()}>
+              <Copy size={10} /> {copiedInstall ? 'Copied!' : 'Copy start command'}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {proxyOnUpstreamDown ? (
+        <p className="mb-2 max-w-3xl font-mono text-[10px] text-amber-300/90">
+          Via proxy is on but the upstream is down — turn Via proxy off (Endpoint) or start the bridge; Electron prefers raw :7860.
+        </p>
+      ) : null}
+
+      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 font-mono text-[10px] uppercase text-muted">Models</span>
+        <button type="button" className={chipOn(resolvedImageModel === UNCENSORED_IMAGE_MODEL)} onClick={applyQuality} title={UNCENSORED_IMAGE_MODEL}>
           Quality
         </button>
-        <button type="button" className={chipOn(settings.imageModel === DRAFT_IMAGE_MODEL)} onClick={applyDraft} title={DRAFT_IMAGE_MODEL}>
+        <button type="button" className={chipOn(resolvedImageModel === FAST_IMAGE_MODEL, { muted: !modelAvailable(FAST_IMAGE_MODEL) })} onClick={applyFast} title={modelAvailable(FAST_IMAGE_MODEL) ? FAST_IMAGE_MODEL : `${FAST_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(FAST_IMAGE_MODEL)}>
+          Fast
+        </button>
+        <button type="button" className={chipOn(resolvedImageModel === DRAFT_IMAGE_MODEL, { muted: !modelAvailable(DRAFT_IMAGE_MODEL) })} onClick={applyDraft} title={modelAvailable(DRAFT_IMAGE_MODEL) ? DRAFT_IMAGE_MODEL : `${DRAFT_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(DRAFT_IMAGE_MODEL)}>
           Draft
         </button>
+        <button type="button" className={chipOn(resolvedImageModel === QWEN_IMAGE_MODEL, { muted: !modelAvailable(QWEN_IMAGE_MODEL) })} onClick={applyInstruction} title={modelAvailable(QWEN_IMAGE_MODEL) ? QWEN_IMAGE_MODEL : `${QWEN_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(QWEN_IMAGE_MODEL)}>
+          Instruction
+        </button>
+        <button type="button" className={chipOn(resolvedImageModel === QWEN_EDIT_IMAGE_MODEL, { muted: !modelAvailable(QWEN_EDIT_IMAGE_MODEL) })} onClick={applyEdit} title={modelAvailable(QWEN_EDIT_IMAGE_MODEL) ? QWEN_EDIT_IMAGE_MODEL : `${QWEN_EDIT_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(QWEN_EDIT_IMAGE_MODEL)}>
+          Edit
+        </button>
+        <button type="button" className={chipOn(resolvedImageModel === KLEIN_IMAGE_MODEL, { muted: !modelAvailable(KLEIN_IMAGE_MODEL) })} onClick={applyKlein} title={modelAvailable(KLEIN_IMAGE_MODEL) ? KLEIN_IMAGE_MODEL : `${KLEIN_IMAGE_MODEL} (gated / weights missing)`} aria-disabled={!modelAvailable(KLEIN_IMAGE_MODEL)}>
+          Klein
+        </button>
+        <button
+          type="button"
+          className={chipOn(resolvedImageModel === ANIME_IMAGE_MODEL || resolvedImageModel === PONY_IMAGE_MODEL, { muted: !(modelAvailable(ANIME_IMAGE_MODEL) || modelAvailable(PONY_IMAGE_MODEL)) })}
+          onClick={applyAnime}
+          title={(modelAvailable(ANIME_IMAGE_MODEL) || modelAvailable(PONY_IMAGE_MODEL)) ? `${ANIME_IMAGE_MODEL} / ${PONY_IMAGE_MODEL}` : 'Anime zoo weights missing'}
+          aria-disabled={!(modelAvailable(ANIME_IMAGE_MODEL) || modelAvailable(PONY_IMAGE_MODEL))}
+        >
+          Anime
+        </button>
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 font-mono text-[10px] uppercase text-muted">Connection</span>
         <button type="button" className="chip hover:border-sky-500/40 hover:text-sky-200" onClick={applySparkLan}>
           Use Spark LAN
         </button>
-        <button type="button" className="chip hover:border-sky-500/40 hover:text-sky-200" onClick={openComfy}>
-          Open ComfyUI
+        <button
+          type="button"
+          className={chipOn(settings.inferenceProvider === 'dgx-spark' && settings.sparkModel === SPARK_CHAT_MODEL)}
+          onClick={applySparkQwen}
+          title={SPARK_CHAT_MODEL}
+        >
+          Qwen chat
+        </button>
+        <button type="button" className="chip hover:border-sky-500/40 hover:text-sky-200" onClick={openBridge}>
+          Open bridge
         </button>
         <button type="button" disabled={busy} className="chip hover:border-sky-500/40 hover:text-sky-200" onClick={() => void testEndpoint()}>
           Test
         </button>
+        {bridgeOffline ? (
+          <>
+            <button type="button" className="chip hover:border-amber-500/40 hover:text-amber-200" onClick={() => void startTunnelAction()}>
+              Start tunnel
+            </button>
+            <button type="button" className="chip hover:border-amber-500/40 hover:text-amber-200" onClick={() => void copyStartCommand()}>
+              Copy start
+            </button>
+          </>
+        ) : null}
+      </div>
+
+      <div className="section-card mb-3 max-w-3xl">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-2 text-left"
+          onClick={() => setRecipeOpen((o) => !o)}
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            {recipeOpen ? <ChevronDown size={12} className="shrink-0 text-muted" /> : <ChevronRight size={12} className="shrink-0 text-muted" />}
+            <span className="section-card-title">Recipe</span>
+          </div>
+          {!recipeOpen ? (
+            <span className="truncate font-mono text-[10px] text-zinc-500">
+              {isQualityPath
+                ? `Build D · ${BUILD_D.steps}/${BUILD_D.cfg}/LoRA ${BUILD_D.loraStrength} · :${BUILD_D.imagePort}+:${BUILD_D.textPort}`
+                : `${activeModelLabel}${isStubPath ? ' · stub / secondary' : ''}`}
+            </span>
+          ) : null}
+        </button>
+        {recipeOpen ? (
+          <>
+            <p className="section-card-hint mt-1">
+              Build D: Hero Krea RAW → Huihui TE → Prompt LLM :{BUILD_D.textPort} → Klein / Edit / SeedVR2. No Comfy.
+            </p>
+            {isQualityPath ? (
+              <p className="mt-1 font-mono text-[10px] text-zinc-400">
+                Krea2Pipeline · {BUILD_D.steps} / {BUILD_D.cfg} / euler+beta · LoRA {BUILD_D.loraStrength} · Huihui TE · max {BUILD_D.maxEdgeMin}–{BUILD_D.maxEdgeMax}
+              </p>
+            ) : (
+              <p className="mt-1 font-mono text-[10px] text-zinc-400">
+                Path · {activeModelLabel}{isStubPath ? ' · stub / secondary (not Build D hero)' : ''}
+              </p>
+            )}
+            <div className="section-card-body overflow-x-auto">
+              <table className="w-full font-mono text-[10px] text-zinc-300">
+                <tbody>
+                  <tr><td className="pr-3 text-muted">Build</td><td>D</td></tr>
+                  <tr><td className="pr-3 text-muted">Hero DiT</td><td><code>{BUILD_D.heroDit}</code> (<code>{BUILD_D.heroModelId}</code>)</td></tr>
+                  <tr><td className="pr-3 text-muted">Uncensor LoRA</td><td>strength <strong>{BUILD_D.loraStrength}</strong>, <code>{BUILD_D.uncensorLora}</code></td></tr>
+                  <tr><td className="pr-3 text-muted">TE</td><td>Huihui abliterated Qwen3-VL-4B</td></tr>
+                  <tr><td className="pr-3 text-muted">Sampler</td><td>euler+beta {BUILD_D.steps}/{BUILD_D.cfg}</td></tr>
+                  <tr><td className="pr-3 text-muted">Canvas</td><td>{BUILD_D.maxEdgeMin}–{BUILD_D.maxEdgeMax}; SeedVR2 later</td></tr>
+                  <tr><td className="pr-3 text-muted">Instruction / Edit</td><td><code>{BUILD_D.instructionPath}</code> / <code>{BUILD_D.editPath}</code></td></tr>
+                  <tr><td className="pr-3 text-muted">Second / Draft</td><td><code>{BUILD_D.secondPath}</code> / <code>{BUILD_D.draftPath}</code></td></tr>
+                  <tr><td className="pr-3 text-muted">Runtime</td><td>{BUILD_D.runtime}</td></tr>
+                  <tr><td className="pr-3 text-muted">Ports</td><td>:{BUILD_D.imagePort} image + :{BUILD_D.textPort} text</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : null}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
@@ -816,9 +1152,81 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
           <div className="section-card" ref={generateCardRef}>
             <div className="section-card-title">Generate</div>
             <div className="section-card-body">
+              {isEditPath ? (
+                <div>
+                  <div className="mb-1 font-mono text-[10px] uppercase text-muted">Reference image</div>
+                  <input
+                    ref={refFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => void loadRefFile(e.target.files?.[0])}
+                  />
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    className={cn(
+                      'flex min-h-[7rem] cursor-pointer flex-col items-center justify-center gap-2 rounded border border-dashed px-3 py-3 text-center transition-colors',
+                      refDragOver ? 'border-sky-500/70 bg-sky-950/30' : 'border-border bg-background/40',
+                      refImagePreview ? 'border-emerald-700/50' : '',
+                    )}
+                    onClick={() => refFileInputRef.current?.click()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        refFileInputRef.current?.click();
+                      }
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setRefDragOver(true);
+                    }}
+                    onDragLeave={() => setRefDragOver(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setRefDragOver(false);
+                      void loadRefFile(e.dataTransfer.files?.[0]);
+                    }}
+                  >
+                    {refImagePreview ? (
+                      <div className="flex w-full flex-col items-center gap-2">
+                        <img src={refImagePreview} alt="reference" className="max-h-36 rounded object-contain" />
+                        <div className="flex flex-wrap justify-center gap-1.5">
+                          <button
+                            type="button"
+                            className="chip text-[9px]"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              refFileInputRef.current?.click();
+                            }}
+                          >
+                            <Upload size={10} /> Replace
+                          </button>
+                          <button
+                            type="button"
+                            className="chip text-[9px] text-red-300/90"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              clearRefImage();
+                            }}
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <ImagePlus size={18} className="text-zinc-500" />
+                        <span className="font-mono text-[10px] text-zinc-400">Drop an image or click to choose — required for Edit</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
               <label className="block font-mono text-[10px] uppercase text-muted">
                 <span className="flex items-center justify-between gap-2">
-                  Prompt
+                  {isEditPath ? 'Edit instruction' : 'Prompt'}
                   <button type="button" className="chip text-[9px] normal-case" onClick={() => setHistoryOpen((o) => !o)} title="Prompt history">
                     <History size={10} /> History
                   </button>
@@ -830,7 +1238,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                   onKeyDown={onPromptKeyDown}
                   rows={4}
                   className="field mt-1 resize-y"
-                  placeholder="Describe the image… (↑/↓ history)"
+                  placeholder={isEditPath ? 'Describe the edit… (↑/↓ history)' : 'Describe the image… (↑/↓ history)'}
                 />
                 {historyOpen && promptHistory.length > 0 ? (
                   <div className="mt-1.5 max-h-28 overflow-auto rounded border border-border bg-background p-1">
@@ -846,25 +1254,40 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                     ))}
                   </div>
                 ) : null}
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  {PROMPT_SUGGESTIONS.map((sug, i) => (
-                    <button key={i} type="button" onClick={() => setPrompt(sug)} className="chip text-[9px] hover:border-sky-500/40 hover:text-sky-200">
-                      {sug}
-                    </button>
-                  ))}
-                </div>
+                {!isEditPath ? (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {PROMPT_SUGGESTIONS.map((sug, i) => (
+                      <button key={i} type="button" onClick={() => setPrompt(sug)} className="chip text-[9px] hover:border-sky-500/40 hover:text-sky-200">
+                        {sug}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </label>
 
-              <div>
-                <div className="mb-1 font-mono text-[10px] uppercase text-muted">Size</div>
-                <div className="flex flex-wrap gap-1">
-                  {SIZES.map((s) => (
-                    <button key={s.id} type="button" className={chipOn(size === s.id)} aria-pressed={size === s.id} onClick={() => setSize(s.id)}>
-                      {s.label}
-                    </button>
-                  ))}
+              {!isEditPath ? (
+                <div>
+                  <div className="mb-1 font-mono text-[10px] uppercase text-muted">Size</div>
+                  <div className="flex flex-wrap gap-1">
+                    {SIZES.map((s) => (
+                      <button key={s.id} type="button" className={chipOn(size === s.id)} aria-pressed={size === s.id} onClick={() => setSize(s.id)}>
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div>
+                  <div className="mb-1 font-mono text-[10px] uppercase text-muted">Output size</div>
+                  <div className="flex flex-wrap gap-1">
+                    {SIZES.map((s) => (
+                      <button key={s.id} type="button" className={chipOn(size === s.id)} aria-pressed={size === s.id} onClick={() => setSize(s.id)}>
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div>
                 <div className="mb-1 font-mono text-[10px] uppercase text-muted">Batch</div>
@@ -879,7 +1302,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
 
               <label className="block font-mono text-[10px] uppercase text-muted">
                 Model
-                <select value={modelSelectValue} onChange={(e) => { const v = e.target.value; if (v === MODEL_CUSTOM) { if (knownModelIds.includes(settings.imageModel)) patch({ imageModel: '' }); return; } patch({ imageModel: v }); }} className="field mt-1">
+                <select ref={modelSelectRef} value={modelSelectValue} onChange={(e) => { const v = e.target.value; if (v === MODEL_CUSTOM) { if (knownModelIds.includes(settings.imageModel)) patch({ imageModel: '' }); return; } patch({ imageModel: v }); }} className="field mt-1">
                   {IMAGE_MODEL_OPTIONS.map((m) => (
                     <option key={m.id} value={m.id}>{m.label}</option>
                   ))}
@@ -893,12 +1316,20 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                 </label>
               ) : null}
               <div className="flex flex-wrap items-center gap-2">
-                <button type="button" disabled={busy || !prompt.trim()} onClick={() => void generate()} className="btn-primary">
+                <button
+                  type="button"
+                  disabled={busy || !prompt.trim() || (isEditPath && !refImageB64)}
+                  onClick={() => void generate()}
+                  className="btn-primary"
+                  title={isEditPath && !refImageB64 ? 'Add a reference image first' : undefined}
+                >
                   {busy ? (
                     <span className="inline-flex items-center gap-1.5">
                       <Loader2 size={12} className="spin-slow" /> Generating…
                       {progress != null ? ` ${progressLabel}` : ''}
                     </span>
+                  ) : isEditPath ? (
+                    'Edit'
                   ) : (
                     'Generate'
                   )}
@@ -921,8 +1352,13 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
               ) : null}
               {error ? (
                 <div>
-                  <button type="button" className="status-badge status-badge--err" onClick={() => setErrorOpen((o) => !o)}>Error — {errorOpen ? 'hide' : 'details'}</button>
+                  <button type="button" className="status-badge status-badge--err" onClick={() => setErrorOpen((o) => !o)}>
+                    {isBridgeOfflineError(error) ? 'Bridge offline — details' : `Error — ${errorOpen ? 'hide' : 'details'}`}
+                  </button>
                   {errorOpen ? <pre className="mt-2 whitespace-pre-wrap font-mono text-[11px] text-red-400">{error}</pre> : null}
+                  {isBridgeOfflineError(error) && !errorOpen ? (
+                    <p className="mt-1 font-mono text-[10px] text-zinc-500">See the status card above to reconnect.</p>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -937,9 +1373,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
             </button>
             {endpointOpen ? (
               <>
-                <p className="section-card-hint">
-                  Quality default <code>krea2-raw-fp8</code> (24/CFG3.5/euler-beta); Fast <code>krea2-turbo-nvfp4</code>; draft <code>z-image-turbo-nsfw-nvfp4</code>. Prefer max edge 1536 for RAW. No safety checker.
-                </p>
+                <p className="section-card-hint">Connection only — URL, token, and via-proxy. Sampler / Build D lives under Recipe.</p>
                 <div className="section-card-body">
                   <div className="switch-row">
                     <label className="switch-row-main">
@@ -958,10 +1392,19 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                   <div className="switch-row">
                     <label className="switch-row-main">
                       <span>Via Vite proxy (/image-v1)</span>
-                      <input type="checkbox" checked={settings.imageViaProxy !== false} onChange={(e) => patch({ imageViaProxy: e.target.checked })} />
+                      <input type="checkbox" checked={settings.imageViaProxy === true} onChange={(e) => patch({ imageViaProxy: e.target.checked })} />
                     </label>
-                    <p className="switch-row-help">DEV same-origin rewrite for local image servers.</p>
+                    <p className="switch-row-help">
+                      {isElectronDesktop()
+                        ? 'Electron talks raw :7860 / LAN — leave off unless you know you need the Vite rewrite.'
+                        : 'DEV same-origin rewrite for local image servers.'}
+                    </p>
                   </div>
+                  {proxyOnUpstreamDown ? (
+                    <p className="font-mono text-[10px] text-amber-300/90">
+                      Proxy is on but upstream is down — try turning Via proxy off, or Start tunnel / Use LAN.
+                    </p>
+                  ) : null}
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="truncate font-mono text-[10px] text-zinc-500">POST {imageEndpointUrl(settings, '/images/generations')}</div>
                     {healthPill}

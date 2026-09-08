@@ -125,7 +125,7 @@ export function noteFileApplied(file: string): void {
   recentApply.set(normalizeGrokPath(file), Date.now());
 }
 
-function parseFenceHeader(header: string): { lang: string; path: string } {
+export function parseFenceHeader(header: string): { lang: string; path: string } {
   const raw = header.trim();
   if (!raw) return { lang: '', path: '' };
   const colon = raw.match(/^([\w.+-]+)\s*:\s*(.+)$/);
@@ -191,7 +191,7 @@ function lineBeforeFence(text: string, index: number): string {
   return m ? m[1].trim() : '';
 }
 
-function commentPathFromBody(code: string): { path: string; body: string } {
+export function commentPathFromBody(code: string): { path: string; body: string } {
   const lines = code.split('\n');
   const first = lines[0] ?? '';
   const slash = first.match(SLASH_PATH_RE);
@@ -205,6 +205,32 @@ function commentPathFromBody(code: string): { path: string; body: string } {
     return { path: hinted, body: lines.slice(1).join('\n') };
   }
   return { path: '', body: code };
+}
+
+
+/** Resolve a whole-file write target from a code fence header + body (no path inference). */
+export function resolveCodeFenceWrite(
+  header: string,
+  code: string,
+): { path: string; body: string; lang: string } | null {
+  const { lang, path: headerPath } = parseFenceHeader(header);
+  if (SHELL_LANGS.has(lang) || DIFF_LANGS.has(lang)) return null;
+  const hinted = commentPathFromBody(code);
+  const filePath = headerPath || hinted.path;
+  if (!filePath || !looksLikeFilePath(filePath)) return null;
+  const body = hinted.path ? hinted.body : code;
+  return { path: normalizeGrokPath(filePath), body, lang };
+}
+
+/** True when content has ``` fences that are not shell-only (used for empty-edit operator hint). */
+export function hasNonShellCodeFences(text: string): boolean {
+  const fenceRe = /```([^\n`]*)\n([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+  while ((match = fenceRe.exec(text)) !== null) {
+    const { lang } = parseFenceHeader(match[1] || '');
+    if (!SHELL_LANGS.has(lang)) return true;
+  }
+  return false;
 }
 
 function filterEscapes(edits: GrokEdit[], root?: string): GrokEdit[] {
@@ -280,8 +306,8 @@ export function parseGrokEdits(text: string, root?: string): GrokEdit[] {
   }
 
   for (const chunk of collectUnfencedDiffs(text, fenceSpans)) {
-    if (!pendingPath) continue;
-    ingestDiff(chunk, pendingPath, patchesByFile);
+    // Named ---/+++ diffs apply even without pendingPath; unlabeled filtered in ingestDiff/parseUnifiedDiff.
+    ingestDiff(chunk, pendingPath || '', patchesByFile);
   }
 
   const covered = new Set([...patchesByFile.keys()].map(normalizeGrokPath));
@@ -357,11 +383,15 @@ export function formatGrokStatus(
   results: GrokApplyResult[] | undefined,
   autoAccept: boolean,
   connected: boolean,
+  emptyHint?: string,
 ): string {
   const mode = autoAccept ? 'auto-accept on' : 'auto-accept off';
   const bits = [`Grok Bot · ${mode}`];
   if (!connected) bits.push('bridge down');
-  if (!results || results.length === 0) return bits.join(' · ');
+  if (!results || results.length === 0) {
+    if (emptyHint) bits.push(emptyHint);
+    return bits.join(' · ');
+  }
   const applied = results.filter((r) => r.status === 'ok').map((r) => r.file);
   const pending = results.filter((r) => r.status === 'pending');
   const errors = results.filter((r) => r.status === 'error');

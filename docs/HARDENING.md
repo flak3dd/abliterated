@@ -24,3 +24,18 @@ Short list of harden / optimize changes applied on this pass:
 
 ## Preload
 - Unchanged minimal `ablitDesktop` bridge (contextIsolation + sandbox).
+
+## Security harden pass (2026-09-07 / 2026-09-08)
+
+- **Electron (`da24d5a`):** webSecurity, will-navigate allowlist, loopback-only http openExternal; DEV-only ABLIT-ADMIN / ABLIT-DEV-UNLOCK / local admin login.
+- **Packaging:** exclude .env from spark extraResources; gitignore *.pem / *.key.
+- **web_fetch:** block private/loopback/link-local/CGNAT/metadata hosts and URL credentials; manual redirects with same checks (src/lib/urlSafety.ts).
+- **Bridge WS:** bind 127.0.0.1 only; verifyClient rejects non-loopback Origin headers.
+- **Tests:** test:url-safety, test:license-harden.
+
+### Still open (release checklist)
+1. Rebuild + notarize Mac app from da24d5a+.
+2. Online license verify (HMAC / site API).
+3. Prefer Electron safeStorage for API tokens vs localStorage.
+4. Site dep upgrades without --force.
+

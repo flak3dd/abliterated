@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Start ComfyUI (:8188) then the uncensored OpenAI image bridge (:7860).
+# Start the Diffusers Krea 2 RAW OpenAI image bridge (:7860).
+# Optional --with-text also starts Qwen vLLM on :8000.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
@@ -12,7 +13,7 @@ for arg in "$@"; do
   esac
 done
 
-chmod +x "$IMAGE_DIR/serve-comfy.sh" "$IMAGE_DIR/serve-spark.sh" 2>/dev/null || true
+chmod +x "$IMAGE_DIR/serve-spark.sh" 2>/dev/null || true
 mkdir -p "$IMAGE_DIR/logs"
 
 if [[ -f "$IMAGE_DIR/.env" ]]; then
@@ -23,14 +24,16 @@ if [[ -f "$IMAGE_DIR/.env" ]]; then
 fi
 
 export ABLITERATED_SPARK_IMAGE="$IMAGE_DIR"
-export COMFY_URL="${COMFY_URL:-http://127.0.0.1:8188}"
 export FLUX_MODEL_ID="${FLUX_MODEL_ID:-krea2-raw-fp8}"
-export COMFY_STEPS="${COMFY_STEPS:-24}"
-export COMFY_CFG="${COMFY_CFG:-3.5}"
-export COMFY_SAMPLER="${COMFY_SAMPLER:-euler}"
-export COMFY_SCHEDULER="${COMFY_SCHEDULER:-beta}"
-export COMFY_LORA_STRENGTH="${COMFY_LORA_STRENGTH:-0.75}"
-export COMFY_WORKFLOW="${COMFY_WORKFLOW:-$IMAGE_DIR/workflows/txt2img-krea2-raw-fp8.json}"
+export SAMPLER_BACKEND="${SAMPLER_BACKEND:-diffusers}"
+export ABLITERATED_IMAGE_HOST="${ABLITERATED_IMAGE_HOST:-127.0.0.1}"
+export ABLITERATED_IMAGE_PORT="${ABLITERATED_IMAGE_PORT:-7860}"
+export SAMPLER_STEPS="${SAMPLER_STEPS:-24}"
+export SAMPLER_GUIDANCE="${SAMPLER_GUIDANCE:-3.5}"
+export SAMPLER_SAMPLER="${SAMPLER_SAMPLER:-euler}"
+export SAMPLER_SCHEDULER="${SAMPLER_SCHEDULER:-beta}"
+export SAMPLER_LORA_STRENGTH="${SAMPLER_LORA_STRENGTH:-0.75}"
+export SAMPLER_MAX_EDGE="${SAMPLER_MAX_EDGE:-1536}"
 
 wait_http() {
   local url="$1" n="${2:-60}"
@@ -45,21 +48,8 @@ wait_http() {
   return 1
 }
 
-if ! curl -fsS -m 2 http://127.0.0.1:8188/ >/dev/null 2>&1; then
-  echo "Starting ComfyUI on :8188"
-  nohup "$IMAGE_DIR/serve-comfy.sh" >>"$IMAGE_DIR/logs/comfy.log" 2>&1 &
-  echo $! >"$IMAGE_DIR/logs/comfy.pid"
-else
-  echo "ComfyUI already answering on :8188"
-fi
-
-if ! wait_http "http://127.0.0.1:8188/" 90; then
-  echo "ComfyUI did not become ready — check $IMAGE_DIR/logs/comfy.log" >&2
-  echo "Image bridge will start; quality path needs Comfy (set ABLITERATED_IMAGE_ALLOW_KLEIN_FALLBACK=1 for optional Klein)." >&2
-fi
-
 if ! curl -fsS -m 2 http://127.0.0.1:7860/health >/dev/null 2>&1; then
-  echo "Starting OpenAI image bridge on :7860 (krea2-raw-fp8 quality + turbo fast + z-image draft)"
+  echo "Starting OpenAI image bridge on :7860 (krea2-raw-fp8 Diffusers)"
   nohup "$IMAGE_DIR/serve-spark.sh" >>"$IMAGE_DIR/logs/bridge.log" 2>&1 &
   echo $! >"$IMAGE_DIR/logs/bridge.pid"
 else
@@ -75,14 +65,18 @@ echo
 
 if [[ "$WITH_TEXT" -eq 1 ]]; then
   if [[ -x "$TEXT_DIR/serve-qwen-abliterated.sh" ]]; then
-    echo "Starting Qwen abliterated vLLM"
-    nohup "$TEXT_DIR/serve-qwen-abliterated.sh" >>"$IMAGE_DIR/logs/vllm.log" 2>&1 &
-    echo $! >"$IMAGE_DIR/logs/vllm.pid"
+    echo "Starting Qwen abliterated vLLM on :8000"
+    mkdir -p "$IMAGE_DIR/logs"
+    if ! "$TEXT_DIR/serve-qwen-abliterated.sh" >>"$IMAGE_DIR/logs/vllm.log" 2>&1; then
+      echo "Qwen vLLM did not start — check $IMAGE_DIR/logs/vllm.log and spark/.env HF_TOKEN for gated pulls." >&2
+    fi
   else
     echo "No $TEXT_DIR/serve-qwen-abliterated.sh — skip text" >&2
   fi
 fi
 
 echo "Spark image stack up."
-echo "  ComfyUI:  http://0.0.0.0:8188"
-echo "  Images:   http://0.0.0.0:7860/v1  quality=krea2-raw-fp8  fast=krea2-turbo-nvfp4  draft=z-image-turbo-nsfw-nvfp4"
+echo "  Images:   http://127.0.0.1:7860/v1  quality=krea2-raw-fp8 (Diffusers)"
+if [[ "$WITH_TEXT" -eq 1 ]]; then
+  echo "  Text:     http://127.0.0.1:8000/v1  model=qwen-abliterated"
+fi

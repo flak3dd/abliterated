@@ -396,12 +396,12 @@ export function needsBuildProtocol(userText: string): boolean {
 /** Short reminder; full Work rules live in SYSTEM_PROMPT. */
 export const BUILD_PROCESS_SECTION =
   '## Build mode — LOCKED (implementation run)\n' +
-  'This turn MUST follow this order in CONTENT (reasoning never executes):\n' +
-  '1. If Thought is on: Goal / Inspect / step # — why — success in the reasoning channel. No code there.\n' +
+  'Abliterated Loop this turn: classify → gather → act → verify → ship → stop (CONTENT executes; reasoning never does).\n' +
+  '1. Classify job ticket + A–G; if Thought is on: Goal / Inspect / step # — why — success in reasoning. No code there.\n' +
   '2. Call `todo` with 3–12 items (scaffold first if new files/folders).\n' +
   '3. Explore with list_dir/glob/grep/semantic_search/read_file — do not invent listings.\n' +
   '4. Emit real ```diff or // relative/path fences in CONTENT and `todo` merge=true to tick items.\n' +
-  '5. After a meaningful change, one scoped verify ```bash fence.\n' +
+  '5. After a meaningful change, one scoped verify ```bash fence (verify/ship gate).\n' +
   'A ToDo or essay with no diffs is a FAILED build. Do not stop at the list. Do not spawn other coding CLIs.\n' +
   'HARD LOCK: never write placeholder/stub/"implement here" scripts. Full-length working code only. Write every file into the connected working directory (write_file or path-headed fences). Do not stop until the product works and tests have been run.';
 

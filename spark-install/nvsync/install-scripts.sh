@@ -11,24 +11,24 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 usage() {
-  cat <<'EOF'
+  cat <<'USAGE'
 Usage: install-scripts.sh [--mac] [ssh-alias]
 
-  (default, on Spark)  Copy port-8188.bash / port-7860.bash / port-8000.bash
+  (default, on Spark)  Copy port-7860.bash / port-8000.bash
                        to ~/.config/NVIDIA/Sync/bin/scripts/
   --mac [alias]        Also nvsync script write <alias> <port> from this Mac
-EOF
+USAGE
 }
 
 copy_on_spark() {
   local dest="${XDG_CONFIG_HOME:-$HOME/.config}/NVIDIA/Sync/bin/scripts"
   mkdir -p "$dest"
   chmod +x "$HERE"/port-*.bash
-  cp -f "$HERE/port-8188.bash" "$dest/port-8188.bash"
   cp -f "$HERE/port-7860.bash" "$dest/port-7860.bash"
   cp -f "$HERE/port-8000.bash" "$dest/port-8000.bash"
+  # Remove legacy ComfyUI Sync script if present
+  rm -f "$dest/port-8188.bash"
   echo "Wrote Sync launch scripts:"
-  echo "  $dest/port-8188.bash   Abliterated ComfyUI"
   echo "  $dest/port-7860.bash   Abliterated Images API"
   echo "  $dest/port-8000.bash   Abliterated Qwen (optional)"
 }
@@ -53,8 +53,7 @@ register_mac() {
     echo "Pass the Sync SSH alias: $0 --mac flak3dd" >&2
     return 1
   fi
-  echo "nvsync script write $alias 8188 / 7860 / 8000"
-  "$nvsync" script write "$alias" 8188 <"$HERE/port-8188.bash"
+  echo "nvsync script write $alias 7860 / 8000"
   "$nvsync" script write "$alias" 7860 <"$HERE/port-7860.bash"
   "$nvsync" script write "$alias" 8000 <"$HERE/port-8000.bash" || true
 }

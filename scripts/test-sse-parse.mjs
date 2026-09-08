@@ -145,6 +145,7 @@ assert.equal(toolMsg.tools[0].arguments, '{"path":"a.ts"}');
 assert.equal(toolMsg.result.finishReason, 'tool_calls');
 
 assert.equal(isThinkingFamilyModel('Qwen/Qwen3-32B'), true);
+assert.equal(isThinkingFamilyModel('qwen-abliterated'), true);
 assert.equal(isThinkingFamilyModel('Qwen/Qwen2.5-7B-Instruct'), false);
 assert.deepEqual(thinkingChatTemplateKwargs('Qwen/Qwen3-32B', 'max'), { enable_thinking: true, thinking_budget: 16384 });
 assert.deepEqual(thinkingChatTemplateKwargs('Qwen/Qwen3-32B', 'off'), { enable_thinking: false });

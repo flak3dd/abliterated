@@ -1,62 +1,80 @@
 import type { ClientSettings } from '../types';
 
-/** Quality default: Krea 2 RAW FP8 Build D + uncensor LoRA @ 0.75. */
 export const UNCENSORED_IMAGE_MODEL = 'krea2-raw-fp8';
+export const FAST_IMAGE_MODEL = 'krea2-turbo';
+export const FAST_INT8_IMAGE_MODEL = 'krea2-turbo';
 export const KLEIN_IMAGE_MODEL = 'flux2-klein-9b';
-export const FAST_IMAGE_MODEL = 'krea2-turbo-nvfp4';
-export const FAST_INT8_IMAGE_MODEL = 'krea2-turbo-int8';
-/** High-volume sketch model kept loaded on Spark. */
+export const QWEN_IMAGE_MODEL = 'qwen-image-2512-fp8';
+export const QWEN_EDIT_IMAGE_MODEL = 'qwen-edit-2511-fp8';
 export const DRAFT_IMAGE_MODEL = 'z-image-turbo-nsfw-nvfp4';
+export const ANIME_IMAGE_MODEL = 'illustrious-wai-nsfw';
+export const PONY_IMAGE_MODEL = 'pony-v6';
 
-const DRAFT_ALIASES = new Set([
-  DRAFT_IMAGE_MODEL,
-  'z-image-turbo-nvfp4',
-  'z-image',
-  'zimage',
-  'draft',
-  'sketch',
-]);
 
-const KLEIN_ALIASES = new Set([
-  KLEIN_IMAGE_MODEL,
-  'klein',
-  'klein-9b',
-  'flux2-klein',
-  'flux-klein-9b',
-  'adherence',
-]);
+/** Canonical Build D contract. Priority: Krea > Huihui TE > :8000 LLM > Klein/Edit/SeedVR2. */
+export const BUILD_D = {
+  build: "D" as const,
+  heroDit: "krea2_raw_fp8_scaled.safetensors",
+  heroModelId: UNCENSORED_IMAGE_MODEL,
+  pipelineClass: "Krea2Pipeline",
+  repo: "krea/Krea-2-Raw",
+  uncensorLora: "krea2_uncensor.safetensors",
+  loraStrength: 0.75,
+  loraRange: [0.7, 1.0] as const,
+  textEncoder: "Huihui-Qwen3-VL-4B-Instruct-abliterated-fp8_scaled.safetensors",
+  textEncoderAlt: "Heretic Qwen3-VL-4B (KREA_TEXT_ENCODER_REPO)",
+  textEncoderNote: "Load-time REPLACE stock Qwen3-VL-4B. TE alone != unlock; DiT + LoRA 0.75. Image TE != Prompt LLM :8000.",
+  sampler: "euler",
+  scheduler: "beta",
+  steps: 24,
+  cfg: 3.5,
+  maxEdgeMin: 1328,
+  maxEdgeMax: 1536,
+  upscaleLater: "seedvr2-7b-fp8",
+  secondPath: KLEIN_IMAGE_MODEL,
+  instructionPath: QWEN_IMAGE_MODEL,
+  editPath: QWEN_EDIT_IMAGE_MODEL,
+  draftPath: DRAFT_IMAGE_MODEL,
+  animeZoo: [ANIME_IMAGE_MODEL, PONY_IMAGE_MODEL] as const,
+  runtime: "aarch64 / CUDA 13 / sm_121 / highvram-equivalent (unified 128 GB)",
+  imagePort: 7860,
+  textPort: 8000,
+  promptLlm: "qwen-abliterated (THe-Plague Qwen3.6-35B-A3B NVFP4-MTP; alts Huihui/OrcaRouter 27B/35B-A3B)",
+} as const;
 
-const FAST_ALIASES = new Set([
-  FAST_IMAGE_MODEL,
-  FAST_INT8_IMAGE_MODEL,
-  'fast',
-  'turbo',
-  'nvfp4',
-  'int8',
-  'krea2-turbo',
-  'krea-2-turbo',
-]);
+export const SPARK_IMAGE_MODELS = [
+  { id: UNCENSORED_IMAGE_MODEL, label: "Quality — Krea 2 RAW + LoRA 0.75 (Build D hero)" },
+  { id: FAST_IMAGE_MODEL, label: "Fast — Krea 2 Turbo (demoted)" },
+  { id: DRAFT_IMAGE_MODEL, label: "Draft — Z-Image Turbo NSFW (sketches)" },
+  { id: QWEN_IMAGE_MODEL, label: "Instruction — Qwen-Image 2512 FP8" },
+  { id: QWEN_EDIT_IMAGE_MODEL, label: "Edit — Qwen-Edit 2511 FP8" },
+  { id: KLEIN_IMAGE_MODEL, label: "Klein 9B base + NSFW-unlock (after hero)" },
+  { id: ANIME_IMAGE_MODEL, label: "Anime/Adult — Illustrious WAI-NSFW (zoo)" },
+  { id: PONY_IMAGE_MODEL, label: "Anime/Adult — Pony V6 (zoo)" },
+] as const;
 
-const QUALITY_ALIASES = new Set([
-  UNCENSORED_IMAGE_MODEL,
-  'quality',
-  'krea2',
-  'krea2-raw',
-  'raw',
-  'hero',
-  'abliterated-flux-klein',
-  'comfy-dreamshaper',
-  'comfy-abliterated-flux',
-]);
+const DRAFT_ALIASES = new Set([DRAFT_IMAGE_MODEL, 'z-image-turbo-6b', 'draft', 'sketch', 'z-image']);
+const KLEIN_ALIASES = new Set([KLEIN_IMAGE_MODEL, 'klein-9b', 'flux-klein-9b', 'adherence', 'klein']);
+const FAST_ALIASES = new Set([FAST_IMAGE_MODEL, 'fast', 'turbo', 'nvfp4', 'krea2-turbo-nvfp4']);
+const QUALITY_ALIASES = new Set([UNCENSORED_IMAGE_MODEL, 'quality', 'hero', 'krea2', 'krea2-raw', 'krea', 'raw']);
+const INSTRUCTION_ALIASES = new Set([QWEN_IMAGE_MODEL, 'qwen-image', 'instruction', 'type']);
+const EDIT_ALIASES = new Set([QWEN_EDIT_IMAGE_MODEL, 'qwen-edit', 'edit']);
+
+export function migrateSparkImageModel(stored?: string | null): string {
+  const raw = (stored || '').trim();
+  if (!raw || raw === 'flux2-klein-9b' || raw === 'flux2-klein-4b' || raw === 'krea2-turbo-nvfp4' || raw === 'krea2-turbo-int8' || raw === 'comfy-dreamshaper' || raw === 'quality' || raw === 'hero') {
+    return UNCENSORED_IMAGE_MODEL;
+  }
+  return resolveSparkImageModel(raw);
+}
 
 export function resolveSparkImageModel(requested?: string): string {
   const name = (requested || '').trim().toLowerCase();
   if (DRAFT_ALIASES.has(name)) return DRAFT_IMAGE_MODEL;
   if (KLEIN_ALIASES.has(name)) return KLEIN_IMAGE_MODEL;
-  if (FAST_ALIASES.has(name)) {
-    if (name === FAST_INT8_IMAGE_MODEL || name === 'int8') return FAST_INT8_IMAGE_MODEL;
-    return FAST_IMAGE_MODEL;
-  }
+  if (FAST_ALIASES.has(name)) return FAST_IMAGE_MODEL;
+  if (INSTRUCTION_ALIASES.has(name)) return QWEN_IMAGE_MODEL;
+  if (EDIT_ALIASES.has(name)) return QWEN_EDIT_IMAGE_MODEL;
   if (!name || QUALITY_ALIASES.has(name)) return UNCENSORED_IMAGE_MODEL;
   return name;
 }
@@ -65,7 +83,6 @@ export function sparkLanHost(settings: Pick<ClientSettings, 'sparkLanHost'>): st
   const h = (settings.sparkLanHost || '').trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
   return h || '127.0.0.1';
 }
-
 export function sparkLanIsLoopback(settings: Pick<ClientSettings, 'sparkLanHost'>): boolean {
   const h = sparkLanHost(settings);
   return h === '127.0.0.1' || h === 'localhost' || h === '::1';
@@ -79,64 +96,52 @@ export function sparkChatUrl(settings: Pick<ClientSettings, 'sparkLanHost'>): st
   return `http://${sparkLanHost(settings)}:8000/v1`;
 }
 
-export function sparkComfyUrl(settings: Pick<ClientSettings, 'sparkLanHost'>): string {
-  return `http://${sparkLanHost(settings)}:8188`;
+export const SPARK_CHAT_MODEL = 'qwen-abliterated';
+
+export function sparkChatSettingsPatch(settings: Pick<ClientSettings, 'sparkLanHost'>): Partial<ClientSettings> {
+  const loopback = sparkLanIsLoopback(settings);
+  return { inferenceProvider: 'dgx-spark', sparkEnabled: true, remoteHostEnabled: true, sparkModel: SPARK_CHAT_MODEL, sparkBaseUrl: sparkChatUrl(settings), sparkViaProxy: loopback };
+}
+
+export function sparkQwenPushCommand(alias: string): string {
+  return `bash spark-install/push.sh ${(alias || '').trim() || 'YOUR_SYNC_ALIAS'} --start --with-text`;
 }
 
 export function sparkPushCommand(alias: string): string {
-  const a = (alias || '').trim() || 'YOUR_SYNC_ALIAS';
-  return `bash spark-install/push.sh ${a} --start`;
+  return `bash spark-install/push.sh ${(alias || '').trim() || 'YOUR_SYNC_ALIAS'} --start`;
 }
 
-export function sparkImageSettingsPatch(
-  settings: Pick<ClientSettings, 'sparkLanHost'>,
-  model: string = UNCENSORED_IMAGE_MODEL,
-): Partial<ClientSettings> {
+export function sparkImageSettingsPatch(settings: Pick<ClientSettings, 'sparkLanHost'>, model: string = UNCENSORED_IMAGE_MODEL): Partial<ClientSettings> {
   const loopback = sparkLanIsLoopback(settings);
+  const isElectron =
+    typeof window !== 'undefined' && !!(window as Window & { ablitDesktop?: unknown }).ablitDesktop;
+  // Electron talks raw :7860 / LAN; Vite proxy only helps browser DEV against loopback.
   return {
     imageGenEnabled: true,
     imageBaseUrl: sparkImageUrl(settings),
     imageModel: resolveSparkImageModel(model),
-    imageViaProxy: loopback,
+    imageViaProxy: isElectron ? false : loopback,
   };
 }
 
-export const IMAGE_MODEL_OPTIONS = [
-  { id: UNCENSORED_IMAGE_MODEL, label: 'Quality - Krea 2 RAW FP8 (Build D)' },
-  { id: KLEIN_IMAGE_MODEL, label: 'Klein - FLUX.2 Klein 9B (adherence)' },
-  { id: FAST_IMAGE_MODEL, label: 'Fast - Krea 2 Turbo NVFP4' },
-  { id: DRAFT_IMAGE_MODEL, label: 'Draft - Z-Image Turbo NVFP4' },
-] as const;
+export const IMAGE_MODEL_OPTIONS = [...SPARK_IMAGE_MODELS, { id: 'seedvr2-7b-fp8', label: 'Upscale — SeedVR2 (after RAW)' }, { id: 'flux2-dev', label: 'Max photoreal - FLUX.2 [dev] (gated)' }] as const;
 
-/** Shown in Images/API empty states when the bridge is down. */
-export function sparkBridgeDownHint(
-  settings?: Pick<ClientSettings, 'sparkLanHost' | 'sparkSshAlias'>,
-): string {
-  const host = settings ? sparkLanHost(settings) : '127.0.0.1';
-  const alias = (settings?.sparkSshAlias || '').trim() || 'YOUR_SYNC_ALIAS';
-  const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
-  if (loopback) {
-    return [
-      'Bridge down on :7860.',
-      'Mock (no GPU): npm run image:mock',
-      'On Spark: cd ~/abliterated-spark/spark-install && ./start.sh && ./status.sh',
-      'From Mac: bash spark-install/push.sh ' + alias + ' --start',
-    ].join(String.fromCharCode(10));
-  }
-  return [
-    'Bridge down at http://' + host + ':7860.',
-    'On Spark: ./status.sh ' + host + '  then  ./start.sh',
-    'From Mac: bash spark-install/push.sh ' + alias + ' --start',
-    'Images: Via proxy OFF when using a LAN Spark IP.',
-  ].join(String.fromCharCode(10));
+export function sparkBridgeDownHint(): string { return 'Bridge down on :7860.'; }
+export function sparkOpsCheatSheet(): { label: string; cmd: string }[] { return [{ label: 'Push + start', cmd: 'bash spark-install/push.sh YOUR_SYNC_ALIAS --start' }]; }
+
+/** Hint for starting the image bridge on Spark (SSH / local install). */
+export function sparkStartCommand(): string {
+  return 'bash ~/abliterated-spark/spark-install/start.sh';
 }
 
-export function sparkOpsCheatSheet(): { label: string; cmd: string }[] {
+/** NVIDIA Sync tunnel + push start recipe for clipboard. */
+export function sparkTunnelStartHint(alias?: string): string {
+  const push = sparkPushCommand(alias || '');
   return [
-    { label: 'Push + start', cmd: 'bash spark-install/push.sh YOUR_SYNC_ALIAS --start' },
-    { label: 'Install', cmd: 'cd ~/abliterated-spark/spark-install && ./install.sh --start' },
-    { label: 'Start', cmd: './start.sh' },
-    { label: 'Status', cmd: './status.sh' },
-    { label: 'Stop', cmd: './stop.sh' },
-  ];
+    '# NVIDIA Sync: Custom app "Abliterated Images" (port 7860) — keeps tunnel alive',
+    '# Or from Mac:',
+    push,
+    '# Or on Spark:',
+    sparkStartCommand(),
+  ].join('\n');
 }

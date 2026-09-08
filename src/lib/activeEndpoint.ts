@@ -1,5 +1,6 @@
 import type { ClientSettings, InferenceProvider } from '../types';
 import { resolveFeatherlessModelId } from './featherlessQwen.js';
+import { sparkChatSettingsPatch } from './sparkInstall';
 
 /** Resolve-time Abliteration cloud fallbacks only — not form defaults (Custom tab stays empty). */
 const ABLITERATION_DEFAULT_BASE_URL =
@@ -146,9 +147,7 @@ export function applyInferenceProvider(
   if (provider === 'dgx-spark') {
     return {
       ...settings,
-      inferenceProvider: provider,
-      sparkEnabled: true,
-      remoteHostEnabled: true,
+      ...sparkChatSettingsPatch(settings),
     };
   }
   if (provider === 'platform') {

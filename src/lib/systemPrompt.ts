@@ -677,10 +677,40 @@ export const PREVIOUS_SYSTEM_PROMPT_V19 = PREVIOUS_SYSTEM_PROMPT_V18.replace(
   DONE_CONTRACT_SECTION + '## Self-review',
 );
 
-export const SYSTEM_PROMPT = PREVIOUS_SYSTEM_PROMPT_V19.replace(
+/** Prior SYSTEM_PROMPT before Abliterated Loop Work section (V20). */
+export const PREVIOUS_SYSTEM_PROMPT_V20 = PREVIOUS_SYSTEM_PROMPT_V19.replace(
   '- MCP as mcp__server__tool when configured. web_search: live web results, then web_fetch chosen URLs. web_fetch: http(s) only. generate_image: only if Images is enabled.',
   '- Skills: matching SKILL.md recipes are auto-injected when they fit the ask — follow them this turn. Call `read_skill` only if a needed body was not injected. Call `suggest_skill` when a reusable process is missing from the catalog; `write_skill` after confirm (Auto-accept may save immediately).\n' +
     '- MCP: matching connected MCP tools are attached as `mcp__server__tool`. Call them instead of faking browser/HTTP/memory results. web_search: live web results, then web_fetch chosen URLs. web_fetch: http(s) only. generate_image: only if Images is enabled.',
+);
+
+/** V20 — Abliterated Loop in Work (docs/process.md). */
+export const SYSTEM_PROMPT = PREVIOUS_SYSTEM_PROMPT_V20.replace(
+  `## Work
+LOCKED: every non-Plan agent response must prove enhancement — a file write (\`write_file\` / diff / \`// path\` fence), a verified command result, or a concrete tool-backed finding. Chatter or ToDo-only without proof is incomplete.
+Trivial one-shot: do it (tiny patch, single read). No formal plan.
+Build / implement / scaffold / large job / Build mode:
+1. Reasoning (if on): goal; inspect; each step as #, why, success. After a tool, one line. Never put code, diffs, bash fences, or // path files in reasoning.
+2. Call \`todo\` with 3–12 items (scaffold first if new files/folders).
+3. Explore with tools, then implement in the same run with real diffs. Tick items via todo merge=true.
+4. After a meaningful change, one scoped verify bash fence.
+5. A todo list with no diffs is a failed build.`,
+  `## Work
+Abliterated Loop (same every turn; branches change) — field manual: docs/process.md.
+classify the job → gather → act → verify → ship → stop.
+1. Classify the job ticket: task / object / deliverable / constraints (ignore noise).
+2. Classify A–G: factual | analysis | how-to | build/edit | process/meta | creative | connected-app.
+3. Tools only if needed. Inspect before inventing. Answers live in content; reasoning is outline only.
+4. Smallest proving artifact — cheap-first: chat → standalone file → host-shaped source → mount → remote push.
+5. Execute writes (full files, host tokens, read-back) → verify (fail → re-execute) → compose reply → stop.
+LOCKED: every non-Plan agent response must prove enhancement — a file write (\`write_file\` / diff / \`// path\` fence), a verified command result, or a concrete tool-backed finding. Chatter or ToDo-only without proof is incomplete.
+Trivial one-shot: do it (tiny patch, single read). Still classify → act → verify → stop; no formal plan.
+Build / implement / scaffold / large job / Build mode:
+1. Reasoning (if on): goal; inspect; each step as #, why, success. After a tool, one line. Never put code, diffs, bash fences, or // path files in reasoning.
+2. Call \`todo\` with 3–12 items (scaffold first if new files/folders).
+3. Explore with tools, then implement in the same run with real diffs. Tick items via todo merge=true.
+4. After a meaningful change, one scoped verify bash fence.
+5. A todo list with no diffs is a failed build.`,
 );
 
 /** Prior SYSTEM_PROMPT before compact Work section (dropped Large jobs / Multi-step duplication). */
@@ -793,4 +823,5 @@ export const LEGACY_PROMPTS = [
   PREVIOUS_SYSTEM_PROMPT_V17,
   PREVIOUS_SYSTEM_PROMPT_V18,
   PREVIOUS_SYSTEM_PROMPT_V19,
+  PREVIOUS_SYSTEM_PROMPT_V20,
 ] as const;

@@ -30,7 +30,9 @@ import { shouldWriteWorkspaceFiles, workspaceGate } from '../lib/workspaceGuard'
 import {
   applyGrokEdits,
   formatGrokStatus,
+  hasNonShellCodeFences,
   isPathInsideRoot,
+  noteFileApplied,
   parseGrokEdits,
   type GrokApplyResult,
 } from '../lib/grokLayer';
@@ -446,6 +448,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
   const [dirConfirmed, setDirConfirmed] = useState(false);
   const [grokById, setGrokById] = useState<Record<string, GrokApplyResult[]>>({});
   const [latestGrok, setLatestGrok] = useState<GrokApplyResult[] | undefined>(undefined);
+  const [grokEmptyHint, setGrokEmptyHint] = useState<string | undefined>(undefined);
   const maxTurns = Math.min(MAX_AGENT_TURNS_CLAMP, clampMaxAgentTurns(settings.maxAgentTurns));
   const effectiveTools = useMemo(
     () => (planMode ? filterPlanModeTools(thread.enabledTools) : thread.enabledTools),
@@ -600,6 +603,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     setHiddenPrefix(Math.max(0, loaded.length - MESSAGE_WINDOW));
     setGrokById({});
     setLatestGrok(undefined);
+    setGrokEmptyHint(undefined);
     setInput('');
     pendingMidRunRef.current = [];
     setQueuedMidRun(0);
@@ -950,6 +954,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     const source = grokSource(msg.content, msg.reasoning, workspaceRoot);
     if (planMode) {
       setLatestGrok([]);
+      setGrokEmptyHint(undefined);
       return;
     }
     const edits = parseGrokEdits(source, workspaceRoot);
@@ -966,6 +971,11 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     });
     setGrokById((prev) => ({ ...prev, [msg.id]: results }));
     setLatestGrok(results);
+    setGrokEmptyHint(
+      results.length === 0 && hasNonShellCodeFences(source)
+        ? 'no path-headed edits — chat only'
+        : undefined,
+    );
   };
 
   const makeToolMessage = (tool: ToolCallPayload, content: string): Message => ({
@@ -1070,6 +1080,49 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       }
     },
     [persist],
+  );
+
+  const runWriteFileClick = useCallback(
+    async (message: Message) => {
+      const tool = message.toolCall;
+      if (!tool || tool.name !== 'write_file') return;
+      if (busyRef.current) return;
+      if (planMode) return;
+      const file = toolArgString(tool.arguments, ['path', 'file', 'target']);
+      const content = toolArgString(tool.arguments, ['content', 'text', 'body']);
+      if (!file) {
+        const msg = 'missing path';
+        persist({ ...message, content: msg, toolCall: { ...tool, status: 'error', result: msg } });
+        return;
+      }
+      if (!isPathInsideRoot(file, workspaceRoot || bridge.currentRoot)) {
+        const msg = 'path escape blocked';
+        persist({ ...message, content: msg, toolCall: { ...tool, status: 'error', result: msg } });
+        return;
+      }
+      if (!bridge.connected) {
+        const msg = 'bridge disconnected';
+        persist({ ...message, content: msg, toolCall: { ...tool, status: 'error', result: msg } });
+        return;
+      }
+      try {
+        const ok = await bridge.writeFile(file, content);
+        if (!ok) {
+          const msg = 'write failed';
+          persist({ ...message, content: msg, toolCall: { ...tool, status: 'error', result: msg } });
+          return;
+        }
+        noteFileApplied(file);
+        const result = 'wrote ' + file + ' (' + content.length + ' chars)';
+        persist({ ...message, content: result, toolCall: { ...tool, status: 'executed', result } });
+        onGitMaybeChangedRef.current?.();
+        await continueAfterToolRef.current?.(message.id);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        persist({ ...message, content: msg, toolCall: { ...tool, status: 'error', result: msg } });
+      }
+    },
+    [persist, planMode, workspaceRoot],
   );
 
   const finishRun = (
@@ -1937,6 +1990,12 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     },
     [runCheckpointRestoreClick],
   );
+  const handleWriteFile = useCallback(
+    (msg: Message) => {
+      void runWriteFileClick(msg);
+    },
+    [runWriteFileClick],
+  );
 
   const handleShellExecuted = useCallback(
     (msg: Message, result: string) => {
@@ -1964,7 +2023,12 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     return formatIdleSubtitle(lastStopReason, 'idle');
   }, [busy, loopTurn, messages, maxTurns, lastStopReason, queuedMidRun, agentPhase, phaseMeta]);
 
-  const grokHeader = formatGrokStatus(latestGrok, autoAcceptEdits, bridgeStatus === 'connected');
+  const grokHeader = formatGrokStatus(
+    latestGrok,
+    autoAcceptEdits,
+    bridgeStatus === 'connected',
+    grokEmptyHint,
+  );
   const workspaceOk = workspaceGate(workspaceRoot, appRoot);
   const needsWorkingDir = !workspaceOk.ok || (messages.length === 0 && !dirConfirmed);
   const modKey = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K';
@@ -2117,6 +2181,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                   onGitCommit={handleGitCommit}
                   onCreatePr={handleCreatePr}
                   onCheckpointRestore={handleCheckpointRestore}
+                  onWriteFile={handleWriteFile}
                   onShellExecuted={handleShellExecuted}
                   completionFooterEnabled={settings.completionFooterEnabled !== false}
                   onContinuePrompt={handleContinuePrompt}

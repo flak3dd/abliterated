@@ -34,7 +34,11 @@ execFileSync(
   { cwd: root, stdio: 'inherit' },
 );
 
-const { parseGrokEdits } = createRequire(import.meta.url)(path.join(outDir, 'lib/grokLayer.js'));
+const {
+  parseGrokEdits,
+  resolveCodeFenceWrite,
+  hasNonShellCodeFences,
+} = createRequire(import.meta.url)(path.join(outDir, 'lib/grokLayer.js'));
 
 const whole = parseGrokEdits('```ts\n// src/hello.ts\nexport const n = 1;\n```', '/Users/me/project');
 assert.equal(whole.length, 1);
@@ -55,6 +59,25 @@ assert.equal(named[0].kind, 'patch');
 
 const escape = parseGrokEdits('```ts /etc/passwd\nroot:x\n```', '/Users/me/project');
 assert.equal(escape.length, 0);
+
+
+const unfencedNamed = parseGrokEdits(
+  'Here is a patch:\n\n--- a/src/unfenced.ts\n+++ b/src/unfenced.ts\n@@ -1 +1 @@\n-old\n+new\n',
+  '/Users/me/project',
+);
+assert.equal(unfencedNamed.length, 1, 'named unfenced ---/+++ diffs must apply without pendingPath');
+assert.equal(unfencedNamed[0].file, 'src/unfenced.ts');
+assert.equal(unfencedNamed[0].kind, 'patch');
+
+const unfencedBare = parseGrokEdits('@@ -1 +1 @@\n-a\n+b\n', '/Users/me/project');
+assert.equal(unfencedBare.length, 0, 'unlabeled unfenced hunk must not invent a path');
+
+const resolved = resolveCodeFenceWrite('ts', '// src/ping.ts\nexport const ping = 1\n');
+assert.equal(resolved?.path, 'src/ping.ts');
+assert.ok(String(resolved?.body).includes('export const ping'));
+assert.equal(resolveCodeFenceWrite('ts', 'export const x = 1\n'), null);
+assert.equal(hasNonShellCodeFences('```ts\nconst x = 1\n```'), true);
+assert.equal(hasNonShellCodeFences('```bash\necho hi\n```'), false);
 
 fs.rmSync(outDir, { recursive: true, force: true });
 console.log('test-grok-edits: ok');

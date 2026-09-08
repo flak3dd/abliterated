@@ -1,58 +1,28 @@
-# Abliterated image builds (A/B/C/D)
+# Abliterated image builds — Build D (canonical priority)
 
-Spark ships **Build D** by default. A/B/C are reference profiles for other hardware — not IDE/Spark defaults.
+**ComfyUI out of scope.** Diffusers OpenAI bridge `:7860`. LLM sidecar `:8000`.
 
-## License notes
+## Greg lock / priority (do not reorder hero to Klein)
 
-| Stack | Typical license | Notes |
-| --- | --- | --- |
-| **Krea 2** (RAW / Turbo) | Krea Community | Comfy-Org weights for local ComfyUI |
-| **FLUX.2 Klein 4B** | Apache-2.0 | Safe for most redistribution |
-| **FLUX.2 Klein 9B / FLUX.2 dev** | Often **non-commercial** | Check BFL terms before commercial use |
-| **Qwen-Image / Qwen-Edit** | Apache-2.0 | Prefer for bilingual / edit paths |
-| **Z-Image Turbo** | Per Comfy-Org / upstream | Draft sketches only |
+1. **Hero** `krea2-raw-fp8` + uncensor LoRA **0.75**, **24 / 3.5 / euler+beta**, max edge **1328–1536**
+2. **TE** Huihui Qwen3-VL-4B (load-time swap on Krea hero; alt Heretic via `KREA_TEXT_ENCODER_REPO`)
+3. **Sidecar** Qwen3.6-35B-A3B abliterated NVFP4/INT4 on `:8000` (`qwen-abliterated`)
+4. **Then** Klein 9B base, Qwen-Edit-2511, SeedVR2
 
-## Build A — reference (consumer 16–24 GB)
-
-Not shipped. Turbo FP8 / NVFP4 at 8 steps CFG 1 for speed on mid cards.
-
-## Build B — reference (48 GB workstation)
-
-Not shipped. Mix of Turbo INT8/FP8 + optional RAW at reduced canvas.
-
-## Build C — reference (cloud / multi-GPU)
-
-Not shipped. Full BF16 RAW + upscalers; ping-pong weights OK.
-
-## Build D — DGX Spark 128 GB (resident) — **SHIPPED DEFAULT**
-
-Keep models resident; no ping-pong. Abliterated IDE + `spark-install` default to this stack.
-
-| Role | Model id | Weights | Sampler |
+| Role | id | Diffusers | Notes |
 | --- | --- | --- | --- |
-| **Hero photo (DEFAULT)** | `krea2-raw-fp8` | `krea2_raw_fp8_scaled.safetensors` + uncensor LoRA @ **0.75** (+ optional nudes LoRA 0.7–1.0) | **24 steps**, **CFG 3.5**, **euler + beta** |
-| **Second / adherence** | `flux2-klein-9b` | Klein **9B base** (not 4-step distilled, not 4B) + NSFW UNLOCKED LoRA @ 0.5–0.9 | ~28 steps, CFG ~3.5, euler/beta (**stub** until HF path confirmed) |
-| **Type / bilingual** | `qwen-image-2512-fp8` | Qwen-Image 2512 FP8 | **stub** — see `models.json` TODO URLs |
-| **Edit** | `qwen-edit-2511-fp8` | Qwen-Edit 2511 FP8 + NSFW LoRA | **stub** |
-| **Upscale** | `seedvr2-7b-fp8` | SeedVR2 7B FP8 tiled | Document only — do **not** sample RAW at 4K |
-| **Anime** | `illustrious-wai-nsfw` | Illustrious WAI-NSFW or Pony | Optional slot |
-| **Fast / Turbo** | `krea2-turbo-nvfp4` / `krea2-turbo-int8` | Turbo quants | 8 steps, CFG 1, euler/simple (**demoted**) |
-| **Draft** | `z-image-turbo-nsfw-nvfp4` | Z-Image Turbo NVFP4 | Sketches only |
-| **TE** | (shared) | Huihui abliterated Qwen3-VL-4B | Already on quality path |
+| Hero | `krea2-raw-fp8` | `Krea2Pipeline` ← `krea/Krea-2-Raw` | DEFAULT |
+| Fast (demoted) | `krea2-turbo` | `Krea2Pipeline` Turbo | 8 / guidance 0.0 |
+| Draft | `z-image-turbo-nsfw-nvfp4` | `ZImagePipeline` | sketches only |
+| Instruction | `qwen-image-2512-fp8` | `QwenImagePipeline` | first-class; NSFW LoRA slot |
+| Edit | `qwen-edit-2511-fp8` | `QwenImageEditPlusPipeline` | first-class; img2img/multi-ref |
+| Adherence | `flux2-klein-9b` | `Flux2KleinPipeline` base-9B | after hero |
+| Upscale | `seedvr2-7b-fp8` | SeedVR2 | never native 4K RAW |
+| Anime zoo | `illustrious-wai-nsfw` / `pony-v6` | optional | NOT quality default |
 
-### Critical RAW settings (do **not** use turbo recipe)
+Hardware: aarch64, CUDA 13, sm_121, 128GB unified, diffusers ≥ 0.39.
 
-- Steps **20–30** (default **24**)
-- CFG **3–3.5** (default **3.5**)
-- Sampler **euler** + scheduler **beta**
-- Canvas prefer **1328–1536** max edge; upscale later with SeedVR2
-- Uncensor LoRA strength default **0.75** (range 0.7–1.0)
+### Prompt LLM (sidecar, not image TE)
 
-### Pull on Spark
-
-```bash
-cd ~/abliterated-spark/spark-image   # or spark-install path
-./pull-models.sh                    # pulls RAW FP8 ~13.1GB + TE/VAE + draft + optional turbo
-```
-
-Klein 9B / Qwen-Image / Edit are stubbed — place weights when available; see `models.json` TODO entries.
+Default: `THe-Plague/Qwen3.6-35B-A3B-abliterated-NVFP4-MTP` → `qwen-abliterated`, gpu-memory-utilization 0.6.  
+Alts: AEON-7 heretic twin; YuYu1015 Huihui int4; Huihui/OrcaRouter Qwen 27B/35B-A3B. See `../spark/README.md`.

@@ -13,8 +13,6 @@ echo
 echo "=== image models ==="
 curl -fsS -m 5 "http://${HOST}:7860/v1/models" || echo "DOWN"
 echo
-echo "=== comfy :8188 ==="
-curl -fsS -m 5 -o /dev/null -w "http=%{http_code}\n" "http://${HOST}:8188/" || echo "DOWN"
 echo "=== vllm :8000 ==="
 curl -fsS -m 5 "http://${HOST}:8000/v1/models" || echo "DOWN"
 echo

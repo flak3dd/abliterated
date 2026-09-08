@@ -17,7 +17,14 @@ import {
 import { DiffViewer } from './DiffViewer';
 import { ReasoningTrace } from './ReasoningTrace';
 import { TerminalPane, type TerminalTone } from './TerminalPane';
-import { formatGrokStatus, type GrokApplyResult } from '../../lib/grokLayer';
+import { bridge } from '../../lib/bridgeClient';
+import {
+  formatGrokStatus,
+  isPathInsideRoot,
+  noteFileApplied,
+  resolveCodeFenceWrite,
+  type GrokApplyResult,
+} from '../../lib/grokLayer';
 import { cn } from '../../lib/cn';
 import { isMidRunMessageContent, stripMidRunPrefix } from '../../lib/agentHelpers';
 import { NO_CONTENT_REASONING_NOTE } from '../../lib/agentPhase';
@@ -53,14 +60,16 @@ export function splitMessageContent(content: string): ContentBlock[] {
       const text = content.slice(last, match.index);
       if (text.trim()) blocks.push({ kind: 'text', text });
     }
-    const lang = (match[1] || '').trim().toLowerCase();
+    const headerRaw = (match[1] || '').trim();
+    const langKey = headerRaw.toLowerCase().split(/\s+/)[0] || '';
     const code = match[2].replace(/\n$/, '');
-    if (DIFF_LANGS.has(lang) || (!lang && looksLikeDiff(code))) {
+    if (DIFF_LANGS.has(langKey) || (!headerRaw && looksLikeDiff(code))) {
       blocks.push({ kind: 'diff', code });
-    } else if (SHELL_LANGS.has(lang)) {
+    } else if (SHELL_LANGS.has(langKey)) {
       blocks.push({ kind: 'shell', code });
     } else {
-      blocks.push({ kind: 'code', lang, code });
+      // Keep original header casing so path-headed fences resolve correctly.
+      blocks.push({ kind: 'code', lang: headerRaw, code });
     }
     last = match.index + match[0].length;
   }
@@ -162,6 +171,7 @@ function toolSummary(tool: ToolCallPayload): string {
   if (tool.name === 'list_skills') return 'catalog';
   if (tool.name === 'read_skill') return toolArgString(tool.arguments, ['skill_id', 'id', 'slug', 'name']);
   if (tool.name === 'suggest_skill' || tool.name === 'write_skill') return toolArgString(tool.arguments, ['name', 'title']);
+  if (tool.name === 'write_file') return toolArgString(tool.arguments, ['path', 'file', 'target']);
   if (tool.name === 'shell') return toolArgString(tool.arguments, ['command', 'cmd', 'script']);
   return '';
 }
@@ -203,9 +213,26 @@ function highlightLine(line: string): ReactNode[] {
   return tokens.length ? tokens : [<span key="empty">{line}</span>];
 }
 
-function CodeBlock({ lang, code, skipHighlight = false }: { lang: string; code: string; skipHighlight?: boolean }) {
+function CodeBlock({
+  lang,
+  code,
+  skipHighlight = false,
+  applyTarget,
+}: {
+  lang: string;
+  code: string;
+  skipHighlight?: boolean;
+  /** Path-headed whole-file write; Apply mirrors DiffViewer gates. */
+  applyTarget?: { path: string; body: string } | null;
+}) {
   const [copied, setCopied] = useState(false);
+  const [applyStatus, setApplyStatus] = useState<'pending' | 'accepted' | 'rejected'>('pending');
+  const [statusText, setStatusText] = useState('');
   const lines = useMemo(() => code.split('\n'), [code]);
+  const displayLang = useMemo(() => {
+    const first = (lang || '').trim().split(/\s+/)[0] || 'code';
+    return first;
+  }, [lang]);
 
   const copy = async () => {
     try {
@@ -217,25 +244,83 @@ function CodeBlock({ lang, code, skipHighlight = false }: { lang: string; code: 
     }
   };
 
+  const apply = async () => {
+    if (!applyTarget || applyStatus !== 'pending') return;
+    const { path: file, body } = applyTarget;
+    if (!isPathInsideRoot(file, bridge.currentRoot)) {
+      setStatusText('path escape blocked');
+      return;
+    }
+    if (bridge.connected) {
+      try {
+        const ok = await bridge.writeFile(file, body);
+        if (ok) {
+          noteFileApplied(file);
+          setApplyStatus('accepted');
+          setStatusText(`Wrote ${file}`);
+        } else {
+          setStatusText(`Write failed for ${file}`);
+        }
+      } catch (err) {
+        setStatusText(err instanceof Error ? err.message : 'Write failed');
+      }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(body);
+      setApplyStatus('accepted');
+      setStatusText('Bridge disconnected — file copied to clipboard');
+    } catch {
+      setStatusText('Bridge disconnected — copy failed');
+    }
+  };
+
   return (
     <div className="my-2.5 overflow-hidden rounded-lg border border-border bg-zinc-950/90 shadow-sm font-mono text-[11px]">
       <div className="flex items-center justify-between border-b border-border/80 bg-surface-raised/60 px-3 py-1.5">
-        <div className="flex items-center gap-1.5 text-[10px] text-zinc-400">
-          <Code2 size={12} className="text-sky-400" />
-          <span className="uppercase font-semibold tracking-wide text-zinc-300">{lang || 'code'}</span>
+        <div className="flex min-w-0 items-center gap-1.5 text-[10px] text-zinc-400">
+          <Code2 size={12} className="text-sky-400 shrink-0" />
+          <span className="uppercase font-semibold tracking-wide text-zinc-300">{displayLang}</span>
+          {applyTarget?.path ? (
+            <>
+              <span className="text-zinc-600">·</span>
+              <span className="truncate text-zinc-300 normal-case tracking-normal font-medium">{applyTarget.path}</span>
+            </>
+          ) : null}
           <span className="text-zinc-600">·</span>
-          <span className="text-zinc-500">{lines.length} lines</span>
+          <span className="text-zinc-500 shrink-0">{lines.length} lines</span>
         </div>
-        {code.trim() ? (
-          <button
-            type="button"
-            onClick={() => void copy()}
-            className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
-          >
-            {copied ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
-            <span className={copied ? 'text-emerald-400 font-medium' : ''}>{copied ? 'Copied' : 'Copy'}</span>
-          </button>
-        ) : null}
+        <div className="ml-2 flex shrink-0 items-center gap-1.5">
+          {applyTarget && applyStatus === 'pending' ? (
+            <button
+              type="button"
+              onClick={() => void apply()}
+              className="inline-flex items-center gap-1 rounded bg-emerald-900/60 px-2 py-0.5 text-[10px] font-medium text-emerald-300 hover:bg-emerald-800 border border-emerald-700/50 transition-colors"
+            >
+              <Check size={10} /> Apply
+            </button>
+          ) : applyTarget && applyStatus !== 'pending' ? (
+            <span
+              className={
+                applyStatus === 'accepted'
+                  ? 'rounded px-1.5 py-0.2 text-[9px] uppercase tracking-wider font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800/50'
+                  : 'rounded px-1.5 py-0.2 text-[9px] uppercase tracking-wider font-semibold bg-rose-950 text-rose-400 border border-rose-800/50'
+              }
+            >
+              {applyStatus}
+            </span>
+          ) : null}
+          {code.trim() ? (
+            <button
+              type="button"
+              onClick={() => void copy()}
+              className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
+            >
+              {copied ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+              <span className={copied ? 'text-emerald-400 font-medium' : ''}>{copied ? 'Copied' : 'Copy'}</span>
+            </button>
+          ) : null}
+        </div>
       </div>
       <div className="flex overflow-x-auto p-2.5 leading-5">
         <div className="select-none pr-3 text-right text-[10px] text-zinc-600 font-mono">
@@ -249,6 +334,9 @@ function CodeBlock({ lang, code, skipHighlight = false }: { lang: string; code: 
           ))}
         </div>
       </div>
+      {statusText ? (
+        <div className="border-t border-border bg-surface px-3 py-1 text-[10px] text-zinc-300">{statusText}</div>
+      ) : null}
     </div>
   );
 }
@@ -270,7 +358,20 @@ function renderMessageContent(
       return <TerminalPane key={i} command={block.code} tone={terminalTone} />;
     }
     if (block.kind === 'code') {
-      return <CodeBlock key={i} lang={block.lang} code={block.code} skipHighlight={skipHighlight} />;
+      const resolved = !writesLocked ? resolveCodeFenceWrite(block.lang, block.code) : null;
+      const applyTarget =
+        resolved && isPathInsideRoot(resolved.path, bridge.currentRoot)
+          ? { path: resolved.path, body: resolved.body }
+          : null;
+      return (
+        <CodeBlock
+          key={i}
+          lang={block.lang}
+          code={block.code}
+          skipHighlight={skipHighlight}
+          applyTarget={applyTarget}
+        />
+      );
     }
     return (
       <div key={i} className="whitespace-pre-wrap break-words font-mono text-[12px] leading-6 text-zinc-200">
@@ -292,6 +393,7 @@ export type MessageBubbleProps = {
   onGitCommit: (message: Message) => void;
   onCreatePr?: (message: Message) => void;
   onCheckpointRestore?: (message: Message) => void;
+  onWriteFile?: (message: Message) => void;
   onShellExecuted?: (message: Message, result: string) => void;
   /** When true (default), parse Done/Continue footer and show one-click chips. */
   completionFooterEnabled?: boolean;
@@ -310,6 +412,7 @@ function MessageBubbleInner({
   onGitCommit,
   onCreatePr,
   onCheckpointRestore,
+  onWriteFile,
   onShellExecuted,
   completionFooterEnabled = true,
   onContinuePrompt,
@@ -369,6 +472,9 @@ function MessageBubbleInner({
       skipHighlight,
     );
   }, [mainContent, m.reasoning, autoAcceptEdits, m.status, writesLocked, terminalTone, skipHighlight]);
+
+  const hasAnswer = !!displayContent.trim();
+  const reasoningLive = m.status === 'streaming' && !hasAnswer;
 
   const isUser = m.role === 'user';
   const ToolIcon = m.toolCall ? getToolIcon(m.toolCall.name) : Zap;
@@ -453,6 +559,22 @@ function MessageBubbleInner({
                 </button>
               </div>
             ) : !writesLocked &&
+              m.toolCall.name === 'write_file' &&
+              (m.toolCall.status === 'allowed' ||
+                m.toolCall.status === 'pending' ||
+                m.toolCall.status === 'error') &&
+              onWriteFile ? (
+              <div>
+                <CollapsibleToolOutput content={m.toolCall.result || m.content} />
+                <button
+                  type="button"
+                  onClick={() => onWriteFile(m)}
+                  className="mt-2 rounded bg-emerald-900/70 px-2.5 py-1 font-mono text-[10px] text-emerald-300 hover:bg-emerald-800 font-medium border border-emerald-700/50"
+                >
+                  Write to workspace
+                </button>
+              </div>
+            ) : !writesLocked &&
               m.toolCall.name === 'shell' &&
               m.toolCall.status !== 'executed' &&
               m.toolCall.status !== 'error' ? (
@@ -469,20 +591,40 @@ function MessageBubbleInner({
           </>
         ) : (
           <>
-            {reasoningForUi ? (
-              <ReasoningTrace
-                text={reasoningForUi}
-                streaming={m.status === 'streaming'}
-                startedAt={m.createdAt}
-              />
-            ) : m.status === 'streaming' && !m.content.trim() ? (
-              <div className="agent-status-chip" role="status">
-                <Brain size={11} className="animate-pulse text-amber-400" />
-                <span>waiting for tokens…</span>
-              </div>
-            ) : null}
-            {contentNode}
-            {m.status === 'streaming' ? <span className="stream-cursor" aria-hidden /> : null}
+            {reasoningForUi && !hasAnswer ? (
+              <>
+                <ReasoningTrace
+                  text={reasoningForUi}
+                  streaming={reasoningLive}
+                  hasAnswer={false}
+                  startedAt={m.createdAt}
+                />
+                {contentNode}
+                {m.status === 'streaming' ? <span className="stream-cursor" aria-hidden /> : null}
+              </>
+            ) : reasoningForUi && hasAnswer ? (
+              <>
+                {contentNode}
+                {m.status === 'streaming' ? <span className="stream-cursor" aria-hidden /> : null}
+                <ReasoningTrace
+                  text={reasoningForUi}
+                  streaming={false}
+                  hasAnswer={true}
+                  startedAt={m.createdAt}
+                />
+              </>
+            ) : (
+              <>
+                {m.status === 'streaming' && !m.content.trim() ? (
+                  <div className="agent-status-chip" role="status">
+                    <Brain size={11} className="animate-pulse text-amber-400" />
+                    <span>waiting for tokens…</span>
+                  </div>
+                ) : null}
+                {contentNode}
+                {m.status === 'streaming' ? <span className="stream-cursor" aria-hidden /> : null}
+              </>
+            )}
             {footer ? (
               <div className="mt-3 border-t border-zinc-800 pt-2.5">
                 <div className="mb-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-zinc-300">

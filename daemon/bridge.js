@@ -1107,8 +1107,25 @@ const wss = new WebSocketServer({
       console.warn(`[bridge] rejected non-localhost WS from ${addr}`);
       return false;
     }
+    // If Origin is present, only allow loopback / file (blocks remote-page socket abuse).
+    const origin = info.origin || info.req.headers?.origin;
+    if (origin && origin !== 'null') {
+      try {
+        const u = new URL(origin);
+        const h = (u.hostname || '').toLowerCase();
+        const okHost = h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]';
+        if (u.protocol !== 'file:' && !okHost) {
+          console.warn(`[bridge] rejected WS Origin ${origin}`);
+          return false;
+        }
+      } catch {
+        console.warn(`[bridge] rejected malformed WS Origin ${origin}`);
+        return false;
+      }
+    }
     return true;
   },
+
 });
 wss.on('connection', (ws, req) => {
   const addr = req?.socket?.remoteAddress;

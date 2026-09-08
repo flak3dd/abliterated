@@ -168,7 +168,7 @@ function addendum(opts: {
   if (opts.planMode) {
     lines.push('Plan lock: checklist then stop. No diffs.');
   } else if (opts.buildMode && opts.tier !== 'none') {
-    lines.push('Build lock: todo → tools → diffs in content this turn.');
+    lines.push('Build lock (Abliterated Loop): classify → gather → act → verify → ship → stop; todo → tools → diffs in content this turn.');
   } else if (opts.buildMode && opts.tier === 'none') {
     lines.push('Build lock without tools: emit real diffs in content this turn; do not paste a directory sketch twice.');
   }

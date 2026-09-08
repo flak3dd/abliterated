@@ -19,11 +19,11 @@ Usage: push.sh <ssh-alias> [--no-install] [--start] [--skip-pull] [--with-text]
 
   ssh-alias     NVIDIA Sync / ssh Host (required), e.g. gx10 or flak3dd
   --no-install  Copy files only; do not run install.sh on the Spark
-  --start       After install, start ComfyUI + image bridge
+  --start       After install, start the Diffusers image bridge
   --skip-pull   Skip Hugging Face downloads on the Spark
   --with-text   Also install Qwen abliterated vLLM
 
-Weights stay on the Spark. This script only rsyncs scripts and workflows.
+Weights stay on the Spark. This script only rsyncs scripts (no Comfy workflows).
 EOF
 }
 
@@ -68,6 +68,7 @@ rsync -az --delete \
   --exclude '__pycache__' \
   --exclude 'logs' \
   --exclude '.env' \
+  --exclude 'models' \
   "$ROOT/spark-image/" "$ALIAS:$REMOTE_DIR/spark-image/"
 if [[ -d "$ROOT/spark" ]]; then
   rsync -az --delete \
@@ -84,7 +85,10 @@ if [[ "$DO_INSTALL" -eq 1 ]]; then
   [[ "$SKIP_PULL" -eq 1 ]] && remote_args+=(--skip-pull)
   [[ "$DO_START" -eq 1 ]] && remote_args+=(--start)
   echo "Running install.sh on $ALIAS"
-  ssh -o BatchMode=yes "$ALIAS" "chmod +x $REMOTE_DIR/spark-install/*.sh && $REMOTE_DIR/spark-install/install.sh ${remote_args[*]}"
+  # remote_args may be empty; under set -u, ${arr[*]} is unbound
+  remote_suffix=""
+  ((${#remote_args[@]})) && remote_suffix=" ${remote_args[*]}"
+  ssh -o BatchMode=yes "$ALIAS" "chmod +x $REMOTE_DIR/spark-install/*.sh && $REMOTE_DIR/spark-install/install.sh${remote_suffix}"
 else
   echo "Copied. On Spark: $REMOTE_DIR/spark-install/install.sh --start"
 fi

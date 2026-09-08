@@ -1,18 +1,11 @@
-# Abliterated image generation (Spark)
+# Abliterated image generation (Spark) — Build D
 
-Local OpenAI image API. Spark ships Build D. See BUILDS.md.
+Hero: **`krea2-raw-fp8`** (Krea2Pipeline + Huihui TE + uncensor LoRA @ 0.75). **Not Klein.**
 
-## Defaults
+```bash
+cd spark-image && cp .env.example .env && ./pull-models.sh && ./serve-spark.sh
+```
 
-- Quality: krea2-raw-fp8 (24 steps, CFG 3.5, euler/beta, LoRA 0.75)
-- Klein: flux2-klein-9b (stub)
-- Fast: krea2-turbo-nvfp4 / krea2-turbo-int8 (demoted turbo)
-- Draft: z-image-turbo-nsfw-nvfp4
+Env: `FLUX_MODEL_ID=krea2-raw-fp8` `SAMPLER_STEPS=24` `SAMPLER_GUIDANCE=3.5` `SAMPLER_SAMPLER=euler` `SAMPLER_SCHEDULER=beta` `SAMPLER_LORA_STRENGTH=0.75` `SAMPLER_MAX_EDGE=1536`
 
-## Quick start (GPU host)
-
-cd spark-image && cp .env.example .env && ./pull-models.sh && python serve-openai-bridge.py
-
-Env: COMFY_STEPS=24 COMFY_CFG=3.5 COMFY_SAMPLER=euler COMFY_SCHEDULER=beta COMFY_LORA_STRENGTH=0.75
-
-Prefer canvas max edge 1328-1536 for RAW.
+Prompt LLM sidecar stays `:8000` (`qwen-abliterated`). Image TE ≠ LLM. No ComfyUI. See BUILDS.md.

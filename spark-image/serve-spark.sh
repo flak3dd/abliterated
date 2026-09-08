@@ -1,45 +1,21 @@
 #!/usr/bin/env bash
-# Run the OpenAI image bridge on DGX Spark (GB10 / aarch64 / CUDA 13).
-# Binds 0.0.0.0:7860 so the Abliterated IDE on the LAN can reach it.
 set -euo pipefail
 cd "$(dirname "$0")"
-
-if [[ -f .env ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source .env
-  set +a
-fi
-
-export ABLITERATED_IMAGE_HOST="${ABLITERATED_IMAGE_HOST:-0.0.0.0}"
+[[ -f .env ]] && { set -a; source .env; set +a; }
+export ABLITERATED_IMAGE_HOST="${ABLITERATED_IMAGE_HOST:-127.0.0.1}"
 export ABLITERATED_IMAGE_PORT="${ABLITERATED_IMAGE_PORT:-7860}"
-# ComfyUI on :8188: Krea 2 Turbo INT8 (quality default), NVFP4 (fast), Z-Image Turbo NVFP4 (draft).
-export COMFY_URL="${COMFY_URL:-http://127.0.0.1:8188}"
-export FLUX_MODEL_ID="${FLUX_MODEL_ID:-krea2-raw-fp8}"
-export COMFY_MODEL_ID="${COMFY_MODEL_ID:-krea2-raw-fp8}"
-export COMFY_STEPS="${COMFY_STEPS:-24}"
-export COMFY_CFG="${COMFY_CFG:-3.5}"
-export COMFY_SAMPLER="${COMFY_SAMPLER:-euler}"
-export COMFY_SCHEDULER="${COMFY_SCHEDULER:-beta}"
-export COMFY_LORA_STRENGTH="${COMFY_LORA_STRENGTH:-0.75}"
-export COMFY_WORKFLOW="${COMFY_WORKFLOW:-$(cd "$(dirname "$0")" && pwd)/workflows/txt2img-krea2-raw-fp8.json}"
-export ABLITERATED_SPARK_IMAGE="${ABLITERATED_SPARK_IMAGE:-$(cd "$(dirname "$0")" && pwd)}"
-export TRITON_PTXAS_PATH="${TRITON_PTXAS_PATH:-/usr/local/cuda/bin/ptxas}"
-export TORCH_FLOAT32_MATMUL_PRECISION="${TORCH_FLOAT32_MATMUL_PRECISION:-high}"
-# Triton compiles cuda_utils.c at first generate; Spark images often lack python3-dev.
-if [[ -d "${HOME}/opt/python-dev/usr/include/python3.12" ]]; then
-  PYINC="${HOME}/opt/python-dev/usr/include"
-  export CPATH="${PYINC}:${PYINC}/python3.12${CPATH:+:$CPATH}"
-  export C_INCLUDE_PATH="${PYINC}:${PYINC}/python3.12${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}"
-fi
-
+export SAMPLER_BACKEND="${SAMPLER_BACKEND:-diffusers}"
+export FLUX_MODEL_ID="${FLUX_MODEL_ID:-${IMAGE_MODEL_ID:-krea2-raw-fp8}}"
+export IMAGE_MODEL_ID="${IMAGE_MODEL_ID:-$FLUX_MODEL_ID}"
+export SAMPLER_STEPS="${SAMPLER_STEPS:-24}"
+export FLUX_STEPS="${FLUX_STEPS:-$SAMPLER_STEPS}"
+export SAMPLER_GUIDANCE="${SAMPLER_GUIDANCE:-3.5}"
+export SAMPLER_SAMPLER="${SAMPLER_SAMPLER:-euler}"
+export SAMPLER_SCHEDULER="${SAMPLER_SCHEDULER:-beta}"
+export SAMPLER_LORA_STRENGTH="${SAMPLER_LORA_STRENGTH:-0.75}"
+export SAMPLER_MAX_EDGE="${SAMPLER_MAX_EDGE:-1536}"
+export SPARK_IMAGE_MODELS="${SPARK_IMAGE_MODELS:-$PWD/models}"
+export ABLITERATED_SPARK_IMAGE="${ABLITERATED_SPARK_IMAGE:-$PWD}"
 VENV="${VENV:-./.venv}"
-if [[ ! -x "$VENV/bin/python" ]]; then
-  echo "Missing $VENV — create it on the Spark:" >&2
-  echo "  python3 -m venv .venv" >&2
-  echo "  .venv/bin/pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130" >&2
-  echo "  .venv/bin/pip install fastapi 'uvicorn[standard]' pydantic diffusers transformers accelerate safetensors Pillow huggingface_hub" >&2
-  exit 1
-fi
-
+[[ -x "$VENV/bin/python" ]] || { echo "Missing $VENV — pip install -r requirements.txt (diffusers>=0.39)" >&2; exit 1; }
 exec "$VENV/bin/python" serve-openai-bridge.py

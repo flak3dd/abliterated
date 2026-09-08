@@ -104,7 +104,7 @@ DEV uses Vite path /spark-v1 for localhost Spark.
 
 ## Optional abliterated image gen
 
-`api.abliteration.ai` does **not** offer `/v1/images/generations`. Enable the **Images** tab and point it at a local OpenAI-compatible server. See [`spark-install/`](spark-install/) for the DGX Spark package: Krea 2 RAW FP8 Build D (`krea2-raw-fp8`, 24/CFG3.5/euler-beta) + Turbo fast (`krea2-turbo-nvfp4`) + Z-Image drafts (`z-image-turbo-nsfw-nvfp4`) on port **7860**. DEV proxies `/image-v1` → `ABLITERATED_IMAGE_URL` or `http://127.0.0.1:7860`.
+`api.abliteration.ai` does **not** offer `/v1/images/generations`. Enable the **Images** tab and point it at a local OpenAI-compatible server. See [`spark-install/`](spark-install/) for the DGX Spark package: Diffusers Krea 2 RAW Build D (`krea2-raw-fp8`) on port **7860** (ComfyUI removed; Klein stub=`flux2-klein-9b`). DEV proxies `/image-v1` → `ABLITERATED_IMAGE_URL` or `http://127.0.0.1:7860`.
 
 Without a GPU, start a tiny PNG mock on **:7860**:
 

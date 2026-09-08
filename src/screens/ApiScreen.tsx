@@ -16,12 +16,14 @@ import { recommendedApiPatch } from '../lib/modelSettingsGuide';
 import {
   DRAFT_IMAGE_MODEL,
   FAST_IMAGE_MODEL,
-  KLEIN_IMAGE_MODEL,
+  SPARK_CHAT_MODEL,
   UNCENSORED_IMAGE_MODEL,
   sparkBridgeDownHint,
+  sparkChatSettingsPatch,
   sparkImageSettingsPatch,
   sparkOpsCheatSheet,
   sparkPushCommand,
+  sparkQwenPushCommand,
 } from '../lib/sparkInstall';
 
 import type { ClientSettings, ReasoningLevel, Tab } from '../types';
@@ -226,15 +228,19 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
       return;
     }
     const url = endpointUrl(sparkEndpointArgs(draft), '/chat/completions');
+    const sparkHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (draft.sparkToken.trim()) sparkHeaders.Authorization = 'Bearer ' + draft.sparkToken.trim();
+    const thinkingOn = draft.reasoning !== 'off';
     try {
       const post = await fetch(url, {
         method: 'POST',
-        headers: authHeaders(draft.sparkToken),
+        headers: sparkHeaders,
         body: JSON.stringify({
-          model: draft.sparkModel || 'qwen-abliterated',
+          model: draft.sparkModel || SPARK_CHAT_MODEL,
           stream: false,
           messages: [{ role: 'user', content: 'Reply with the single word pong.' }],
-          max_tokens: 256,
+          max_tokens: thinkingOn ? 512 : 64,
+          chat_template_kwargs: { enable_thinking: thinkingOn },
         }),
       });
       const postText = await post.text();
@@ -242,11 +248,17 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
       try {
         const json = JSON.parse(postText) as {
           model?: string;
-          choices?: Array<{ finish_reason?: string; message?: { content?: string | null } }>;
+          choices?: Array<{
+            finish_reason?: string;
+            message?: { content?: string | null; reasoning?: string | null; reasoning_content?: string | null };
+          }>;
         };
+        const msg = json.choices?.[0]?.message;
         summary += '\nmodel: ' + (json.model || draft.sparkModel);
         summary += '\nfinish: ' + (json.choices?.[0]?.finish_reason || '');
-        summary += '\ncontent: ' + JSON.stringify(json.choices?.[0]?.message?.content ?? null);
+        summary += '\ncontent: ' + JSON.stringify(msg?.content ?? null);
+        const reasoning = msg?.reasoning || msg?.reasoning_content || '';
+        if (reasoning) summary += '\nreasoning: ' + reasoning.slice(0, 400);
       } catch {
         summary += '\n' + postText.slice(0, 500);
       }
@@ -268,7 +280,7 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
     }
     const url = endpointUrl(sparkEndpointArgs(draft), '/models');
     try {
-      const headers: Record<string, string> = { 'X-Retention': 'none' };
+      const headers: Record<string, string> = {};
       if (draft.sparkToken.trim()) headers.Authorization = 'Bearer ' + draft.sparkToken.trim();
       const res = await coalesceFetch(url, { headers });
       const text = await res.text();
@@ -555,9 +567,18 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
         {provider === 'dgx-spark' ? (
           <>
             <p className="font-mono text-[10px] text-muted">
-              NIM on DGX Spark. Default http://127.0.0.1:8000/v1. Tunnel or set DGX_SPARK_URL for LAN.
-              Alternate: Qwen abliterated on Spark via spark/ scripts.
+              Qwen abliterated vLLM on Spark :8000 (served name {SPARK_CHAT_MODEL}). Set LAN host (e.g. 192.168.4.101)
+              then Use Spark Qwen. NVIDIA Sync tunnel uses 127.0.0.1 and Vite /spark-v1. No API key.
             </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => patch(sparkChatSettingsPatch(draft))}
+                className="w-fit rounded border border-emerald-500/50 bg-emerald-500/10 px-3 py-1 font-mono text-[11px] text-emerald-200"
+              >
+                Use Spark Qwen
+              </button>
+            </div>
             <label className="flex items-center gap-2 font-mono text-[11px] text-zinc-200">
               <input
                 type="checkbox"
@@ -612,6 +633,11 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
               <input
                 value={draft.sparkLanHost}
                 onChange={(e) => patch({ sparkLanHost: e.target.value })}
+                onBlur={() => {
+                  if (draft.inferenceProvider === 'dgx-spark') {
+                    patch(sparkChatSettingsPatch({ ...draft, sparkLanHost: draft.sparkLanHost }));
+                  }
+                }}
                 placeholder="192.168.4.101"
                 className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
               />
@@ -637,6 +663,13 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
                 className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200"
               >
                 Copy install command
+              </button>
+              <button
+                type="button"
+                onClick={() => void navigator.clipboard.writeText(sparkQwenPushCommand(draft.sparkSshAlias))}
+                className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200"
+              >
+                Copy Qwen push + start
               </button>
               <button
                 type="button"
@@ -991,8 +1024,8 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
         <div className="rounded border border-border bg-background/40 p-3 space-y-2">
           <div className="font-mono text-[10px] uppercase text-muted">Local image generation (Spark)</div>
           <p className="font-mono text-[10px] leading-4 text-muted">
-            Separate from chat providers (Platform / Custom / Featherless). Bridge on :7860, Comfy on :8188.
-            Defaults: krea2-raw-fp8 (Build D quality), krea2-turbo-nvfp4 (fast), z-image-turbo-nsfw-nvfp4 (draft).
+            Separate from chat providers (Platform / Custom / Featherless). Diffusers bridge on :7860 only (ComfyUI removed).
+            Defaults: krea2-raw-fp8 (Build D hero), krea2-turbo (fast), z-image-turbo-nsfw-nvfp4 (draft), flux2-klein-9b (after hero). Prompt LLM :8000 qwen-abliterated.
           </p>
           <p className="font-mono text-[10px] text-zinc-400 whitespace-pre-wrap">{sparkBridgeDownHint(draft)}</p>
           <ul className="space-y-1 font-mono text-[10px] text-zinc-400">
@@ -1004,8 +1037,8 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
           </ul>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => patch(sparkImageSettingsPatch(draft, UNCENSORED_IMAGE_MODEL))} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Use Spark image gen</button>
-            <button type="button" onClick={() => patch(sparkImageSettingsPatch(draft, FAST_IMAGE_MODEL))} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Use Spark fast gen</button>
-            <button type="button" onClick={() => patch(sparkImageSettingsPatch(draft, DRAFT_IMAGE_MODEL))} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Use Spark draft gen</button>
+            <button type="button" onClick={() => patch(sparkImageSettingsPatch(draft, FAST_IMAGE_MODEL))} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Use Spark Krea quality</button>
+            <button type="button" onClick={() => patch(sparkImageSettingsPatch(draft, DRAFT_IMAGE_MODEL))} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Use Spark Qwen-Image stub</button>
             <button type="button" onClick={() => onOpenTab?.('images')} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Open Images tab</button>
           </div>
         </div>

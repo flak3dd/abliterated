@@ -6,6 +6,8 @@ description: >-
 ---
 # Steps
 
+Verify here is the Abliterated Loop verify/ship gate (see `docs/process.md`).
+
 1. Lock the goal, in-scope paths, and **one measurable acceptance line** (build/test command or concrete check). Put it in durable task state as success criteria.
 2. Decompose multi-step work into a task graph with dependencies; keep a short turn checklist separate from the durable goal.
 3. Explore read-only first. Do not invent file contents.
