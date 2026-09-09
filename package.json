@@ -110,7 +110,7 @@
         "portable"
       ],
       "publisherName": "Abliteration",
-      "icon": "build/icon.png"
+      "icon": "build/icon-win.png"
     },
     "asarUnpack": [
       "daemon/**/*",
