@@ -42,14 +42,55 @@ export function collapseDots(p: string): string {
   return joined;
 }
 
+/**
+ * Canonicalize a path for reliable cross-platform and symlink-resilient comparison.
+ * Collapses dots, normalizes slashes, and strips macOS /private prefix for /tmp, /var, /etc.
+ */
+export function canonicalizePath(p: string): string {
+  if (!p) return '';
+  let collapsed = collapseDots(p);
+  // macOS symlink aliases: /tmp -> /private/tmp, /var -> /private/var, /etc -> /private/etc
+  if (collapsed.startsWith('/private/tmp')) {
+    collapsed = collapsed.slice('/private'.length);
+  } else if (collapsed.startsWith('/private/var')) {
+    collapsed = collapsed.slice('/private'.length);
+  } else if (collapsed.startsWith('/private/etc')) {
+    collapsed = collapsed.slice('/private'.length);
+  }
+  return collapsed;
+}
+
+/**
+ * Check if two filesystem paths refer to the same location, ignoring case and macOS /private symlinks.
+ */
+export function isSamePath(a: string, b: string): boolean {
+  const ca = canonicalizePath(a).toLowerCase();
+  const cb = canonicalizePath(b).toLowerCase();
+  return ca === cb;
+}
+
+/**
+ * Check if a path is located in a temporary/scratch directory that should not be
+ * automatically adopted as a persistent workspace root.
+ */
+export function isTemporaryPath(p: string): boolean {
+  if (!p || typeof p !== 'string') return false;
+  const c = canonicalizePath(p).toLowerCase();
+  if (c === '/tmp' || c.startsWith('/tmp/')) return true;
+  if (c === '/var/folders' || c.startsWith('/var/folders/')) return true;
+  // Windows temp paths
+  if (/[\\/]temp([\\/]|$)/i.test(p) || /[\\/]appdata[\\/]local[\\/]temp([\\/]|$)/i.test(p)) return true;
+  return false;
+}
+
 export function isUnsetWorkspace(path: string): boolean {
   const s = path.trim();
   return s === '' || s === '/workspace' || s === '.';
 }
 
 export function isInsideAppRoot(appRoot: string, target: string): boolean {
-  const t = collapseDots(target);
-  const a = collapseDots(appRoot);
+  const t = canonicalizePath(target);
+  const a = canonicalizePath(appRoot);
   if (!t || !a) return false;
   const tCmp = t.toLowerCase();
   const aCmp = a.toLowerCase();

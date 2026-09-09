@@ -2,6 +2,7 @@ import {
   APP_ROOT_REFUSED,
   BRIDGE_RESTARTING,
   isPathInsideAppRoot,
+  isSamePath,
   workspaceGate,
 } from './workspaceGuard';
 
@@ -134,19 +135,20 @@ export class BridgeClient {
   }
 
   private setStatus(next: BridgeStatus) {
+    if (this.status === next) return;
     this.status = next;
     this.listeners.forEach((cb) => cb(next));
   }
 
   private setDaemonRoot(root: string, port?: number) {
     if (typeof port === 'number' && Number.isFinite(port)) this.daemonPort = port;
-    if (root === this.daemonRoot) return;
+    if (isSamePath(root, this.daemonRoot)) return;
     this.daemonRoot = root;
     this.rootListeners.forEach((cb) => cb(root));
   }
 
   private setDaemonAppRoot(appRoot: string) {
-    if (!appRoot || appRoot === this.daemonAppRoot) return;
+    if (!appRoot || isSamePath(appRoot, this.daemonAppRoot)) return;
     this.daemonAppRoot = appRoot;
     this.appRootListeners.forEach((cb) => cb(appRoot));
   }

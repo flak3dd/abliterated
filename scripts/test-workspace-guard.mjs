@@ -33,14 +33,34 @@ const {
   APP_ROOT_REFUSED,
   BRIDGE_RESTARTING,
   WORKSPACE_REQUIRED,
+  canonicalizePath,
   collapseDots,
   isInsideAppRoot,
   isPathInsideAppRoot,
+  isSamePath,
+  isTemporaryPath,
   isUnsetWorkspace,
   joinRoot,
   workspaceGate,
   shouldWriteWorkspaceFiles,
 } = mod;
+
+assert.equal(canonicalizePath('/private/tmp/ablit-smoke'), '/tmp/ablit-smoke');
+assert.equal(canonicalizePath('/tmp/ablit-smoke'), '/tmp/ablit-smoke');
+assert.equal(canonicalizePath('/private/var/folders/xyz'), '/var/folders/xyz');
+assert.equal(isSamePath('/tmp/ablit-smoke', '/private/tmp/ablit-smoke'), true);
+assert.equal(isSamePath('/tmp/ablit-smoke/', '/tmp/ablit-smoke'), true);
+assert.equal(isSamePath('/Users/me/project', '/Users/me/project'), true);
+assert.equal(isSamePath('/Users/me/project', '/Users/other/project'), false);
+assert.equal(isSamePath('', ''), true);
+
+assert.equal(isTemporaryPath('/tmp'), true);
+assert.equal(isTemporaryPath('/tmp/ablit-smoke'), true);
+assert.equal(isTemporaryPath('/private/tmp/ablit-smoke'), true);
+assert.equal(isTemporaryPath('/private/var/folders/xx/yy'), true);
+assert.equal(isTemporaryPath('C:\\Users\\me\\AppData\\Local\\Temp\\smoke'), true);
+assert.equal(isTemporaryPath('/Users/me/project'), false);
+assert.equal(isTemporaryPath(''), false);
 
 assert.equal(isUnsetWorkspace(''), true);
 assert.equal(isUnsetWorkspace('/workspace'), true);

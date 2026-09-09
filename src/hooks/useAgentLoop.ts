@@ -62,6 +62,8 @@ import {
   type TodoItem,
   looksExploreIntent,
   looksReadOnlyOrControlPrompt,
+  looksFactualQuestion,
+  hasBuildFileWrites,
   shouldApplyBuildProcess,
   shouldPrefetchWorkspace,
   buildReasoningThenBuildNudge,
@@ -98,6 +100,8 @@ import {
   liftReasoningWork,
   stripImplementationFromText,
   enforceThoughtNoCode,
+  reasoningStepsNotExecuted,
+  buildReasoningExecuteNudge,
 } from '../lib/reasoningWork';
 import { hasValidCompletionFooter } from '../lib/completionFooter';
 import { asStringList, executeAgentTool, toolArgString } from '../lib/agentTools';
@@ -1237,6 +1241,7 @@ export function useAgentLoop({
     let buildImplementNudgeUsed = false;
     let proveImproveNudgeUsed = false;
     let buildVerifyNudgeUsed = false;
+    let reasoningExecNudgeUsed = false;
     let stopReason: AgentStopReason = 'no_tools';
     let turnCap = clampMaxAgentTurns(settingsRef.current.maxAgentTurns);
     const deepenCap = clampSelfDeepenPasses(settingsRef.current.selfDeepenPasses);
@@ -1608,6 +1613,38 @@ export function useAgentLoop({
                   threadId: thread.id,
                   role: 'user',
                   content: buildVerifyBeforeDoneNudge(),
+                  createdAt: Date.now(),
+                  status: 'complete',
+                };
+                current = persist(nudge);
+                continue;
+              }
+
+              // Reasoning mapped file steps but content never executed them, and nothing
+              // was written this run (grok fences or write tools). Nudge once to execute
+              // — placed ABOVE the footerDone/shouldEvidenceDeepen block so a text-only
+              // Done footer cannot short-circuit it. One-shot flag bounds the loop.
+              if (
+                !planMode &&
+                !reasoningExecNudgeUsed &&
+                settingsRef.current.selfDeepenEnabled !== false &&
+                !isAnswerCompleteMarker(content) &&
+                !shouldSkipSelfDeepen(detectContent, { status: assistant.status }) &&
+                grokAcc.length === 0 &&
+                !hasBuildFileWrites(toolsUsed) &&
+                !!lastUser?.content &&
+                !looksReadOnlyOrControlPrompt(lastUser.content) &&
+                !looksFactualQuestion(lastUser.content) &&
+                !looksPromptOnlyRequest(lastUser.content) &&
+                reasoningStepsNotExecuted(assistant.reasoning || '', detectContent)
+              ) {
+                reasoningExecNudgeUsed = true;
+                setPhase('self_deepen', { deepenPass: deepensUsed + 1, deepenMax: deepenCap }, turn);
+                const nudge: Message = {
+                  id: uid('msg'),
+                  threadId: thread.id,
+                  role: 'user',
+                  content: buildReasoningExecuteNudge(),
                   createdAt: Date.now(),
                   status: 'complete',
                 };

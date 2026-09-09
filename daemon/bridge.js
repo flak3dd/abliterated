@@ -481,6 +481,7 @@ async function handleSetRoot(ws, msg) {
     ROOT = real;
     send(ws, { runId, status: 'ok', root: ROOT, appRoot: APP_ROOT });
   } catch (err) {
+    console.warn(`[bridge handleSetRoot] ERROR for path="${msg.path}":`, err instanceof Error ? err.message : err);
     send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
   }
 }

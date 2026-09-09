@@ -210,3 +210,61 @@ export function buildReasoningOnlyNudge(): string {
     '(```diff, ```bash, or a // relative/path file fence). Do not only describe the work.'
   );
 }
+
+/** File-producing action verbs — a step that should yield a file change in content. */
+const FILE_ACTION_VERB_RE =
+  /\b(creat(?:e|es|ing)|add(?:s|ing)?|writ(?:e|es|ing)|edit(?:s|ing)?|patch(?:es|ing)?|implement(?:s|ing)?|modif(?:y|ies|ying)|updat(?:e|es|ing)|refactor(?:s|ing)?|renam(?:e|es|ing)|delet(?:e|es|ing)|scaffold(?:s|ing)?|generat(?:e|es|ing))\b/i;
+
+// Non-global clones so .test() is not stateful — FENCE_RE is /g and advances lastIndex.
+const CONTENT_FENCE_TEST = /```[^\n]*\n[\s\S]*?```/;
+const CONTENT_DIFF_TEST = /^(?:diff --git |--- (?:a\/|\/dev\/null)|\+\+\+ b\/|@@ -)/m;
+const CONTENT_PATH_FENCE_TEST = /^\/\/ [\w./+-]+\s*$/m;
+
+/** True when content already carries applyable execution: a fence, unified diff, or // path file. */
+export function contentHasExecution(content: string): boolean {
+  const c = content || '';
+  if (CONTENT_FENCE_TEST.test(c)) return true;
+  if (CONTENT_DIFF_TEST.test(c)) return true;
+  if (CONTENT_PATH_FENCE_TEST.test(c) && c.length > 50) return true;
+  return false;
+}
+
+/**
+ * Count ENUMERATED step lines (Step N:, "1.", "1)", "- ", "* ") that name a
+ * file-producing action. Prose Goal/Inspect lines are NOT steps and don't count,
+ * so a single-ask plan stays under the >= 2 floor.
+ */
+export function reasoningActionStepCount(reasoning: string): number {
+  const raw = reasoning || '';
+  if (!raw.trim()) return 0;
+  let n = 0;
+  for (const line of raw.split('\n')) {
+    const s = line.trim();
+    if (!/^(?:step\s+\d+\b|\d+[.)]\s|[-*]\s)/i.test(s)) continue;
+    if (FILE_ACTION_VERB_RE.test(s)) n++;
+  }
+  return n;
+}
+
+/**
+ * The model mapped >= 2 concrete file steps in reasoning but the content carries
+ * no execution (no fences/diffs/// path files). Pure over (reasoning, content):
+ * run-level execution credit (grok-applied edits, write tools) and user-intent
+ * guards belong at the call site. The >= 2 action-step floor + file-verb filter
+ * keeps this from firing on ordinary Q&A / single-ask prose.
+ */
+export function reasoningStepsNotExecuted(reasoning: string, content: string): boolean {
+  const r = reasoning || '';
+  if (!r.trim()) return false;
+  if (reasoningActionStepCount(r) < 2) return false;
+  return !contentHasExecution(content);
+}
+
+export function buildReasoningExecuteNudge(): string {
+  return (
+    'Your reasoning mapped concrete file steps (e.g. "Step 1: create X", "Step 2: edit Y") but content only summarized them — it did not carry them out. ' +
+    'This IDE applies ONLY the content and tool channels; reasoning is never executed. ' +
+    'Now, in CONTENT, actually perform EVERY step you listed: emit the real ```diff or // relative/path file fences (or call write_file) that create/edit each file, and run/verify as your steps require. ' +
+    'Do not restate the plan and do not write another "Done" summary. If a specific step genuinely cannot be done, name it and say why.'
+  );
+}

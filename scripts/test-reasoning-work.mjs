@@ -28,7 +28,7 @@ execFileSync(
   { cwd: root, stdio: 'inherit' },
 );
 const mod = await import(pathToFileURL(path.join(outDir, 'reasoningWork.js')).href);
-const { liftReasoningWork, reasoningLooksLikeStalledWork, buildReasoningOnlyNudge, stripImplementationFromText, splitReasoningSections, enforceThoughtNoCode, THOUGHT_CODE_MOVED_NOTE } = mod;
+const { liftReasoningWork, reasoningLooksLikeStalledWork, buildReasoningOnlyNudge, stripImplementationFromText, splitReasoningSections, enforceThoughtNoCode, THOUGHT_CODE_MOVED_NOTE, reasoningStepsNotExecuted, reasoningActionStepCount, contentHasExecution, buildReasoningExecuteNudge } = mod;
 
 const fence = String.fromCharCode(96, 96, 96);
 const script = [fence + 'bash', 'npm test', fence].join('\n');
@@ -98,6 +98,39 @@ const headed = splitReasoningSections('# Goal\nShip the dropdown.\n# Verify\nChe
 assert.equal(headed.length, 2);
 assert.equal(headed[0].title, 'Goal');
 assert.equal(headed[1].title, 'Verify');
+
+// --- reasoningStepsNotExecuted: plan-in-reasoning but content only summarizes ---
+const planReasoning =
+  'Goal: build a hello world CLI.\nInspect: no existing files.\nStep 1: create cli.py with argparse.\nStep 2: edit README.md with usage.';
+
+// TRUE POSITIVE: >=2 file-action steps in reasoning, content is a bare summary.
+assert.equal(reasoningActionStepCount(planReasoning) >= 2, true);
+assert.equal(reasoningStepsNotExecuted(planReasoning, 'DONE. Created cli.py and verified it.'), true);
+assert.equal(contentHasExecution('DONE. Created cli.py and verified it.'), false);
+
+// NEGATIVE: content actually carries execution (a fence / a // path file) — no nudge.
+assert.equal(reasoningStepsNotExecuted(planReasoning, '```diff\n--- a/cli.py\n+++ b/cli.py\n@@ -0,0 +1 @@\n+x\n```'), false);
+assert.equal(contentHasExecution('```python\nprint(1)\n```'), true);
+assert.equal(contentHasExecution('// src/cli.py\nimport argparse\nprint("hi there world")\n'), true);
+
+// NEGATIVE: fewer than 2 action steps (single ask / Q&A) — floor guards it.
+assert.equal(reasoningStepsNotExecuted('Goal: create one file.\nStep 1: create cli.py.', 'Here you go.'), false);
+
+// NEGATIVE: reasoning maps read-only steps (no file-producing verb) — not an execution gap.
+assert.equal(
+  reasoningStepsNotExecuted('Step 1: read the auth module.\nStep 2: verify my understanding.', 'It uses JWTs.'),
+  false,
+);
+
+// NEGATIVE: empty reasoning.
+assert.equal(reasoningStepsNotExecuted('', 'anything'), false);
+
+// Stateful-regex guard: calling contentHasExecution twice on a fenced string must be stable.
+const fenced = '```ts\nexport const n = 1;\n```';
+assert.equal(contentHasExecution(fenced), true);
+assert.equal(contentHasExecution(fenced), true);
+
+assert.ok(buildReasoningExecuteNudge().includes('did not carry them out'));
 
 console.log('reasoningWork ok');
 fs.rmSync(outDir, { recursive: true, force: true });

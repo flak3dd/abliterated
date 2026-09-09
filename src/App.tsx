@@ -31,7 +31,7 @@ import {
   upsertThread,
 } from './lib/storage';
 import { getLicenseState } from './lib/license';
-import { workspaceGate } from './lib/workspaceGuard';
+import { isSamePath, isTemporaryPath, workspaceGate } from './lib/workspaceGuard';
 import { SetupWizard } from './components/setup/SetupWizard';
 import { hydrateDurableStore } from './lib/durableStore';
 import { acceptAllInbox, hydrateApplyInbox } from './lib/applyInbox';
@@ -158,7 +158,7 @@ export default function App() {
     };
 
     const applyDaemonRoot = (root: string) => {
-      if (!root) return;
+      if (!root || isTemporaryPath(root)) return;
       if (!workspaceGate(root, bridge.currentAppRoot).ok) return;
       const prev = workspaceRef.current;
       if (!isPlaceholderRoot(prev.rootPath)) return;
@@ -190,7 +190,7 @@ export default function App() {
                 const root = await bridge.setRoot(path);
                 if (id !== handshake) return;
                 const prev = workspaceRef.current;
-                if (prev.rootPath !== root) {
+                if (!isSamePath(prev.rootPath, root)) {
                   const next = { ...prev, rootPath: root };
                   setWorkspace(next);
                   setWorkspaceState(next);
@@ -201,10 +201,7 @@ export default function App() {
               }
             }
           }
-          const hello = await bridge.hello();
-          if (id !== handshake) return;
-          if (hello.workspaceOk) applyDaemonRoot(hello.root);
-          clearForbiddenWorkspace(hello.appRoot || bridge.currentAppRoot);
+          clearForbiddenWorkspace(bridge.currentAppRoot);
         } catch {
           /* daemon may not be listening yet; reconnect retries */
         }
@@ -308,7 +305,7 @@ export default function App() {
       setThreads((prevThreads) => {
         const existing = prevThreads.find((t) => t.id === id);
         if (!existing) return prevThreads;
-        if ((existing.workspaceRoot || undefined) === root) return prevThreads;
+        if (isSamePath(existing.workspaceRoot || '', root)) return prevThreads;
         return upsertThread({ ...existing, workspaceRoot: root, updatedAt: Date.now() });
       });
     }
@@ -335,15 +332,15 @@ export default function App() {
 
     const threadRoot = (existing.workspaceRoot || '').trim();
     const targetRoot =
-      threadRoot && !isPlaceholderRoot(threadRoot) && workspaceGate(threadRoot, bridge.currentAppRoot).ok
+      threadRoot && !isPlaceholderRoot(threadRoot) && !isTemporaryPath(threadRoot) && workspaceGate(threadRoot, bridge.currentAppRoot).ok
         ? threadRoot
         : '';
-    if (targetRoot !== currentRoot) {
+    if (targetRoot && !isSamePath(targetRoot, currentRoot)) {
       const prev = workspaceRef.current;
       const wsNext = { ...prev, rootPath: targetRoot };
       setWorkspace(wsNext);
       setWorkspaceState(wsNext);
-      if (bridge.connected && targetRoot) {
+      if (bridge.connected) {
         void bridge.setRoot(targetRoot).catch(() => undefined);
       }
     }

@@ -32,6 +32,7 @@ import { getLicenseState } from './license';
 import { durableSet, isBulkyStorageKey, wipeDurableStore } from './durableStore';
 import { LEGACY_PROMPTS, SYSTEM_PROMPT } from './systemPrompt';
 import { DEFAULT_FEATHERLESS_MODEL, migrateFeatherlessModel } from './featherlessQwen.js';
+import { isTemporaryPath } from './workspaceGuard';
 
 export const KEYS = {
   settings: 'ablit_settings',
@@ -550,7 +551,7 @@ export function upsertJob(job: Job): Job[] {
 export function getWorkspace(): WorkspaceContext {
   const stored = readJson<Partial<WorkspaceContext>>(KEYS.workspace, {});
   const ws = { ...DEFAULT_WORKSPACE, ...stored };
-  if (ws.rootPath === '/workspace') ws.rootPath = '';
+  if (ws.rootPath === '/workspace' || isTemporaryPath(ws.rootPath)) ws.rootPath = '';
   return ws;
 }
 
