@@ -85,6 +85,7 @@ export default function App() {
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>(bridge.currentStatus);
   const [agentLabel, setAgentLabel] = useState('');
   const [composerSeed, setComposerSeed] = useState<string | null>(null);
+  const [chatFilePanel, setChatFilePanel] = useState(false);
   const license = getLicenseState(settings);
   const planMode = settings.planModeEnabled === true;
   const buildMode = settings.buildModeEnabled !== false && !planMode;
@@ -270,6 +271,7 @@ export default function App() {
     };
     setThreads(upsertThread(thread));
     setActiveThreadId(thread.id);
+    setTab('home');
   }, []);
 
   const activeThreadIdRef = useRef(activeThreadId);
@@ -342,6 +344,7 @@ export default function App() {
       setThreads(upsertThread(next));
     }
     setActiveThreadId(id);
+    setTab('home');
 
     const threadRoot = (next.workspaceRoot || '').trim();
     if (
@@ -419,7 +422,7 @@ export default function App() {
       },
       {
         id: 'tab-home',
-        label: 'Go to Home',
+        label: 'Go to Chat',
         hint: k('⌘1', 'Ctrl+1'),
         run: () => setTab('home'),
       },
@@ -731,20 +734,117 @@ export default function App() {
 
   return (
     <div className="flex h-full bg-background text-zinc-100">
-      <DesktopRail current={tab} onChange={setTab} jobsActive={jobsActive} />
+      <DesktopRail
+        current={tab}
+        onChange={setTab}
+        jobsActive={jobsActive}
+        userName={license.isFree ? 'Local' : license.label || 'Abliterated'}
+        userSub={resolveActiveSettings(settings).label}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
         <main className="relative min-h-0 flex-1">
           <div className="h-full">
             {visitedTabs.has('home') ? (
               <div className={panelClass('home')}>
-                <HomeScreen
-                  threads={threads}
-                  settings={settings}
-                  onThreadsChange={setThreads}
-                  onOpenThread={openThread}
-                  onNewSession={createSession}
-                  workspaceRoot={workspace.rootPath}
-                />
+                <div className="flex h-full min-w-0">
+                  <aside
+                    className={cn(
+                      'w-[220px] shrink-0 flex-col border-r border-border',
+                      activeThread ? 'hidden md:flex' : 'flex',
+                    )}
+                  >
+                    <HomeScreen
+                      compact
+                      threads={threads}
+                      settings={settings}
+                      onThreadsChange={setThreads}
+                      onOpenThread={openThread}
+                      onNewSession={createSession}
+                      workspaceRoot={workspace.rootPath}
+                      activeThreadId={activeThreadId}
+                    />
+                  </aside>
+                  <div className="min-w-0 flex-1">
+                    {activeThread ? (
+                      <ChatScreen
+                        ref={chatRef}
+                        thread={activeThread}
+                        settings={settings}
+                        autoAcceptEdits={settings.autoAcceptEdits}
+                        autoRunShell={settings.autoRunShell}
+                        workspaceRoot={workspace.rootPath}
+                        onChooseWorkspace={chooseWorkspace}
+                        onBack={() => {
+                          setActiveThreadId(null);
+                          setAgentLabel('');
+                        }}
+                        onThreadUpdate={(t) => setThreads((prev) => prev.map((x) => (x.id === t.id ? t : x)))}
+                        onAgentStatus={setAgentLabel}
+                        onGitMaybeChanged={() => void refreshGitStatus()}
+                        composerSeed={composerSeed}
+                        onComposerSeedConsumed={() => setComposerSeed(null)}
+                        planMode={planMode}
+                        buildMode={buildMode}
+                        onTogglePlanMode={() => {
+                          const cur = settingsRef.current;
+                          const next = !cur.planModeEnabled;
+                          applySettings({
+                            ...cur,
+                            planModeEnabled: next,
+                            buildModeEnabled: next ? false : true,
+                          });
+                        }}
+                        onToggleBuildMode={() => {
+                          const cur = settingsRef.current;
+                          const next = cur.buildModeEnabled === false;
+                          applySettings({
+                            ...cur,
+                            buildModeEnabled: next,
+                            planModeEnabled: next ? false : cur.planModeEnabled,
+                          });
+                        }}
+                        onApprovePlan={() => {
+                          applySettings({
+                            ...settingsRef.current,
+                            planModeEnabled: false,
+                            buildModeEnabled: true,
+                          });
+                          setComposerSeed(
+                            'Plan approved. Build mode is on. After reasoning emit ToDo: steps. If new file/folder structure is required, scaffold it first, then work the list. Write tools are unlocked.',
+                          );
+                        }}
+                        onSettingsChange={applySettings}
+                        onOpenTab={setTab}
+                        filePanelOpen={chatFilePanel}
+                        onToggleFilePanel={() => setChatFilePanel((open) => !open)}
+                      />
+                    ) : (
+                      <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+                        <span className="grid h-14 w-14 place-items-center rounded-2xl border border-border bg-panel text-primary">
+                          <img
+                            src={`${import.meta.env.BASE_URL}logo-skull-blue.png`}
+                            alt=""
+                            width={28}
+                            height={28}
+                            className="h-7 w-7 object-contain"
+                          />
+                        </span>
+                        <h2 className="mt-5 text-xl font-semibold tracking-tight">Describe the change you want</h2>
+                        <p className="mt-2 max-w-md text-balance text-sm leading-relaxed text-muted-foreground">
+                          Abliterated plans the work, edits the files, and reports back. Pin context with @path.
+                        </p>
+                        <button type="button" onClick={createSession} className="btn-primary mt-5">
+                          New Chat
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {activeThread && chatFilePanel ? (
+                    <div className="hidden min-w-[320px] max-w-[720px] w-[42%] border-l border-border lg:block">
+                      <WorkspaceScreen workspace={workspace} onChange={setWorkspaceState} />
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ) : null}
             {visitedTabs.has('workspace') ? (
@@ -782,60 +882,6 @@ export default function App() {
               </div>
             ) : null}
           </div>
-          {activeThread ? (
-            <div className="absolute inset-0 z-10">
-              <ChatScreen
-                ref={chatRef}
-                thread={activeThread}
-                settings={settings}
-                autoAcceptEdits={settings.autoAcceptEdits}
-                autoRunShell={settings.autoRunShell}
-                workspaceRoot={workspace.rootPath}
-                onChooseWorkspace={chooseWorkspace}
-                onBack={() => {
-                  setActiveThreadId(null);
-                  setAgentLabel('');
-                }}
-                onThreadUpdate={(t) => setThreads((prev) => prev.map((x) => (x.id === t.id ? t : x)))}
-                onAgentStatus={setAgentLabel}
-                onGitMaybeChanged={() => void refreshGitStatus()}
-                composerSeed={composerSeed}
-                onComposerSeedConsumed={() => setComposerSeed(null)}
-                planMode={planMode}
-                buildMode={buildMode}
-                onTogglePlanMode={() => {
-                  const cur = settingsRef.current;
-                  const next = !cur.planModeEnabled;
-                  applySettings({
-                    ...cur,
-                    planModeEnabled: next,
-                    buildModeEnabled: next ? false : true,
-                  });
-                }}
-                onToggleBuildMode={() => {
-                  const cur = settingsRef.current;
-                  const next = cur.buildModeEnabled === false;
-                  applySettings({
-                    ...cur,
-                    buildModeEnabled: next,
-                    planModeEnabled: next ? false : cur.planModeEnabled,
-                  });
-                }}
-                onApprovePlan={() => {
-                  applySettings({
-                    ...settingsRef.current,
-                    planModeEnabled: false,
-                    buildModeEnabled: true,
-                  });
-                  setComposerSeed(
-                    'Plan approved. Build mode is on. After reasoning emit ToDo: steps. If new file/folder structure is required, scaffold it first, then work the list. Write tools are unlocked.',
-                  );
-                }}
-                onSettingsChange={applySettings}
-                onOpenTab={setTab}
-              />
-            </div>
-          ) : null}
         </main>
         <StatusBar
           bridgeStatus={bridgeStatus}

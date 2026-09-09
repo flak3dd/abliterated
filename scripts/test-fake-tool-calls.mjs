@@ -12,7 +12,7 @@ fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
 execFileSync('npx', ['tsc', 'src/lib/fakeToolCalls.ts', '--outDir', outDir, '--module', 'esnext', '--target', 'es2022', '--moduleResolution', 'bundler', '--strict'], { cwd: root, stdio: 'inherit' });
 const mod = await import(pathToFileURL(path.join(outDir, 'fakeToolCalls.js')).href);
-const { parseFakeToolCalls, looksLikeFakeToolTheater, buildFakeToolNudge, parseJsonToolCallFence, looksLikeJsonToolCallFence } = mod;
+const { parseFakeToolCalls, looksLikeFakeToolTheater, looksLikeToolRetryNarration, buildFakeToolNudge, parseJsonToolCallFence, looksLikeJsonToolCallFence } = mod;
 const fence = String.fromCharCode(96, 96, 96);
 const sample = [
   "I'll analyse the workspace.",
@@ -59,6 +59,13 @@ assert.equal(parseJsonToolCallFence(jsonFence).length, fromJson.length);
 const nudge = buildFakeToolNudge();
 assert.ok(typeof nudge === "string" && nudge.length > 20);
 assert.ok(/one retry/i.test(nudge) || /Do not paste/i.test(nudge));
+assert.ok(/relative\/path fence/i.test(nudge));
+
+const retry =
+  "The user wants me to write individual prompts for each KYC media type. I've been struggling with the write_file call - let me make sure I'm using the correct syntax. Let me try again with the correct format.";
+assert.ok(looksLikeToolRetryNarration(retry), 'kyc write_file retry narration');
+assert.ok(looksLikeFakeToolTheater(retry), 'retry narration is theater');
+assert.equal(looksLikeToolRetryNarration('Here is the docFront prompt for the KYC still.'), false);
 
 console.log("fakeToolCalls ok", JSON.stringify(parsed));
 

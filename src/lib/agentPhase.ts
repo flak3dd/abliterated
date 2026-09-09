@@ -1,3 +1,6 @@
+import { looksLikeToolRetryNarration } from './fakeToolCalls';
+import { looksLikeTokenCollapse, TOKEN_COLLAPSE_REPLY_NOTE } from './tokenCollapse';
+
 /** Explicit agent response phase for the status monitor. */
 export type AgentPhase =
   | 'idle'
@@ -133,6 +136,23 @@ export function formatElapsedSec(ms: number): string {
 /** One-liner when the model finishes with reasoning but no content tokens. */
 export const NO_CONTENT_REASONING_NOTE = '(No content tokens — see reasoning)';
 
+/** Lift <think> blocks out of content so they are not shown as the answer. */
+export function splitThinkFromContent(content: string): { content: string; thinking: string } {
+  const blocks: string[] = [];
+  let rest = String(content || '');
+  rest = rest.replace(/<think>([\s\S]*?)<\/think>/gi, (_, inner: string) => {
+    if (inner.trim()) blocks.push(inner.trim());
+    return '\n';
+  });
+  const unclosed = rest.match(/<think>\s*([\s\S]*)$/i);
+  if (unclosed && unclosed.index != null) {
+    const before = rest.slice(0, unclosed.index).trim();
+    if (unclosed[1].trim()) blocks.push(unclosed[1].trim());
+    rest = before;
+  }
+  return { content: rest.replace(/\n{3,}/g, '\n\n').trim(), thinking: blocks.join('\n\n') };
+}
+
 /**
  * Lightly unwrap common thinking wrappers. Prefer leaving real answer text intact.
  */
@@ -178,6 +198,11 @@ export function coalesceEmptyContentFromReasoning(
   if (!(assistant.reasoning || '').trim()) return false;
   if (!enabled) return false;
   const promoted = stripThinkingWrappers(assistant.reasoning || '');
+  if (promoted && looksLikeToolRetryNarration(promoted)) return false;
+  if (promoted && looksLikeTokenCollapse(promoted)) {
+    assistant.content = TOKEN_COLLAPSE_REPLY_NOTE;
+    return true;
+  }
   if (promoted) {
     assistant.content = promoted;
     return true;

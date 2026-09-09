@@ -107,6 +107,15 @@ assert.equal(
     pendingToolNames: ["write_file"],
     trivialEdit: false,
   }),
+  false,
+);
+assert.equal(
+  hg.needsInspectBeforeWrite({
+    userText: "implement auth middleware across the api",
+    toolsUsed: [],
+    pendingToolNames: ["apply_patch"],
+    trivialEdit: false,
+  }),
   true,
 );
 assert.equal(

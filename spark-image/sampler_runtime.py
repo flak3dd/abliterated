@@ -49,6 +49,130 @@ _pipe_meta: dict[str, dict[str, Any]] = {}
 _pipe_lora_strength: dict[str, float] = {}
 _pipe_lora_path: dict[str, Optional[Path]] = {}
 _pipe_lora_fused: dict[str, bool] = {}
+_torch_tuned = False
+
+
+def _env_flag(name: str) -> Optional[bool]:
+    raw = os.environ.get(name, "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def use_vae_tiling(offload: bool) -> bool:
+    """Tiling is a decode tax. Only when offloading, low VRAM, or SAMPLER_VAE_TILING=1."""
+    forced = _env_flag("SAMPLER_VAE_TILING")
+    if forced is not None:
+        return forced
+    return bool(offload)
+
+
+def want_cpu_offload(free_gb: Optional[float] = None) -> bool:
+    """SAMPLER_CPU_OFFLOAD=0 is a hard off. Auto-offload only if unset and free VRAM is tiny."""
+    env = _env_flag("SAMPLER_CPU_OFFLOAD")
+    if env is False:
+        return False
+    if env is True:
+        return True
+    if free_gb is None:
+        return False
+    return float(free_gb) < 24.0
+
+
+def _cuda_gc() -> None:
+    try:
+        import gc
+        gc.collect()
+    except Exception:
+        pass
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def unload_pipes(keep: Optional[str] = None) -> list[str]:
+    """Drop cached Diffusers pipes so the next model can actually fit next to vLLM."""
+    dropped: list[str] = []
+    keep_id = resolve_model_id(keep) if keep else None
+    for k in list(_pipes.keys()):
+        if keep_id and k == keep_id:
+            continue
+        try:
+            pipe = _pipes.pop(k, None)
+            if pipe is not None:
+                del pipe
+        except Exception:
+            _pipes.pop(k, None)
+        _pipe_meta.pop(k, None)
+        _pipe_lora_strength.pop(k, None)
+        _pipe_lora_path.pop(k, None)
+        _pipe_lora_fused.pop(k, None)
+        dropped.append(k)
+    if dropped:
+        print(f"unloaded pipes {dropped} keep={keep_id}")
+        _cuda_gc()
+    return dropped
+
+
+def _tune_torch() -> None:
+    """Once-per-process CUDA matmul / SDPA knobs. Safe no-op on CPU."""
+    global _torch_tuned
+    if _torch_tuned:
+        return
+    _torch_tuned = True
+    try:
+        import torch
+    except Exception:
+        return
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+    except Exception:
+        pass
+    try:
+        torch.set_float32_matmul_precision("high")
+    except Exception:
+        pass
+    try:
+        torch.backends.cuda.enable_flash_sdp(True)
+        torch.backends.cuda.enable_mem_efficient_sdp(True)
+    except Exception:
+        pass
+
+
+def _enable_fast_attn(pipe: Any) -> None:
+    if getattr(pipe, "transformer", None) is not None and getattr(pipe, "unet", None) is None:
+        print("skip xformers/SDPA processor swap on DiT transformer")
+        return
+    fn = getattr(pipe, "enable_xformers_memory_efficient_attention", None)
+    if callable(fn):
+        try:
+            fn()
+            print("enabled xformers attention")
+            return
+        except Exception as exc:
+            print(f"xformers attention skipped: {exc}")
+    try:
+        from diffusers.models.attention_processor import AttnProcessor2_0
+    except Exception:
+        return
+    # Never swap processors on DiT `transformer` (Krea2Attention has no spatial_norm;
+    # Qwen joint attn unpacks (img, txt)). UNet-only is safe.
+    proc = AttnProcessor2_0()
+    unet = getattr(pipe, "unet", None)
+    setter = getattr(unet, "set_attn_processor", None) if unet is not None else None
+    if callable(setter):
+        try:
+            setter(proc)
+            print("enabled SDPA AttnProcessor2_0 on unet")
+        except Exception as exc:
+            print(f"SDPA on unet skipped: {exc}")
 
 
 class StubModelError(RuntimeError):
@@ -342,9 +466,12 @@ def available_model_ids() -> list[str]:
     return [m for m in MODEL_IDS if weights_present(m)]
 
 
-def _enable_vae_memory_savers(pipe: Any) -> None:
-    """Cut VAE decode peak memory (OOM was observed after 24/24 steps beside :8000)."""
-    for name in ("enable_vae_slicing", "enable_vae_tiling"):
+def _enable_vae_memory_savers(pipe: Any, *, tiling: bool = False) -> None:
+    """Slicing is cheap. Tiling is slow — only when offload/low VRAM asked for it."""
+    names = ["enable_vae_slicing"]
+    if tiling:
+        names.append("enable_vae_tiling")
+    for name in names:
         fn = getattr(pipe, name, None)
         if not callable(fn):
             continue
@@ -353,10 +480,12 @@ def _enable_vae_memory_savers(pipe: Any) -> None:
             print(f"enabled {name}")
         except Exception as exc:
             print(f"{name} failed: {exc}")
-    # Some pipelines expose vae helpers directly
     vae = getattr(pipe, "vae", None)
     if vae is not None:
-        for name in ("enable_slicing", "enable_tiling"):
+        vae_names = ["enable_slicing"]
+        if tiling:
+            vae_names.append("enable_tiling")
+        for name in vae_names:
             fn = getattr(vae, name, None)
             if callable(fn):
                 try:
@@ -368,27 +497,26 @@ def _enable_vae_memory_savers(pipe: Any) -> None:
 
 def _to_device(pipe: Any, dtype):
     import torch
+    _tune_torch()
     strip_safety(pipe)
+    _enable_fast_attn(pipe)
     dev = _device()
-    env_off = os.environ.get("SAMPLER_CPU_OFFLOAD", "").strip().lower() in {"1", "true", "yes", "on"}
-    auto_off = False
-    if dev == "cuda" and hasattr(pipe, "enable_model_cpu_offload"):
+    free_gb = None
+    if dev == "cuda":
         try:
-            free_b, total_b = torch.cuda.mem_get_info()
+            free_b, _total_b = torch.cuda.mem_get_info()
             free_gb = free_b / (1024**3)
-            # vLLM sidecar typically holds ~60%+; require headroom for full Krea on GPU
-            auto_off = free_gb < 70.0
-            print(f"cuda_free_gb={free_gb:.1f} auto_offload={auto_off} env_offload={env_off}")
         except Exception as exc:
-            print(f"mem_get_info failed ({exc}); defaulting to offload")
-            auto_off = True
-        if env_off or auto_off:
-            print("using enable_model_cpu_offload (coexist with :8000)")
-            pipe.enable_model_cpu_offload()
-            _enable_vae_memory_savers(pipe)
-            return strip_safety(pipe)
-        pipe = pipe.to("cuda")
-    elif dev == "cuda":
+            print(f"mem_get_info failed ({exc})")
+    offload = want_cpu_offload(free_gb)
+    env = _env_flag("SAMPLER_CPU_OFFLOAD")
+    print(f"cuda_free_gb={free_gb if free_gb is not None else 'n/a'} offload={offload} env_offload={env}")
+    if dev == "cuda" and offload and hasattr(pipe, "enable_model_cpu_offload"):
+        print("using enable_model_cpu_offload (coexist with :8000)")
+        pipe.enable_model_cpu_offload()
+        _enable_vae_memory_savers(pipe, tiling=use_vae_tiling(True))
+        return strip_safety(pipe)
+    if dev == "cuda":
         pipe = pipe.to("cuda")
     elif dev == "mps":
         if dtype == torch.bfloat16:
@@ -397,7 +525,7 @@ def _to_device(pipe: Any, dtype):
             except Exception:
                 pass
         pipe = pipe.to("mps")
-    _enable_vae_memory_savers(pipe)
+    _enable_vae_memory_savers(pipe, tiling=use_vae_tiling(offload))
     return strip_safety(pipe)
 
 
@@ -474,9 +602,11 @@ def _load_qwen_image(model_id: str):
     # enable_model_cpu_offload breaks QwenImagePipeline (bmm CPU/CUDA mismatch).
     # Spark GB10 unified memory: keep Instruction fully on CUDA like Draft.
     strip_safety(pipe)
+    _tune_torch()
+    # Do not swap AttnProcessor2_0 onto Qwen joint img/txt attn (unpacks 1-tuple).
     if _device() == "cuda":
         pipe = pipe.to("cuda")
-        _enable_vae_memory_savers(pipe)
+        _enable_vae_memory_savers(pipe, tiling=use_vae_tiling(False))
         pipe = strip_safety(pipe)
     else:
         pipe = _to_device(pipe, dtype)
@@ -503,9 +633,11 @@ def _load_qwen_edit(model_id: str):
         _attach_lora(pipe, lp, 0.7, "qwen-edit-nsfw")
     # Same as Instruction/Draft: cpu_offload breaks Qwen2.5-VL pipelines on this stack.
     strip_safety(pipe)
+    _tune_torch()
+    # Stock Qwen joint attention — AttnProcessor2_0 returns 1 tensor, pipeline expects (img, txt).
     if _device() == "cuda":
         pipe = pipe.to("cuda")
-        _enable_vae_memory_savers(pipe)
+        _enable_vae_memory_savers(pipe, tiling=use_vae_tiling(False))
         pipe = strip_safety(pipe)
     else:
         pipe = _to_device(pipe, dtype)
@@ -525,11 +657,13 @@ def _load_draft(model_id: str):
         raise StubModelError(f"ZImagePipeline not in diffusers pin: {exc}") from exc
     pipe = cls.from_pretrained(repo, torch_dtype=dtype)
     # ZImagePipeline + enable_model_cpu_offload hits CUDA/CPU matmul mismatch.
-    # Keep Draft fully on GPU; VAE savers still enabled.
+    # Keep Draft fully on GPU; VAE slicing still enabled (tiling off unless env).
     strip_safety(pipe)
+    _tune_torch()
+    _enable_fast_attn(pipe)
     if _device() == "cuda":
         pipe = pipe.to("cuda")
-        _enable_vae_memory_savers(pipe)
+        _enable_vae_memory_savers(pipe, tiling=use_vae_tiling(False))
         pipe = strip_safety(pipe)
     else:
         pipe = _to_device(pipe, dtype)
@@ -537,25 +671,41 @@ def _load_draft(model_id: str):
     return pipe
 
 
+def _construct_pipe(mid: str) -> tuple[str, Any]:
+    if mid == FAST_MODEL_ID:
+        return mid, _load_krea(mid, turbo=True)
+    if mid == KLEIN_MODEL_ID:
+        return mid, _load_klein(mid)
+    if mid == QWEN_IMAGE_MODEL_ID:
+        return mid, _load_qwen_image(mid)
+    if mid == QWEN_EDIT_MODEL_ID:
+        return mid, _load_qwen_edit(mid)
+    if mid == DRAFT_MODEL_ID:
+        return mid, _load_draft(mid)
+    if mid in (SEEDVR2_MODEL_ID, ANIME_MODEL_ID, PONY_MODEL_ID):
+        raise StubModelError(f"{mid} is optional/stub zoo or upscale — not loaded as hero")
+    return QUALITY_MODEL_ID, _load_krea(QUALITY_MODEL_ID, turbo=False)
+
+
 def load_pipe(model_id: Optional[str] = None):
+    _tune_torch()
     mid = resolve_model_id(model_id)
     if mid in _pipes:
         return _pipes[mid]
-    if mid == FAST_MODEL_ID:
-        pipe = _load_krea(mid, turbo=True)
-    elif mid == KLEIN_MODEL_ID:
-        pipe = _load_klein(mid)
-    elif mid == QWEN_IMAGE_MODEL_ID:
-        pipe = _load_qwen_image(mid)
-    elif mid == QWEN_EDIT_MODEL_ID:
-        pipe = _load_qwen_edit(mid)
-    elif mid == DRAFT_MODEL_ID:
-        pipe = _load_draft(mid)
-    elif mid in (SEEDVR2_MODEL_ID, ANIME_MODEL_ID, PONY_MODEL_ID):
-        raise StubModelError(f"{mid} is optional/stub zoo or upscale — not loaded as hero")
-    else:
-        pipe = _load_krea(QUALITY_MODEL_ID, turbo=False)
-        mid = QUALITY_MODEL_ID
+    dropped = unload_pipes()
+    if dropped:
+        print(f"evicted {dropped} before load {mid}")
+    try:
+        mid, pipe = _construct_pipe(mid)
+    except Exception as exc:
+        name = type(exc).__name__
+        if "out of memory" in str(exc).lower() or "OutOfMemory" in name:
+            print(f"load OOM ({name}); evict and retry {mid}")
+            unload_pipes()
+            _cuda_gc()
+            mid, pipe = _construct_pipe(mid)
+        else:
+            raise
     _pipes[mid] = pipe
     return pipe
 
@@ -578,40 +728,176 @@ def _decode_image_b64(image_b64: Optional[str]):
     return img
 
 
+FACESWAP_DEFAULT_PROMPT = (
+    "Replace the face of the person in the first image with the identity from the second image. "
+    "Keep pose, body, clothing, hands, lighting, camera, and scene. "
+    "Match identity: bone structure, eyes, nose, mouth, skin. Photoreal, no extra people, no watermark."
+)
+
+
+def compose_faceswap_prompt(user_prompt: str) -> str:
+    """Keep user instructions; fill a full ID-swap brief when the box is empty."""
+    p = (user_prompt or "").strip()
+    if not p:
+        return FACESWAP_DEFAULT_PROMPT
+    low = p.lower()
+    if any(k in low for k in ("face", "identity", "swap", "id ")):
+        return p
+    return p.rstrip(".") + ". " + FACESWAP_DEFAULT_PROMPT
+
+
+def snap8(n: int) -> int:
+    return max(64, int(round(int(n) / 8.0) * 8))
+
+
+def size_from_ratio(rw: float, rh: float, long_edge: int) -> tuple[int, int]:
+    """Long-edge canvas from aspect ratio. Matches src/lib/imageAspect.ts sizeFromRatio."""
+    le = max(64, int(long_edge) or 1024)
+    aw, ah = max(1.0, float(rw)), max(1.0, float(rh))
+    if aw >= ah:
+        return snap8(le), snap8(le * ah / aw)
+    return snap8(le * aw / ah), snap8(le)
+
+
+def fit_size_inside(rw: float, rh: float, box_w: int, box_h: int) -> tuple[int, int]:
+    """Largest snap8 size with ratio rw:rh that fits in box. Never stretches."""
+    aw, ah = max(1.0, float(rw)), max(1.0, float(rh))
+    bw, bh = max(64, int(box_w)), max(64, int(box_h))
+    scale = min(bw / aw, bh / ah)
+    return max(64, snap8(aw * scale)), max(64, snap8(ah * scale))
+
+
+def _anchor_xy(cw: int, ch: int, nw: int, nh: int, anchor: str = "center") -> tuple[int, int]:
+    a = (anchor or "center").strip().lower()
+    if a in ("top", "north"):
+        return (cw - nw) // 2, 0
+    if a in ("bottom", "south"):
+        return (cw - nw) // 2, max(0, ch - nh)
+    if a in ("left", "west"):
+        return 0, (ch - nh) // 2
+    if a in ("right", "east"):
+        return max(0, cw - nw), (ch - nh) // 2
+    return (cw - nw) // 2, (ch - nh) // 2
+
+
+def fit_contain(img: Any, canvas_w: int, canvas_h: int, fill: tuple[int, int, int] = (40, 40, 44), anchor: str = "center") -> Any:
+    """Scale image to fit inside canvas. Never stretch. Pad leftover. Reposition via anchor."""
+    cw, ch = max(1, int(canvas_w)), max(1, int(canvas_h))
+    try:
+        iw, ih = img.size
+    except Exception:
+        return img
+    iw, ih = int(iw), int(ih)
+    if iw <= 0 or ih <= 0:
+        return img
+    scale = min(cw / float(iw), ch / float(ih))
+    nw, nh = max(1, int(round(iw * scale))), max(1, int(round(ih * scale)))
+    fitted = _resize_rgb(img, (nw, nh))
+    if nw == cw and nh == ch:
+        return fitted
+    try:
+        from PIL import Image as PILImage
+        if not isinstance(fitted, PILImage.Image):
+            return fitted
+        canvas = PILImage.new("RGB", (cw, ch), fill)
+        x, y = _anchor_xy(cw, ch, nw, nh, anchor)
+        canvas.paste(fitted.convert("RGB"), (x, y))
+        return canvas
+    except Exception:
+        return fitted
+
+
+def _resize_rgb(img: Any, wh: tuple[int, int]) -> Any:
+    try:
+        from PIL import Image as PILImage
+        return img.resize(wh, resample=PILImage.Resampling.LANCZOS)
+    except TypeError:
+        return img.resize(wh)
+    except Exception:
+        try:
+            return img.resize(wh)
+        except Exception:
+            return img
+
+
+def _cap_edge(img: Any, max_edge: int) -> Any:
+    try:
+        w, h = img.size
+    except Exception:
+        return img
+    m = max(int(w), int(h))
+    if m <= max_edge:
+        return img
+    scale = max_edge / float(m)
+    nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+    return _resize_rgb(img, (nw, nh))
+
+
+def pack_edit_images(target: Any, identity: Any = None, canvas_w: Optional[int] = None, canvas_h: Optional[int] = None) -> Any:
+    """Qwen-Edit-Plus: first image is the edit target, later images are ID/refs.
+
+    Target is fit-contained (never stretched). Identity is capped on long edge, ratio kept.
+    """
+    if target is None:
+        return None
+    t = target
+    if canvas_w and canvas_h:
+        t = fit_contain(target, int(canvas_w), int(canvas_h))
+    if identity is None:
+        return t
+    return [t, _cap_edge(identity, 1024)]
+
+
 def generate_pil(prompt: str, *, model: Optional[str] = None, width: int = 1328, height: int = 1328,
                  steps: Optional[int] = None, guidance: Optional[float] = None, seed: Optional[int] = None,
                  lora_strength: Optional[float] = None,
                  image_b64: Optional[str] = None,
+                 id_image_b64: Optional[str] = None,
+                 faceswap: bool = False,
+                 id_type: str = "",
+                 id_kind: str = "",
+                 anchor: str = "center",
                  on_step: Optional[Callable[..., Any]] = None):
     import torch
     mid = resolve_model_id(model)
     params = sampler_params(mid)
     max_edge = int(os.environ.get("SAMPLER_MAX_EDGE", str(params["max_edge"])))
-    w, h = _clamp_edge(width, height, max_edge)
+    media_w, media_h = _clamp_edge(width, height, max_edge)
     n_steps = int(steps if steps is not None else os.environ.get("SAMPLER_STEPS", params["steps"]))
     gscale = float(guidance if guidance is not None else os.environ.get("SAMPLER_GUIDANCE", params["guidance"]))
     # Per-request LoRA: set env before first load so attach uses it; rescale if already loaded.
     if lora_strength is not None and mid == QUALITY_MODEL_ID:
         os.environ["SAMPLER_LORA_STRENGTH"] = str(float(lora_strength))
     pipe = load_pipe(mid)
+    holder = [pipe]
     if lora_strength is not None and mid == QUALITY_MODEL_ID:
         apply_lora_strength(mid, float(lora_strength))
-    try:
-        import gc
-        gc.collect()
-        if _device() == "cuda":
-            torch.cuda.empty_cache()
-    except Exception:
-        pass
-    kwargs: dict[str, Any] = dict(prompt=prompt, width=w, height=h, num_inference_steps=n_steps, guidance_scale=gscale)
+    if faceswap:
+        prompt = compose_faceswap_prompt(prompt)
     ref = _decode_image_b64(image_b64)
+    ident = _decode_image_b64(id_image_b64)
+    # Source content keeps its own ratio. Media size is only the output frame.
+    # ID/passport uses ISO/IEC 7810 physical aspect, not the phone-scan crop.
+    gen_w, gen_h = media_w, media_h
     if ref is not None:
-        # Qwen-Image-Edit and similar pipelines expect image=.
         try:
-            ref = ref.resize((w, h))
+            iw, ih = ref.size
+            rw, rh = float(iw), float(ih)
+            if id_type:
+                from id_pipeline import id_content_ratio
+                rw, rh = id_content_ratio(id_type, iw, ih)
+            gen_w, gen_h = fit_size_inside(rw, rh, media_w, media_h)
         except Exception:
-            pass
-        kwargs["image"] = ref
+            gen_w, gen_h = media_w, media_h
+    kwargs: dict[str, Any] = dict(prompt=prompt, width=gen_w, height=gen_h, num_inference_steps=n_steps, guidance_scale=gscale)
+    packed = pack_edit_images(ref, ident, gen_w, gen_h)
+    if packed is not None:
+        # Qwen-Image-Edit-Plus: image=[target, identity].
+        kwargs["image"] = packed
+    if id_type:
+        from id_pipeline import ID_NEGATIVE_PROMPT
+        kwargs["negative_prompt"] = ID_NEGATIVE_PROMPT
+        kwargs["true_cfg_scale"] = 4.0
     if seed is not None:
         try:
             kwargs["generator"] = torch.Generator(device=_device()).manual_seed(int(seed))
@@ -626,30 +912,104 @@ def generate_pil(prompt: str, *, model: Optional[str] = None, width: int = 1328,
                 pass
         return callback_kwargs
 
-    try:
-        out = pipe(**kwargs, callback_on_step_end=_cb) if on_step else pipe(**kwargs)
-    except TypeError:
-        # Pipeline may not accept image= — retry without for txt2img stubs.
-        if "image" in kwargs:
-            kwargs.pop("image", None)
+    def _call(kw: dict[str, Any]):
+        p = holder[0]
+        attempt = dict(kw)
+        for _ in range(3):
             try:
-                out = pipe(**kwargs, callback_on_step_end=_cb) if on_step else pipe(**kwargs)
-            except TypeError:
-                out = pipe(**kwargs)
-        else:
-            out = pipe(**kwargs)
-    return out.images[0]
+                if on_step:
+                    return p(**attempt, callback_on_step_end=_cb)
+                return p(**attempt)
+            except TypeError as exc:
+                msg = str(exc).lower()
+                dropped = False
+                if "true_cfg_scale" in attempt and ("true_cfg" in msg or "unexpected keyword" in msg):
+                    attempt.pop("true_cfg_scale", None)
+                    dropped = True
+                elif "negative_prompt" in attempt and ("negative" in msg or "unexpected keyword" in msg):
+                    attempt.pop("negative_prompt", None)
+                    dropped = True
+                if dropped:
+                    continue
+                raise
+
+    def _invoke(kw: dict[str, Any]):
+        try:
+            return _call(kw)
+        except TypeError:
+            img_arg = kw.get("image")
+            if isinstance(img_arg, list) and len(img_arg) >= 2:
+                target, ident_img = img_arg[0], img_arg[1]
+                for extra_key in ("ref_images", "image_2", "extra_images"):
+                    alt = dict(kw)
+                    alt["image"] = target
+                    alt[extra_key] = [ident_img] if extra_key == "ref_images" else ident_img
+                    try:
+                        return _call(alt)
+                    except TypeError:
+                        alt.pop(extra_key, None)
+                kw = dict(kw)
+                kw["image"] = target
+                try:
+                    return _call(kw)
+                except TypeError:
+                    kw.pop("image", None)
+                    return pipe(**kw)
+            if "image" in kw:
+                kw = dict(kw)
+                kw.pop("image", None)
+                try:
+                    return _call(kw)
+                except TypeError:
+                    return pipe(**kw)
+            return pipe(**kw)
+
+    ctx = torch.inference_mode() if hasattr(torch, "inference_mode") else torch.no_grad()
+    oom_err = getattr(getattr(torch, "cuda", None), "OutOfMemoryError", RuntimeError)
+    with ctx:
+        try:
+            out = _invoke(kwargs)
+        except oom_err:
+            print("infer OOM; evict, reload, retry")
+            unload_pipes()
+            _cuda_gc()
+            holder[0] = load_pipe(mid)
+            if lora_strength is not None and mid == QUALITY_MODEL_ID:
+                apply_lora_strength(mid, float(lora_strength))
+            out = _invoke(kwargs)
+    img = out.images[0]
+    if id_type and packed is not None:
+        try:
+            from id_pipeline import lock_source_document
+            src = packed[0] if isinstance(packed, list) else packed
+            kind = (id_kind or ("portrait" if ident is not None else "clean")).strip().lower()
+            img = lock_source_document(src, img, kind=kind, id_type=id_type)
+        except Exception:
+            pass
+    if (gen_w, gen_h) != (media_w, media_h):
+        img = fit_contain(img, media_w, media_h, anchor=anchor)
+    return img
 
 
 def generate_png_bytes(prompt: str, *, model: Optional[str] = None, width: int = 1328, height: int = 1328,
                        steps: Optional[int] = None, guidance: Optional[float] = None, seed: Optional[int] = None,
                        lora_strength: Optional[float] = None,
                        image_b64: Optional[str] = None,
+                       id_image_b64: Optional[str] = None,
+                       faceswap: bool = False,
+                       id_type: str = "",
+                       id_kind: str = "",
+                       anchor: str = "center",
                        on_step: Optional[Callable[..., Any]] = None) -> bytes:
     img = generate_pil(prompt, model=model, width=width, height=height, steps=steps, guidance=guidance, seed=seed,
-                       lora_strength=lora_strength, image_b64=image_b64, on_step=on_step)
+                       lora_strength=lora_strength, image_b64=image_b64, id_image_b64=id_image_b64,
+                       faceswap=faceswap, id_type=id_type, id_kind=id_kind, anchor=anchor, on_step=on_step)
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    # compress_level=1: much faster encode; payload still PNG. Default 6 is a CPU stall after GPU.
+    try:
+        img.save(buf, format="PNG", compress_level=1)
+    except TypeError:
+        img.save(buf, format="PNG")
     return buf.getvalue()
 
 

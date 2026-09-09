@@ -58,7 +58,10 @@ const KLEIN_ALIASES = new Set([KLEIN_IMAGE_MODEL, 'klein-9b', 'flux-klein-9b', '
 const FAST_ALIASES = new Set([FAST_IMAGE_MODEL, 'fast', 'turbo', 'nvfp4', 'krea2-turbo-nvfp4']);
 const QUALITY_ALIASES = new Set([UNCENSORED_IMAGE_MODEL, 'quality', 'hero', 'krea2', 'krea2-raw', 'krea', 'raw']);
 const INSTRUCTION_ALIASES = new Set([QWEN_IMAGE_MODEL, 'qwen-image', 'instruction', 'type']);
-const EDIT_ALIASES = new Set([QWEN_EDIT_IMAGE_MODEL, 'qwen-edit', 'edit']);
+const EDIT_ALIASES = new Set([
+  QWEN_EDIT_IMAGE_MODEL, 'qwen-edit', 'edit', 'faceswap', 'face-swap', 'id-swap',
+  'id', 'id_clean', 'id-clean', 'id_back', 'id-back', 'id_portrait', 'id-portrait',
+]);
 
 export function migrateSparkImageModel(stored?: string | null): string {
   const raw = (stored || '').trim();
@@ -118,6 +121,7 @@ export function sparkImageSettingsPatch(settings: Pick<ClientSettings, 'sparkLan
   // Electron talks raw :7860 / LAN; Vite proxy only helps browser DEV against loopback.
   return {
     imageGenEnabled: true,
+    imageBackend: 'spark',
     imageBaseUrl: sparkImageUrl(settings),
     imageModel: resolveSparkImageModel(model),
     imageViaProxy: isElectron ? false : loopback,
@@ -126,7 +130,9 @@ export function sparkImageSettingsPatch(settings: Pick<ClientSettings, 'sparkLan
 
 export const IMAGE_MODEL_OPTIONS = [...SPARK_IMAGE_MODELS, { id: 'seedvr2-7b-fp8', label: 'Upscale — SeedVR2 (after RAW)' }, { id: 'flux2-dev', label: 'Max photoreal - FLUX.2 [dev] (gated)' }] as const;
 
-export function sparkBridgeDownHint(): string { return 'Bridge down on :7860.'; }
+export function sparkBridgeDownHint(_settings?: Pick<ClientSettings, 'sparkLanHost' | 'sparkSshAlias'>): string {
+  return 'Bridge down on :7860.';
+}
 export function sparkOpsCheatSheet(): { label: string; cmd: string }[] { return [{ label: 'Push + start', cmd: 'bash spark-install/push.sh YOUR_SYNC_ALIAS --start' }]; }
 
 /** Hint for starting the image bridge on Spark (SSH / local install). */

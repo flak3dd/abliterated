@@ -16,21 +16,55 @@ import {
   Square,
   Trash2,
   Upload,
+  UserRound,
+  CreditCard,
   X,
 } from 'lucide-react';
 import { useToast } from '../components/common/Toast';
 import { bridge } from '../lib/bridgeClient';
 import { cn } from '../lib/cn';
-import { friendlyImageError, generateImage, imageEndpointUrl, isBridgeOfflineError, pingImageEndpoint } from '../lib/imageGen';
+import { compactFileToDataUrl, friendlyImageError, generateImage, imageEndpointUrl, isBridgeOfflineError, pingImageEndpoint, type ImageGenResult } from '../lib/imageGen';
+import {
+  XAI_IMAGE_MODEL,
+  XAI_QUALITIES,
+  XAI_RESOLUTIONS,
+  isXaiImageBackend,
+  resolveXaiImageModel,
+  xaiImageSettingsPatch,
+} from '../lib/xaiImage';
 import {
   IMAGE_LIBRARY_MAX,
   deleteLibraryImage,
-  estimateImageProgress,
+  formatImageElapsed,
   getLibraryImageDataUrl,
+  imageProgressSoftStatus,
   listLibraryImages,
   saveGeneratedImage,
   type StoredImageMeta,
 } from '../lib/imageLibrary';
+import {
+  composeIdPrompt,
+  ID_MIN_EDGE_PX,
+  ID_TEMPLATES,
+  ID_TYPES,
+  idContentRatio,
+  idIntent,
+  lowRes,
+  probeImageSize,
+  type IdDocType,
+  type IdKind,
+  type IdLook,
+} from '../lib/idPipeline';
+import {
+  IMAGE_RATIOS,
+  LONG_EDGES,
+  nearestLongEdge,
+  nearestRatioId,
+  parseSize,
+  sizeForRatio,
+  type LongEdge,
+  type RatioId,
+} from '../lib/imageAspect';
 import {
   ANIME_IMAGE_MODEL,
   BUILD_D,
@@ -59,16 +93,6 @@ interface Props {
   settings: ClientSettings;
   onSettingsChange: (s: ClientSettings) => void;
 }
-
-const SIZES = [
-  { id: '1328x1328', label: '1:1 1328 (RAW)' },
-  { id: '1536x1536', label: '1:1 1536 max' },
-  { id: '1024x1024', label: '1:1 1024' },
-  { id: '768x768', label: '1:1 768' },
-  { id: '512x512', label: '1:1 512' },
-] as const;
-
-type SizeId = (typeof SIZES)[number]['id'];
 
 const BATCH_NS = [1, 2, 3, 4] as const;
 const PROMPT_HISTORY_KEY = 'ablit_image_prompt_history';
@@ -142,18 +166,9 @@ function isElectronDesktop(): boolean {
   return typeof window !== 'undefined' && !!window.ablitDesktop;
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(reader.error || new Error('read failed'));
-    reader.readAsDataURL(file);
-  });
-}
-
 function stripDataUrlBase64(dataUrl: string): string {
   const s = (dataUrl || '').trim();
-  if (s.startsWith('data:') && s.includes(',')) return s.split(',', 1)[1] || '';
+  if (s.startsWith('data:') && s.includes(',')) return s.slice(s.indexOf(',') + 1);
   return s;
 }
 
@@ -165,10 +180,117 @@ function chipOn(on: boolean, opts?: { muted?: boolean }) {
   );
 }
 
+function ImageDropSlot({
+  label,
+  preview,
+  dragOver,
+  emptyHint,
+  onPick,
+  onClear,
+  onUsePreview,
+  fileRef,
+  setDragOver,
+}: {
+  label: string;
+  preview: string | null;
+  dragOver: boolean;
+  emptyHint: string;
+  onPick: (file: File | null | undefined) => void;
+  onClear: () => void;
+  onUsePreview?: () => void;
+  fileRef: { current: HTMLInputElement | null };
+  setDragOver: (v: boolean) => void;
+}) {
+  return (
+    <div>
+      <div className="mb-1 font-mono text-[10px] uppercase text-muted">{label}</div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => void onPick(e.target.files?.[0])}
+      />
+      <div
+        role="button"
+        tabIndex={0}
+        className={cn(
+          'flex min-h-[7rem] cursor-pointer flex-col items-center justify-center gap-2 rounded border border-dashed px-3 py-3 text-center transition-colors',
+          dragOver ? 'border-sky-500/70 bg-sky-950/30' : 'border-border bg-background/40',
+          preview ? 'border-emerald-700/50' : '',
+        )}
+        onClick={() => fileRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            fileRef.current?.click();
+          }
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          void onPick(e.dataTransfer.files?.[0]);
+        }}
+      >
+        {preview ? (
+          <div className="flex w-full flex-col items-center gap-2">
+            <img src={preview} alt="" className="max-h-36 rounded object-contain" />
+            <div className="flex flex-wrap justify-center gap-1.5">
+              <button
+                type="button"
+                className="chip text-[9px]"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fileRef.current?.click();
+                }}
+              >
+                <Upload size={10} /> Replace
+              </button>
+              <button
+                type="button"
+                className="chip text-[9px] text-red-300/90"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClear();
+                }}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <ImagePlus size={18} className="text-zinc-500" />
+            <span className="font-mono text-[10px] text-zinc-400">{emptyHint}</span>
+            {onUsePreview ? (
+              <button
+                type="button"
+                className="chip text-[9px]"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUsePreview();
+                }}
+              >
+                Use current preview
+              </button>
+            ) : null}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ImagesScreen({ settings, onSettingsChange }: Props) {
   const toast = useToast();
   const [prompt, setPrompt] = useState('');
-  const [size, setSize] = useState<SizeId>('1024x1024');
+  const [ratioId, setRatioId] = useState<RatioId>('1:1');
+  const [longEdge, setLongEdge] = useState<LongEdge>(1024);
   const [batchN, setBatchN] = useState<(typeof BATCH_NS)[number]>(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -186,6 +308,8 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
   const [progress, setProgress] = useState<number | null>(null);
   const [progressEst, setProgressEst] = useState(true);
   const [progressFailed, setProgressFailed] = useState(false);
+  const [progressElapsedMs, setProgressElapsedMs] = useState(0);
+  const [progressServerStatus, setProgressServerStatus] = useState<string>('');
 
   const [library, setLibrary] = useState<StoredImageMeta[]>([]);
   const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({});
@@ -206,10 +330,24 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
   const [refImageB64, setRefImageB64] = useState<string | null>(null);
   const [refDragOver, setRefDragOver] = useState(false);
   const refFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [editKind, setEditKind] = useState<'edit' | 'faceswap' | 'id'>('edit');
+  const [idDocType, setIdDocType] = useState<IdDocType>('drivers_license');
+  const [idCountry, setIdCountry] = useState('');
+  const [idLook, setIdLook] = useState<IdLook>('capture');
+  const [idTemplateId, setIdTemplateId] = useState<string | null>(null);
+  const [backImagePreview, setBackImagePreview] = useState<string | null>(null);
+  const [backImageB64, setBackImageB64] = useState<string | null>(null);
+  const [backDragOver, setBackDragOver] = useState(false);
+  const backFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [idImagePreview, setIdImagePreview] = useState<string | null>(null);
+  const [idImageB64, setIdImageB64] = useState<string | null>(null);
+  const [idDragOver, setIdDragOver] = useState(false);
+  const idFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const thumbCache = useRef<Record<string, string>>({});
   const progressEstRef = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
+  const busyRef = useRef(false);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const modelSelectRef = useRef<HTMLSelectElement | null>(null);
   const generateCardRef = useRef<HTMLDivElement | null>(null);
@@ -300,7 +438,15 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
     return () => {
       healthAbortRef.current?.abort();
     };
-  }, [settings.imageGenEnabled, settings.imageBaseUrl, settings.imageViaProxy, settings.imageToken]);
+  }, [
+    settings.imageGenEnabled,
+    settings.imageBackend,
+    settings.imageBaseUrl,
+    settings.imageViaProxy,
+    settings.imageToken,
+    settings.xaiImageBaseUrl,
+    settings.xaiImageToken,
+  ]);
 
   // Electron: prefer Via proxy off (Vite /image-v1 is a DEV-browser concern and causes 502s with Sync/tunnel).
   useEffect(() => {
@@ -350,7 +496,11 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
       await saveGeneratedImage({
         prompt: p,
         size: sz,
-        model: model || settings.imageModel || UNCENSORED_IMAGE_MODEL,
+        model:
+          model ||
+          (isXaiImageBackend(settings)
+            ? resolveXaiImageModel(settings.xaiImageModel)
+            : settings.imageModel || UNCENSORED_IMAGE_MODEL),
         b64: result.b64,
         url: result.url,
       });
@@ -373,88 +523,184 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
     setRefImageB64(null);
   };
 
-  const loadRefFile = async (file: File | null | undefined) => {
+  const clearIdImage = () => {
+    setIdImagePreview(null);
+    setIdImageB64(null);
+  };
+
+  const loadImageFile = async (
+    file: File | null | undefined,
+    setPreview: (s: string | null) => void,
+    setB64: (s: string | null) => void,
+  ) => {
     if (!file || !file.type.startsWith('image/')) {
       toast.warning('Pick an image file');
       return;
     }
     try {
-      const dataUrl = await readFileAsDataUrl(file);
-      setRefImagePreview(dataUrl);
-      setRefImageB64(stripDataUrlBase64(dataUrl) || null);
+      const dataUrl = await compactFileToDataUrl(file);
+      setPreview(dataUrl);
+      setB64(stripDataUrlBase64(dataUrl) || null);
     } catch (err) {
       toast.error('Could not read image', err instanceof Error ? err.message : String(err));
     }
   };
 
-  const generate = async () => {
-    const p = prompt.trim();
-    if (!p || busy) return;
-    const resolvedForGate = resolveSparkImageModel(settings.imageModel);
-    const editNeedsRef = resolvedForGate === QWEN_EDIT_IMAGE_MODEL;
-    if (editNeedsRef && !refImageB64) {
-      toast.warning('Edit needs a reference image', 'Drop or choose an image above Generate');
+  const loadRefFile = (file: File | null | undefined) => loadImageFile(file, setRefImagePreview, setRefImageB64);
+  const loadIdFile = (file: File | null | undefined) => loadImageFile(file, setIdImagePreview, setIdImageB64);
+  const loadBackFile = (file: File | null | undefined) => loadImageFile(file, setBackImagePreview, setBackImageB64);
+  const clearBackImage = () => {
+    setBackImagePreview(null);
+    setBackImageB64(null);
+  };
+
+  const usePreviewAsTarget = () => {
+    if (!previewSrc) {
+      toast.warning('No preview yet');
       return;
     }
+    setRefImagePreview(previewSrc);
+    setRefImageB64(stripDataUrlBase64(previewSrc) || null);
+  };
+
+  const generate = async (job?: {
+    prompt?: string;
+    intent?: string;
+    imageB64?: string | null;
+    idImageB64?: string | null;
+    idType?: string;
+    country?: string;
+    idLook?: string;
+    ratioId?: RatioId;
+    allowEmptyPrompt?: boolean;
+  }): Promise<ImageGenResult | null> => {
+    const p = (job?.prompt ?? prompt).trim();
+    if (busyRef.current) return null;
+    const resolvedForGate = resolveSparkImageModel(settings.imageModel);
+    const jobIntent = (job?.intent || '').trim();
+    const isIdJob = jobIntent.startsWith('id_');
+    const editNeedsRef = resolvedForGate === QWEN_EDIT_IMAGE_MODEL && editKind !== 'faceswap' && !isIdJob;
+    const faceswapNeeds = resolvedForGate === QWEN_EDIT_IMAGE_MODEL && editKind === 'faceswap' && !isIdJob;
+    const targetB64 = job?.imageB64 !== undefined ? job.imageB64 : refImageB64;
+    const identB64 = job?.idImageB64 !== undefined ? job.idImageB64 : idImageB64;
+    if (editNeedsRef && !targetB64) {
+      toast.warning('Edit needs a reference image', 'Drop or choose an image above Generate');
+      return null;
+    }
+    if (faceswapNeeds && (!targetB64 || !identB64)) {
+      toast.warning('ID swap needs both images', 'Identity face + target scene');
+      return null;
+    }
+    if (!p && !faceswapNeeds && !job?.allowEmptyPrompt) return null;
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
+    busyRef.current = true;
 
     setBusy(true);
     setError('');
     setErrorOpen(false);
     setB64(null);
     setRemoteUrl(null);
-    setProgress(0);
+    setProgress(null);
     setProgressEst(true);
     progressEstRef.current = true;
     setProgressFailed(false);
-    setPromptHistory(pushPromptHistory(p));
+    setProgressElapsedMs(0);
+    setProgressServerStatus('');
+    if (p) setPromptHistory(pushPromptHistory(p));
     historyCursorRef.current = -1;
+
+    let sourceDim: { width: number; height: number } | null = null;
+    const effectiveRatio = job?.ratioId || ratioId;
+    if (effectiveRatio === 'auto') {
+      const src = jobIntent === 'id_back' ? backImagePreview : refImagePreview || idImagePreview;
+      if (src) {
+        try {
+          sourceDim = await probeImageSize(src);
+        } catch {
+          sourceDim = null;
+        }
+      }
+      if (isIdJob) {
+        const iso = idContentRatio(job?.idType || idDocType, sourceDim?.width ?? 0, sourceDim?.height ?? 0);
+        sourceDim = { width: iso.w, height: iso.h };
+      }
+    }
+    const outSize = sizeForRatio(effectiveRatio, longEdge, sourceDim);
 
     const started = Date.now();
     const tick = window.setInterval(() => {
-      setProgress((prev) => {
-        if (prev != null && prev >= 100) return prev;
-        const est = estimateImageProgress(Date.now() - started);
-        if (prev != null && !progressEstRef.current && prev >= est) return prev;
-        progressEstRef.current = true;
-        setProgressEst(true);
-        return est;
-      });
-    }, 200);
+      setProgressElapsedMs(Date.now() - started);
+    }, 250);
 
     try {
+      const xai = isXaiImageBackend(settings);
       const resolvedModel = resolveSparkImageModel(settings.imageModel);
       const isQuality = resolvedModel === UNCENSORED_IMAGE_MODEL;
       const isEdit = resolvedModel === QWEN_EDIT_IMAGE_MODEL;
       const isDraftOrFast =
         resolvedModel === DRAFT_IMAGE_MODEL || resolvedModel === FAST_IMAGE_MODEL;
-      const genExtras = isQuality
-        ? {
-            steps: BUILD_D.steps,
-            guidance: BUILD_D.cfg,
-            loraStrength: BUILD_D.loraStrength,
-            intent: 'generate' as const,
-          }
-        : isEdit
-          ? { intent: 'edit' as const }
-          : isDraftOrFast || resolvedModel === QWEN_IMAGE_MODEL
-            ? { intent: 'generate' as const }
-            : {};
+      const genExtras = xai
+        ? jobIntent
+          ? { intent: jobIntent }
+          : isEdit && editKind === 'faceswap'
+            ? { intent: 'faceswap' as const }
+            : isEdit
+              ? { intent: 'edit' as const }
+              : { intent: 'generate' as const }
+        : isQuality
+          ? {
+              steps: BUILD_D.steps,
+              guidance: BUILD_D.cfg,
+              loraStrength: BUILD_D.loraStrength,
+              intent: 'generate' as const,
+            }
+          : jobIntent
+            ? { intent: jobIntent }
+            : isEdit && editKind === 'faceswap'
+              ? { intent: 'faceswap' as const }
+              : isEdit
+                ? { intent: 'edit' as const }
+                : isDraftOrFast || resolvedModel === QWEN_IMAGE_MODEL
+                  ? { intent: 'generate' as const }
+                  : {};
+      const requestPrompt = isIdJob
+        ? p
+        : p || (isEdit && editKind === 'faceswap' ? 'ID faceswap' : p);
+      const persistPrompt = isIdJob
+        ? composeIdPrompt({
+            kind: jobIntent === 'id_clean' ? 'clean' : jobIntent === 'id_back' ? 'back' : 'portrait',
+            userPrompt: p,
+            idType: job?.idType || idDocType,
+            country: job?.country || idCountry,
+            look: job?.idLook || idLook,
+          })
+        : requestPrompt;
       const result = await generateImage({
         settings,
-        prompt: p,
-        size,
-        n: batchN,
-        model: resolvedModel,
+        prompt: requestPrompt,
+        size: outSize,
+        n: isIdJob ? 1 : batchN,
+        model: xai ? resolveXaiImageModel(settings.xaiImageModel) : resolvedModel,
         ...genExtras,
-        ...(isEdit && refImageB64 ? { imageB64: refImageB64 } : {}),
+        ...((isEdit || isIdJob) && targetB64 ? { imageB64: targetB64 } : {}),
+        ...((isEdit && editKind === 'faceswap' && identB64) || (jobIntent === 'id_portrait' && identB64)
+          ? { idImageB64: identB64 || undefined }
+          : {}),
+        ...(job?.idType ? { idType: job.idType } : isIdJob ? { idType: idDocType } : {}),
+        ...(job?.country ? { country: job.country } : isIdJob && idCountry ? { country: idCountry } : {}),
+        ...(isIdJob ? { idLook: job?.idLook || idLook } : {}),
         abortSignal: ac.signal,
-        onProgress: (pct, estimated) => {
-          progressEstRef.current = estimated;
+        onProgress: (pct, estimated, info) => {
+          if (info?.status) setProgressServerStatus(info.status);
+          if (estimated) {
+            // Soft waiting only — never drive a fake determinate %.
+            return;
+          }
+          progressEstRef.current = false;
           setProgress((prev) => Math.max(prev ?? 0, pct));
-          setProgressEst(estimated);
+          setProgressEst(false);
         },
       });
       setB64(result.b64 || null);
@@ -466,11 +712,17 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         setError('Empty image payload');
         setErrorOpen(true);
         setProgressFailed(true);
-      } else {
-        for (const img of all) {
-          await persistResult(img, p, size);
-        }
+        return null;
       }
+      for (const img of all) {
+        await persistResult(
+          img,
+          persistPrompt,
+          outSize,
+          xai ? resolveXaiImageModel(settings.xaiImageModel) : resolvedModel,
+        );
+      }
+      return result;
     } catch (err) {
       if (isAbortError(err)) {
         setError('Cancelled');
@@ -485,42 +737,18 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         toast.error(friendly.split('.')[0] || 'Generation failed', isBridgeOfflineError(detail) ? 'See status card above' : friendly);
         if (isBridgeOfflineError(detail) && !endpointUserToggled) setEndpointOpen(true);
       }
+      return null;
     } finally {
       window.clearInterval(tick);
+      busyRef.current = false;
       setBusy(false);
       if (abortRef.current === ac) abortRef.current = null;
       window.setTimeout(() => {
         setProgress(null);
         setProgressFailed(false);
+        setProgressElapsedMs(0);
+        setProgressServerStatus('');
       }, 700);
-    }
-  };
-
-  const onPromptKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault();
-      void generate();
-      return;
-    }
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      const el = e.currentTarget;
-      const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
-      const emptyish = !prompt.trim() || (atStart && prompt.length < 4);
-      if (!atStart && !emptyish) return;
-      if (!promptHistory.length) return;
-      e.preventDefault();
-      {
-        const prev = historyCursorRef.current;
-        let next = prev;
-        if (e.key === 'ArrowUp') {
-          next = prev < 0 ? 0 : Math.min(promptHistory.length - 1, prev + 1);
-        } else {
-          next = prev <= 0 ? -1 : prev - 1;
-        }
-        historyCursorRef.current = next;
-        if (next < 0) setPrompt('');
-        else setPrompt(promptHistory[next] || '');
-      }
     }
   };
 
@@ -555,8 +783,9 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
 
   const useFromLibrary = (entry: StoredImageMeta) => {
     setPrompt(entry.prompt || '');
-    const sz = (SIZES.find((s) => s.id === entry.size)?.id || '1024x1024') as SizeId;
-    setSize(sz);
+    const dim = parseSize(entry.size || '1024x1024');
+    setLongEdge(nearestLongEdge(Math.max(dim.width, dim.height)));
+    setRatioId(nearestRatioId(dim.width, dim.height));
     if (entry.model?.trim()) patch({ imageModel: entry.model.trim() });
     generateCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     window.setTimeout(() => promptRef.current?.focus(), 50);
@@ -590,64 +819,41 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
     setTestNote('');
     setTestOk(null);
     setTestDetailOpen(false);
-    setBusy(true);
-    setProgress(0);
-    setProgressEst(true);
-    progressEstRef.current = true;
-    setProgressFailed(false);
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
-    const started = Date.now();
-    const tick = window.setInterval(() => {
-      setProgress(estimateImageProgress(Date.now() - started, 8000));
-      setProgressEst(true);
-    }, 150);
+    setHealthChecking(true);
+    const timeout = window.setTimeout(() => ac.abort(), 4000);
     try {
-      const result = await generateImage({
-        settings: { ...settings, imageGenEnabled: true },
-        prompt: 'tiny red square test',
-        size: '512x512',
-        abortSignal: ac.signal,
-        onProgress: (pct, estimated) => {
-          progressEstRef.current = estimated;
-          setProgress((prev) => Math.max(prev ?? 0, pct));
-          setProgressEst(estimated);
-        },
-      });
-      const note = result.b64
-        ? `ok b64 (${result.b64.length} chars)`
-        : result.url
-          ? `ok url ${result.url}`
-          : 'empty';
-      setTestNote(note);
-      setTestOk(!!(result.b64 || result.url));
-      if (result.b64) setB64(result.b64);
-      if (result.url) setRemoteUrl(result.url);
-      setProgress(100);
-      if (result.b64 || result.url) await persistResult(result, 'tiny red square test', '512x512');
-      if (!endpointUserToggled) setEndpointOpen(false);
+      const result = await pingImageEndpoint({ ...settings, imageGenEnabled: true }, ac.signal);
+      if (ac.signal.aborted) return;
+      setTestOk(result.ok);
+      setTestNote(result.note);
+      if (result.availableModels) setAvailableModels(result.availableModels);
+      else if (result.ok) setAvailableModels(null);
+      if (result.ok) {
+        toast.success('Image bridge reachable', result.note);
+        if (!endpointUserToggled) setEndpointOpen(false);
+      } else {
+        setAvailableModels([]);
+        toast.error('Bridge unreachable', 'Start tunnel / Use LAN / Open Endpoint');
+        if (!endpointUserToggled) setEndpointOpen(true);
+      }
     } catch (err) {
-      if (isAbortError(err)) {
+      if (isAbortError(err) || ac.signal.aborted) {
         setTestNote('Cancelled');
         setTestOk(null);
       } else {
         const { friendly, detail } = friendlyImageError(err);
         setTestNote(detail);
         setTestOk(false);
-        setTestDetailOpen(false);
-        setProgressFailed(true);
-        toast.error(friendly.split('.')[0] || 'Bridge offline', 'See the status card for Start tunnel / Use LAN');
+        toast.error(friendly.split('.')[0] || 'Bridge unreachable', 'See the status card above');
         if (!endpointUserToggled) setEndpointOpen(true);
       }
     } finally {
-      window.clearInterval(tick);
-      setBusy(false);
+      window.clearTimeout(timeout);
+      setHealthChecking(false);
       if (abortRef.current === ac) abortRef.current = null;
-      window.setTimeout(() => {
-        setProgress(null);
-        setProgressFailed(false);
-      }, 700);
     }
   };
 
@@ -665,6 +871,10 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
   };
 
   const modelAvailable = (model: string) => {
+    // xAI Imagine is interchangeable with Spark for txt2img + edit/ID/swap; Spark weight probes do not apply.
+    if (isXaiImageBackend(settings)) {
+      return model === UNCENSORED_IMAGE_MODEL || model === QWEN_EDIT_IMAGE_MODEL;
+    }
     // Quality hero assumed available when bridge is up unless probe explicitly excludes it.
     if (availableModels == null) return model === UNCENSORED_IMAGE_MODEL;
     return availableModels.includes(model);
@@ -677,13 +887,26 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
     apply();
   };
 
-    const applyImageModel = (model: string) => {
-    if ((settings.sparkLanHost || '').trim()) patch(sparkImageSettingsPatch(settings, model));
-    else patch({ imageModel: resolveSparkImageModel(model) });
+  const applyImageModel = (model: string) => {
+    // Keep the active backend. Switching Quality/Edit must not bounce xAI → Spark.
+    if (isXaiImageBackend(settings) || !(settings.sparkLanHost || '').trim()) {
+      patch({ imageModel: resolveSparkImageModel(model) });
+      return;
+    }
+    patch(sparkImageSettingsPatch(settings, model));
   };
 
   const applyQuality = () => {
-    setSize('1328x1328');
+    setEditKind('edit');
+    if (isXaiImageBackend(settings)) {
+      setLongEdge(settings.xaiImageResolution === '1k' ? 1024 : 1920);
+      setRatioId('1:1');
+      applyImageModel(UNCENSORED_IMAGE_MODEL);
+      toast.success('xAI Imagine', `${settings.xaiImageModel || XAI_IMAGE_MODEL} · ${settings.xaiImageResolution || '2k'}`);
+      return;
+    }
+    setLongEdge(1328);
+    setRatioId('1:1');
     applyImageModel(UNCENSORED_IMAGE_MODEL);
     toast.success(
       'Quality — Build D hero',
@@ -715,8 +938,166 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
   const applyEdit = () => {
     selectPathOrToast(QWEN_EDIT_IMAGE_MODEL, 'Edit', () => {
       applyImageModel(QWEN_EDIT_IMAGE_MODEL);
-      toast.info('Edit — Qwen-Edit', QWEN_EDIT_IMAGE_MODEL);
+      setEditKind('edit');
+      setRatioId('auto');
+      toast.info(
+        isXaiImageBackend(settings) ? 'Edit — xAI Imagine' : 'Edit — Qwen-Edit',
+        isXaiImageBackend(settings) ? 'Reference image required. Same drop slot as Spark.' : QWEN_EDIT_IMAGE_MODEL,
+      );
     });
+  };
+
+  const applyFaceswap = () => {
+    selectPathOrToast(QWEN_EDIT_IMAGE_MODEL, 'ID swap', () => {
+      applyImageModel(QWEN_EDIT_IMAGE_MODEL);
+      setEditKind('faceswap');
+      setRatioId('auto');
+      toast.info(
+        isXaiImageBackend(settings) ? 'ID faceswap — xAI Imagine' : 'ID faceswap — Qwen-Edit multi-ref',
+        'Identity face + target. Prompt optional.',
+      );
+    });
+  };
+
+  const applyIdSection = () => {
+    selectPathOrToast(QWEN_EDIT_IMAGE_MODEL, 'ID', () => {
+      applyImageModel(QWEN_EDIT_IMAGE_MODEL);
+      setEditKind('id');
+      setRatioId('auto');
+      setIdTemplateId(null);
+      toast.info(
+        isXaiImageBackend(settings) ? 'ID document — xAI Imagine' : 'ID document — Qwen-Edit',
+        'Front / back / headshot. Clean or swap portrait. No synthetic identity.',
+      );
+    });
+  };
+
+  const applyIdTemplate = (template: (typeof ID_TEMPLATES)[number]) => {
+    applyIdSection();
+    setIdDocType(template.idType);
+    setIdCountry(template.country);
+    setIdLook(template.look);
+    setIdTemplateId(template.id);
+    setPrompt(template.prompt);
+    setRatioId(template.ratioId);
+    toast.info(template.label, template.hint);
+  };
+
+  const runIdKind = async (
+    kind: IdKind,
+    imageOverride?: string | null,
+    opts?: { prompt?: string; idType?: IdDocType; country?: string; idLook?: IdLook },
+  ) => {
+    const overrideSrc = imageOverride
+      ? `data:image/png;base64,${imageOverride}`
+      : null;
+    const src = kind === 'back' ? backImagePreview : overrideSrc || refImagePreview;
+    if (!src) {
+      toast.warning(kind === 'back' ? 'Add a back scan' : 'Add a front scan');
+      return null;
+    }
+    try {
+      const dim = await probeImageSize(src);
+      if (lowRes(dim.width, dim.height)) {
+        toast.error('LOW_RES_INPUT', `Min edge ${Math.min(dim.width, dim.height)}px < ${ID_MIN_EDGE_PX}px`);
+        return null;
+      }
+    } catch (err) {
+      toast.error('Could not read document size', err instanceof Error ? err.message : String(err));
+      return null;
+    }
+    if (kind === 'portrait' && !idImageB64) {
+      toast.warning('Portrait swap needs a headshot');
+      return null;
+    }
+    return generate({
+      prompt: opts?.prompt ?? prompt,
+      intent: idIntent(kind),
+      imageB64: kind === 'back' ? backImageB64 : imageOverride || refImageB64,
+      idImageB64: kind === 'portrait' ? idImageB64 : null,
+      idType: opts?.idType ?? idDocType,
+      country: opts?.country ?? idCountry,
+      idLook: opts?.idLook ?? idLook,
+      allowEmptyPrompt: true,
+    });
+  };
+
+  const runIdAlteration = async () => {
+    const template = ID_TEMPLATES.find((t) => t.id === 'alter_img2img');
+    if (!template) return null;
+    applyIdTemplate(template);
+    return runIdKind('clean', undefined, {
+      prompt: template.prompt,
+      idType: template.idType,
+      country: template.country,
+      idLook: template.look,
+    });
+  };
+
+  const runIdLicenceSelfie = async () => {
+    const template = ID_TEMPLATES.find((t) => t.id === 'au_licence_selfie');
+    if (!template) return null;
+    applyIdTemplate(template);
+    if (!refImagePreview || !refImageB64) {
+      toast.warning('Add a front scan');
+      return null;
+    }
+    try {
+      const dim = await probeImageSize(refImagePreview);
+      if (lowRes(dim.width, dim.height)) {
+        toast.error('LOW_RES_INPUT', `Min edge ${Math.min(dim.width, dim.height)}px < ${ID_MIN_EDGE_PX}px`);
+        return null;
+      }
+    } catch (err) {
+      toast.error('Could not read document size', err instanceof Error ? err.message : String(err));
+      return null;
+    }
+    return generate({
+      prompt: template.prompt,
+      intent: 'edit',
+      imageB64: refImageB64,
+      ratioId: template.ratioId,
+      allowEmptyPrompt: true,
+    });
+  };
+
+  const runIdPipeline = async () => {
+    if (!refImageB64) {
+      toast.warning('Add a front scan');
+      return;
+    }
+    const cleaned = await runIdKind('clean');
+    if (idImageB64) await runIdKind('portrait', cleaned?.b64 || undefined);
+    if (backImageB64) await runIdKind('back');
+  };
+
+  const onPromptKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      if (editKind === 'id') void runIdPipeline();
+      else void generate();
+      return;
+    }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      const el = e.currentTarget;
+      const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
+      const emptyish = !prompt.trim() || (atStart && prompt.length < 4);
+      if (!atStart && !emptyish) return;
+      if (!promptHistory.length) return;
+      e.preventDefault();
+      {
+        const prev = historyCursorRef.current;
+        let next = prev;
+        if (e.key === 'ArrowUp') {
+          next = prev < 0 ? 0 : Math.min(promptHistory.length - 1, prev + 1);
+        } else {
+          next = prev <= 0 ? -1 : prev - 1;
+        }
+        historyCursorRef.current = next;
+        if (next < 0) setPrompt('');
+        else setPrompt(promptHistory[next] || '');
+      }
+    }
   };
 
   const applyKlein = () => {
@@ -912,18 +1293,38 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
     });
   };
 
+  const xaiOn = isXaiImageBackend(settings);
+  const xaiKeyOn = Boolean((settings.xaiImageToken || '').trim());
+  const imageHost = hostFromBaseUrl(xaiOn ? settings.xaiImageBaseUrl : settings.imageBaseUrl);
+  const softStatus = imageProgressSoftStatus(imageHost);
+  const elapsedLabel = formatImageElapsed(progressElapsedMs);
+  const serverStatusLabel =
+    progressServerStatus === 'loading'
+      ? 'Loading model…'
+      : progressServerStatus === 'encoding'
+        ? 'Encoding…'
+        : progressServerStatus === 'waiting'
+          ? softStatus
+          : progressServerStatus === 'running'
+            ? softStatus
+            : progressServerStatus === 'done'
+              ? 'Done'
+              : progressServerStatus === 'error'
+                ? 'Error'
+                : softStatus;
+  const progressIndeterminate = busy && (progressEst || progress == null) && !progressFailed;
   const progressLabel =
-    progress == null
-      ? null
-      : progressFailed
-        ? busy
-          ? 'Stopping…'
-          : 'Failed'
-        : progress >= 100
-          ? '100%'
-          : progressEst
-            ? `~${progress}% (est.)`
-            : `${progress}%`;
+    progressFailed
+      ? busy
+        ? 'Stopping…'
+        : 'Failed'
+      : progress != null && progress >= 100
+        ? `100% · ${elapsedLabel}`
+        : progress != null && !progressEst
+          ? `${progress}% · ${serverStatusLabel} · ${elapsedLabel}`
+          : busy
+            ? `${serverStatusLabel} · ${elapsedLabel}`
+            : null;
 
   const healthPill =
     healthChecking || (testOk === null && settings.imageGenEnabled) ? (
@@ -939,6 +1340,8 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
   const resolvedImageModel = resolveSparkImageModel(settings.imageModel);
   const isQualityPath = resolvedImageModel === UNCENSORED_IMAGE_MODEL;
   const isEditPath = resolvedImageModel === QWEN_EDIT_IMAGE_MODEL;
+  const isFaceswapPath = isEditPath && editKind === 'faceswap';
+  const isIdPath = isEditPath && editKind === 'id';
   const isStubPath =
     resolvedImageModel === DRAFT_IMAGE_MODEL ||
     resolvedImageModel === FAST_IMAGE_MODEL ||
@@ -952,10 +1355,12 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
     settings.imageModel ||
     resolvedImageModel;
   const proxyOnUpstreamDown =
-    settings.imageViaProxy === true && testOk === false && !healthChecking;
-  const bridgeOffline = settings.imageGenEnabled && testOk === false && !healthChecking;
+    !xaiOn && settings.imageViaProxy === true && testOk === false && !healthChecking;
+  const bridgeOffline = !xaiOn && settings.imageGenEnabled && testOk === false && !healthChecking;
+  const xaiKeyMissing = xaiOn && settings.imageGenEnabled && !xaiKeyOn;
+  const xaiUnreachable = xaiOn && settings.imageGenEnabled && xaiKeyOn && testOk === false && !healthChecking;
 
-    const endpointSummary = `${settings.imageModel || '—'} · ${hostFromBaseUrl(settings.imageBaseUrl)} · ${
+    const endpointSummary = `${(xaiOn ? settings.xaiImageModel : settings.imageModel) || '—'} · ${imageHost} · ${
     healthChecking ? 'checking' : testOk === true ? 'ok' : testOk === false ? 'unreachable' : '—'
   }`;
   if (!settings.imageGenEnabled) {
@@ -965,7 +1370,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
           <div className="flex items-center gap-2 page-header-title">
             <ImageIcon size={14} /> Images
           </div>
-          <p className="page-header-sub">Local OpenAI-compatible image generation on Spark (not cloud).</p>
+          <p className="page-header-sub">Spark local bridge or optional xAI Grok Imagine.</p>
         </header>
 
         <div className="section-card max-w-xl">
@@ -1008,7 +1413,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         <div className="mb-3 max-w-3xl rounded border border-amber-700/50 bg-amber-950/30 px-3 py-2.5">
           <div className="font-mono text-[12px] font-medium text-amber-200">Spark image bridge offline</div>
           <p className="mt-1 font-mono text-[10px] leading-4 text-zinc-400">
-            Nothing answering on the image endpoint. Start the Sync tunnel, point at Spark LAN, or open Endpoint settings.
+            Nothing answering on the image endpoint. Start the Sync tunnel, point at Spark LAN, switch to xAI Imagine, or open Endpoint settings.
           </p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <button type="button" className="btn-primary h-7 px-2 text-[10px]" onClick={() => void startTunnelAction()}>
@@ -1017,11 +1422,58 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
             <button type="button" className="btn-ghost h-7 px-2 text-[10px]" onClick={applySparkLan}>
               Use LAN
             </button>
+            <button
+              type="button"
+              className="btn-ghost h-7 px-2 text-[10px]"
+              onClick={() => patch(xaiImageSettingsPatch(settings))}
+            >
+              Use xAI Imagine
+            </button>
             <button type="button" className="btn-ghost h-7 px-2 text-[10px]" onClick={openEndpointSection}>
               Open Endpoint
             </button>
             <button type="button" className="btn-ghost h-7 px-2 text-[10px]" onClick={() => void copyStartCommand()}>
               <Copy size={10} /> {copiedInstall ? 'Copied!' : 'Copy start command'}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {xaiKeyMissing ? (
+        <div className="mb-3 max-w-3xl rounded border border-amber-700/50 bg-amber-950/30 px-3 py-2.5">
+          <div className="font-mono text-[12px] font-medium text-amber-200">xAI API key missing</div>
+          <p className="mt-1 font-mono text-[10px] leading-4 text-zinc-400">
+            Paste a key from console.x.ai on Endpoint. Spark URL/token stay saved — switch back anytime.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <button type="button" className="btn-primary h-7 px-2 text-[10px]" onClick={openEndpointSection}>
+              Open Endpoint
+            </button>
+            <button
+              type="button"
+              className="btn-ghost h-7 px-2 text-[10px]"
+              onClick={() => patch({ imageBackend: 'spark', imageGenEnabled: true })}
+            >
+              Use Spark (local)
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {xaiUnreachable ? (
+        <div className="mb-3 max-w-3xl rounded border border-amber-700/50 bg-amber-950/30 px-3 py-2.5">
+          <div className="font-mono text-[12px] font-medium text-amber-200">xAI Imagine unreachable</div>
+          <p className="mt-1 font-mono text-[10px] leading-4 text-zinc-400">{testNote || 'No response from api.x.ai. Check the key or switch back to Spark.'}</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <button type="button" className="btn-ghost h-7 px-2 text-[10px]" onClick={() => void testEndpoint()}>
+              Test
+            </button>
+            <button
+              type="button"
+              className="btn-ghost h-7 px-2 text-[10px]"
+              onClick={() => patch({ imageBackend: 'spark', imageGenEnabled: true })}
+            >
+              Use Spark (local)
             </button>
           </div>
         </div>
@@ -1035,9 +1487,11 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
 
       <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
         <span className="mr-1 font-mono text-[10px] uppercase text-muted">Models</span>
-        <button type="button" className={chipOn(resolvedImageModel === UNCENSORED_IMAGE_MODEL)} onClick={applyQuality} title={UNCENSORED_IMAGE_MODEL}>
-          Quality
+        <button type="button" className={chipOn(resolvedImageModel === UNCENSORED_IMAGE_MODEL)} onClick={applyQuality} title={xaiOn ? (settings.xaiImageModel || XAI_IMAGE_MODEL) : UNCENSORED_IMAGE_MODEL}>
+          {xaiOn ? 'Generate' : 'Quality'}
         </button>
+        {!xaiOn ? (
+          <>
         <button type="button" className={chipOn(resolvedImageModel === FAST_IMAGE_MODEL, { muted: !modelAvailable(FAST_IMAGE_MODEL) })} onClick={applyFast} title={modelAvailable(FAST_IMAGE_MODEL) ? FAST_IMAGE_MODEL : `${FAST_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(FAST_IMAGE_MODEL)}>
           Fast
         </button>
@@ -1047,9 +1501,19 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         <button type="button" className={chipOn(resolvedImageModel === QWEN_IMAGE_MODEL, { muted: !modelAvailable(QWEN_IMAGE_MODEL) })} onClick={applyInstruction} title={modelAvailable(QWEN_IMAGE_MODEL) ? QWEN_IMAGE_MODEL : `${QWEN_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(QWEN_IMAGE_MODEL)}>
           Instruction
         </button>
-        <button type="button" className={chipOn(resolvedImageModel === QWEN_EDIT_IMAGE_MODEL, { muted: !modelAvailable(QWEN_EDIT_IMAGE_MODEL) })} onClick={applyEdit} title={modelAvailable(QWEN_EDIT_IMAGE_MODEL) ? QWEN_EDIT_IMAGE_MODEL : `${QWEN_EDIT_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(QWEN_EDIT_IMAGE_MODEL)}>
+          </>
+        ) : null}
+        <button type="button" className={chipOn(isEditPath && !isFaceswapPath && !isIdPath, { muted: !modelAvailable(QWEN_EDIT_IMAGE_MODEL) })} onClick={applyEdit} title={xaiOn ? 'Edit via grok-imagine-image-2.0' : modelAvailable(QWEN_EDIT_IMAGE_MODEL) ? QWEN_EDIT_IMAGE_MODEL : `${QWEN_EDIT_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(QWEN_EDIT_IMAGE_MODEL)}>
           Edit
         </button>
+        <button type="button" className={chipOn(isFaceswapPath, { muted: !modelAvailable(QWEN_EDIT_IMAGE_MODEL) })} onClick={applyFaceswap} title={xaiOn ? 'ID faceswap via xAI Imagine' : modelAvailable(QWEN_EDIT_IMAGE_MODEL) ? 'ID faceswap via Qwen-Edit multi-ref' : `${QWEN_EDIT_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(QWEN_EDIT_IMAGE_MODEL)}>
+          <UserRound size={10} /> ID swap
+        </button>
+        <button type="button" className={chipOn(isIdPath, { muted: !modelAvailable(QWEN_EDIT_IMAGE_MODEL) })} onClick={applyIdSection} title={xaiOn ? 'ID document via xAI Imagine' : modelAvailable(QWEN_EDIT_IMAGE_MODEL) ? 'ID document: clean + portrait swap' : `${QWEN_EDIT_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(QWEN_EDIT_IMAGE_MODEL)}>
+          <CreditCard size={10} /> ID
+        </button>
+        {!xaiOn ? (
+          <>
         <button type="button" className={chipOn(resolvedImageModel === KLEIN_IMAGE_MODEL, { muted: !modelAvailable(KLEIN_IMAGE_MODEL) })} onClick={applyKlein} title={modelAvailable(KLEIN_IMAGE_MODEL) ? KLEIN_IMAGE_MODEL : `${KLEIN_IMAGE_MODEL} (gated / weights missing)`} aria-disabled={!modelAvailable(KLEIN_IMAGE_MODEL)}>
           Klein
         </button>
@@ -1062,10 +1526,18 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         >
           Anime
         </button>
+          </>
+        ) : null}
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
         <span className="mr-1 font-mono text-[10px] uppercase text-muted">Connection</span>
+        <button type="button" className={chipOn(!xaiOn)} onClick={() => patch({ imageBackend: 'spark', imageGenEnabled: true })}>
+          Spark
+        </button>
+        <button type="button" className={chipOn(xaiOn)} onClick={() => patch(xaiImageSettingsPatch(settings))}>
+          xAI Imagine
+        </button>
         <button type="button" className="chip hover:border-sky-500/40 hover:text-sky-200" onClick={applySparkLan}>
           Use Spark LAN
         </button>
@@ -1147,86 +1619,176 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         ) : null}
       </div>
 
+      {isIdPath ? (
+        <div className="section-card mb-4 max-w-[96rem]">
+          <div className="section-card-title">ID document</div>
+          <p className="section-card-hint">
+            Spark Qwen-Edit only — not LaMa, ESRGAN, StyleGAN, or a hosted verify API. Portrait swap replaces the photo
+            window; printed text and graphics are copied from the scan. Capture look is a real phone photo on timber:
+            uneven daylight, slight reflection, no glare, no fingers. Min edge {ID_MIN_EDGE_PX}px. No synthetic identity.
+          </p>
+          <div className="section-card-body">
+            <div className="grid gap-2 md:grid-cols-3">
+              <ImageDropSlot
+                label="Front"
+                preview={refImagePreview}
+                dragOver={refDragOver}
+                emptyHint="Front of the document (required)"
+                onPick={loadRefFile}
+                onClear={clearRefImage}
+                onUsePreview={previewSrc ? usePreviewAsTarget : undefined}
+                fileRef={refFileInputRef}
+                setDragOver={setRefDragOver}
+              />
+              <ImageDropSlot
+                label="Back (optional)"
+                preview={backImagePreview}
+                dragOver={backDragOver}
+                emptyHint="Back scan for a cleanup pass"
+                onPick={loadBackFile}
+                onClear={clearBackImage}
+                fileRef={backFileInputRef}
+                setDragOver={setBackDragOver}
+              />
+              <ImageDropSlot
+                label="Headshot (optional)"
+                preview={idImagePreview}
+                dragOver={idDragOver}
+                emptyHint="Face crop for portrait swap"
+                onPick={loadIdFile}
+                onClear={clearIdImage}
+                fileRef={idFileInputRef}
+                setDragOver={setIdDragOver}
+              />
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="block font-mono text-[10px] uppercase text-muted">
+                ID type
+                <select
+                  className="field mt-1"
+                  value={idDocType}
+                  onChange={(e) => setIdDocType(e.target.value as IdDocType)}
+                >
+                  {ID_TYPES.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block font-mono text-[10px] uppercase text-muted">
+                Country code
+                <input
+                  className="field mt-1"
+                  value={idCountry}
+                  onChange={(e) => setIdCountry(e.target.value.toUpperCase().slice(0, 3))}
+                  placeholder="AU"
+                  maxLength={3}
+                />
+              </label>
+            </div>
+            <div>
+              <div className="mb-1 font-mono text-[10px] uppercase text-muted">ID template</div>
+              <div className="flex flex-wrap gap-1">
+                {ID_TEMPLATES.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className={chipOn(idTemplateId === t.id)}
+                    title={t.hint}
+                    onClick={() => applyIdTemplate(t)}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busy || !refImageB64}
+                onClick={() => void runIdAlteration()}
+              >
+                Run alteration
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busy || !refImageB64}
+                onClick={() => void runIdLicenceSelfie()}
+              >
+                Run licence selfie
+              </button>
+              <button type="button" className="btn-ghost" disabled={busy || !refImageB64} onClick={() => void runIdKind('clean')}>
+                Clean front
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busy || !refImageB64 || !idImageB64}
+                onClick={() => void runIdKind('portrait')}
+              >
+                Swap portrait
+              </button>
+              <button type="button" className="btn-ghost" disabled={busy || !backImageB64} onClick={() => void runIdKind('back')}>
+                Clean back
+              </button>
+              <button type="button" className="btn-ghost" disabled={busy || !refImageB64} onClick={() => void runIdPipeline()}>
+                Run pipeline
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid gap-4 xl:grid-cols-2">
         <div className="space-y-3">
           <div className="section-card" ref={generateCardRef}>
             <div className="section-card-title">Generate</div>
             <div className="section-card-body">
-              {isEditPath ? (
-                <div>
-                  <div className="mb-1 font-mono text-[10px] uppercase text-muted">Reference image</div>
-                  <input
-                    ref={refFileInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => void loadRefFile(e.target.files?.[0])}
-                  />
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    className={cn(
-                      'flex min-h-[7rem] cursor-pointer flex-col items-center justify-center gap-2 rounded border border-dashed px-3 py-3 text-center transition-colors',
-                      refDragOver ? 'border-sky-500/70 bg-sky-950/30' : 'border-border bg-background/40',
-                      refImagePreview ? 'border-emerald-700/50' : '',
-                    )}
-                    onClick={() => refFileInputRef.current?.click()}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        refFileInputRef.current?.click();
-                      }
-                    }}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setRefDragOver(true);
-                    }}
-                    onDragLeave={() => setRefDragOver(false)}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      setRefDragOver(false);
-                      void loadRefFile(e.dataTransfer.files?.[0]);
-                    }}
-                  >
-                    {refImagePreview ? (
-                      <div className="flex w-full flex-col items-center gap-2">
-                        <img src={refImagePreview} alt="reference" className="max-h-36 rounded object-contain" />
-                        <div className="flex flex-wrap justify-center gap-1.5">
-                          <button
-                            type="button"
-                            className="chip text-[9px]"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              refFileInputRef.current?.click();
-                            }}
-                          >
-                            <Upload size={10} /> Replace
-                          </button>
-                          <button
-                            type="button"
-                            className="chip text-[9px] text-red-300/90"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              clearRefImage();
-                            }}
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <ImagePlus size={18} className="text-zinc-500" />
-                        <span className="font-mono text-[10px] text-zinc-400">Drop an image or click to choose — required for Edit</span>
-                      </>
-                    )}
+              {isEditPath && !isIdPath ? (
+                isFaceswapPath ? (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <ImageDropSlot
+                      label="Identity (face)"
+                      preview={idImagePreview}
+                      dragOver={idDragOver}
+                      emptyHint="Face / ID photo — the person to copy"
+                      onPick={loadIdFile}
+                      onClear={clearIdImage}
+                      fileRef={idFileInputRef}
+                      setDragOver={setIdDragOver}
+                    />
+                    <ImageDropSlot
+                      label="Target (scene)"
+                      preview={refImagePreview}
+                      dragOver={refDragOver}
+                      emptyHint="Photo to put that face on"
+                      onPick={loadRefFile}
+                      onClear={clearRefImage}
+                      onUsePreview={previewSrc ? usePreviewAsTarget : undefined}
+                      fileRef={refFileInputRef}
+                      setDragOver={setRefDragOver}
+                    />
                   </div>
-                </div>
+                ) : (
+                  <ImageDropSlot
+                    label="Reference image"
+                    preview={refImagePreview}
+                    dragOver={refDragOver}
+                    emptyHint="Drop an image or click to choose — required for Edit"
+                    onPick={loadRefFile}
+                    onClear={clearRefImage}
+                    fileRef={refFileInputRef}
+                    setDragOver={setRefDragOver}
+                  />
+                )
               ) : null}
 
               <label className="block font-mono text-[10px] uppercase text-muted">
                 <span className="flex items-center justify-between gap-2">
-                  {isEditPath ? 'Edit instruction' : 'Prompt'}
+                  {isIdPath ? 'Notes (optional)' : isFaceswapPath ? 'Swap notes (optional)' : isEditPath ? 'Edit instruction' : 'Prompt'}
                   <button type="button" className="chip text-[9px] normal-case" onClick={() => setHistoryOpen((o) => !o)} title="Prompt history">
                     <History size={10} /> History
                   </button>
@@ -1238,7 +1800,15 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                   onKeyDown={onPromptKeyDown}
                   rows={4}
                   className="field mt-1 resize-y"
-                  placeholder={isEditPath ? 'Describe the edit… (↑/↓ history)' : 'Describe the image… (↑/↓ history)'}
+                  placeholder={
+                    isIdPath
+                      ? 'Optional notes. Capture look is already timber + phone camera; printed text is never rewritten.'
+                      : isFaceswapPath
+                        ? 'Optional: keep the beard, look left… Empty uses a full ID-swap brief.'
+                        : isEditPath
+                          ? 'Describe the edit… (↑/↓ history)'
+                          : 'Describe the image… (↑/↓ history)'
+                  }
                 />
                 {historyOpen && promptHistory.length > 0 ? (
                   <div className="mt-1.5 max-h-28 overflow-auto rounded border border-border bg-background p-1">
@@ -1265,69 +1835,170 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                 ) : null}
               </label>
 
-              {!isEditPath ? (
-                <div>
-                  <div className="mb-1 font-mono text-[10px] uppercase text-muted">Size</div>
-                  <div className="flex flex-wrap gap-1">
-                    {SIZES.map((s) => (
-                      <button key={s.id} type="button" className={chipOn(size === s.id)} aria-pressed={size === s.id} onClick={() => setSize(s.id)}>
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <div className="mb-1 font-mono text-[10px] uppercase text-muted">Output size</div>
-                  <div className="flex flex-wrap gap-1">
-                    {SIZES.map((s) => (
-                      <button key={s.id} type="button" className={chipOn(size === s.id)} aria-pressed={size === s.id} onClick={() => setSize(s.id)}>
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               <div>
-                <div className="mb-1 font-mono text-[10px] uppercase text-muted">Batch</div>
+                <div className="mb-1 font-mono text-[10px] uppercase text-muted">
+                  Media frame
+                  <span className="ml-1 normal-case text-zinc-500">
+                    {isIdPath
+                      ? '· ID/passport keeps real card ratio, never stretched'
+                      : '· content keeps source ratio, never stretched'}
+                  </span>
+                </div>
                 <div className="flex flex-wrap gap-1">
-                  {BATCH_NS.map((n) => (
-                    <button key={n} type="button" className={chipOn(batchN === n)} aria-pressed={batchN === n} onClick={() => setBatchN(n)}>
-                      n={n}
+                  {IMAGE_RATIOS.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      className={chipOn(ratioId === r.id)}
+                      aria-pressed={ratioId === r.id}
+                      title={
+                        r.id === 'auto'
+                          ? isIdPath
+                            ? 'Media matches ISO ID-1 / passport ID-3. Document is never stretched.'
+                            : 'Media matches the source. Content is never stretched.'
+                          : isIdPath
+                            ? `Media frame ${r.label}. ID/passport stays real card size (letterboxed).`
+                            : `Media frame ${r.label}. Source content keeps its own ratio (letterboxed).`
+                      }
+                      onClick={() => setRatioId(r.id)}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 font-mono text-[10px] uppercase text-muted">
+                  Long edge
+                  <span className="ml-1 normal-case text-zinc-500">
+                    {ratioId === 'auto'
+                      ? isIdPath
+                        ? '· Auto uses real ID/passport size'
+                        : '· Auto keeps source ratio'
+                      : `· ${sizeForRatio(ratioId, longEdge)}`}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {LONG_EDGES.map((e) => (
+                    <button
+                      key={e}
+                      type="button"
+                      className={chipOn(longEdge === e)}
+                      aria-pressed={longEdge === e}
+                      onClick={() => setLongEdge(e)}
+                    >
+                      {e}{e === 1328 ? ' RAW' : e === 1536 ? ' max' : ''}
                     </button>
                   ))}
                 </div>
               </div>
 
+              {!isIdPath ? (
+                <div>
+                  <div className="mb-1 font-mono text-[10px] uppercase text-muted">Batch</div>
+                  <div className="flex flex-wrap gap-1">
+                    {BATCH_NS.map((n) => (
+                      <button key={n} type="button" className={chipOn(batchN === n)} aria-pressed={batchN === n} onClick={() => setBatchN(n)}>
+                        n={n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
               <label className="block font-mono text-[10px] uppercase text-muted">
                 Model
-                <select ref={modelSelectRef} value={modelSelectValue} onChange={(e) => { const v = e.target.value; if (v === MODEL_CUSTOM) { if (knownModelIds.includes(settings.imageModel)) patch({ imageModel: '' }); return; } patch({ imageModel: v }); }} className="field mt-1">
-                  {IMAGE_MODEL_OPTIONS.map((m) => (
-                    <option key={m.id} value={m.id}>{m.label}</option>
-                  ))}
-                  <option value={MODEL_CUSTOM}>Custom…</option>
-                </select>
+                {xaiOn ? (
+                  <select
+                    value={settings.xaiImageModel || XAI_IMAGE_MODEL}
+                    onChange={(e) => patch({ xaiImageModel: e.target.value })}
+                    className="field mt-1"
+                  >
+                    <option value={XAI_IMAGE_MODEL}>Grok Imagine 2.0</option>
+                  </select>
+                ) : (
+                  <select ref={modelSelectRef} value={modelSelectValue} onChange={(e) => { const v = e.target.value; if (v === MODEL_CUSTOM) { if (knownModelIds.includes(settings.imageModel)) patch({ imageModel: '' }); return; } patch({ imageModel: v }); }} className="field mt-1">
+                    {IMAGE_MODEL_OPTIONS.map((m) => (
+                      <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                    <option value={MODEL_CUSTOM}>Custom…</option>
+                  </select>
+                )}
               </label>
-              {showCustomModel ? (
+              {!xaiOn && showCustomModel ? (
                 <label className="block font-mono text-[10px] uppercase text-muted">
                   Custom model id
                   <input value={settings.imageModel} onChange={(e) => patch({ imageModel: e.target.value })} className="field mt-1" placeholder="model id" />
                 </label>
               ) : null}
+              {xaiOn ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block font-mono text-[10px] uppercase text-muted">
+                    Resolution
+                    <select
+                      value={settings.xaiImageResolution || '2k'}
+                      onChange={(e) => patch({ xaiImageResolution: e.target.value === '1k' ? '1k' : '2k' })}
+                      className="field mt-1"
+                    >
+                      {XAI_RESOLUTIONS.map((r) => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block font-mono text-[10px] uppercase text-muted">
+                    Quality
+                    <select
+                      value={settings.xaiImageQuality || 'auto'}
+                      onChange={(e) =>
+                        patch({
+                          xaiImageQuality:
+                            e.target.value === 'low' || e.target.value === 'medium' ? e.target.value : 'auto',
+                        })
+                      }
+                      className="field mt-1"
+                    >
+                      {XAI_QUALITIES.map((q) => (
+                        <option key={q} value={q}>{q}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              ) : null}
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  disabled={busy || !prompt.trim() || (isEditPath && !refImageB64)}
-                  onClick={() => void generate()}
+                  disabled={
+                    busy ||
+                    (isIdPath
+                      ? !refImageB64
+                      : isFaceswapPath
+                        ? !refImageB64 || !idImageB64
+                        : !prompt.trim() || (isEditPath && !refImageB64))
+                  }
+                  onClick={() => {
+                    if (isIdPath) void runIdPipeline();
+                    else void generate();
+                  }}
                   className="btn-primary"
-                  title={isEditPath && !refImageB64 ? 'Add a reference image first' : undefined}
+                  title={
+                    isIdPath && !refImageB64
+                      ? 'Add a front scan first'
+                      : isFaceswapPath && (!refImageB64 || !idImageB64)
+                        ? 'Add identity + target images first'
+                        : isEditPath && !refImageB64
+                          ? 'Add a reference image first'
+                          : undefined
+                  }
                 >
                   {busy ? (
                     <span className="inline-flex items-center gap-1.5">
                       <Loader2 size={12} className="spin-slow" /> Generating…
-                      {progress != null ? ` ${progressLabel}` : ''}
+                      {progressLabel ? ` ${progressLabel}` : ''}
                     </span>
+                  ) : isIdPath ? (
+                    'Run pipeline'
+                  ) : isFaceswapPath ? (
+                    'Swap ID'
                   ) : isEditPath ? (
                     'Edit'
                   ) : (
@@ -1342,12 +2013,23 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                 {busy ? <span className="status-badge status-badge--busy">Generating… {progressLabel || ''}</span> : null}
                 {progressFailed && !busy ? <span className="status-badge status-badge--err">Failed</span> : null}
               </div>
-              {progress != null ? (
+              {busy || progress != null ? (
                 <div className="image-progress" aria-live="polite">
                   <div className="image-progress-track">
-                    <div className={`image-progress-fill${progressFailed ? ' image-progress-fill--err' : ''}`} style={{ width: `${Math.min(100, Math.max(0, progress))}%` }} />
+                    <div
+                      className={cn(
+                        'image-progress-fill',
+                        progressFailed && 'image-progress-fill--err',
+                        progressIndeterminate && 'image-progress-fill--indeterminate',
+                      )}
+                      style={
+                        progressIndeterminate
+                          ? undefined
+                          : { width: `${Math.min(100, Math.max(0, progress ?? 0))}%` }
+                      }
+                    />
                   </div>
-                  <div className="image-progress-label">{progressFailed ? (busy ? 'Stopping…' : 'Generation failed') : `Progress ${progressLabel}`}</div>
+                  <div className="image-progress-label">{progressFailed ? (busy ? 'Stopping…' : 'Generation failed') : progressLabel || softStatus}</div>
                 </div>
               ) : null}
               {error ? (
@@ -1373,7 +2055,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
             </button>
             {endpointOpen ? (
               <>
-                <p className="section-card-hint">Connection only — URL, token, and via-proxy. Sampler / Build D lives under Recipe.</p>
+                <p className="section-card-hint">Connection only. Spark is the local Diffusers bridge; xAI Imagine is optional cloud (`grok-imagine-image-2.0`).</p>
                 <div className="section-card-body">
                   <div className="switch-row">
                     <label className="switch-row-main">
@@ -1381,6 +2063,52 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                       <input type="checkbox" checked={settings.imageGenEnabled} onChange={(e) => patch({ imageGenEnabled: e.target.checked })} />
                     </label>
                   </div>
+                  <div>
+                    <div className="mb-1 font-mono text-[10px] uppercase text-muted">Backend</div>
+                    <div className="flex flex-wrap gap-1">
+                      <button
+                        type="button"
+                        className={chipOn(!xaiOn)}
+                        aria-pressed={!xaiOn}
+                        onClick={() => patch({ imageBackend: 'spark', imageGenEnabled: true })}
+                      >
+                        Spark (local)
+                      </button>
+                      <button
+                        type="button"
+                        className={chipOn(xaiOn)}
+                        aria-pressed={xaiOn}
+                        onClick={() => patch(xaiImageSettingsPatch(settings))}
+                      >
+                        xAI Imagine
+                      </button>
+                    </div>
+                  </div>
+                  {xaiOn ? (
+                    <>
+                      <label className="block font-mono text-[10px] uppercase text-muted">
+                        xAI base URL
+                        <input
+                          value={settings.xaiImageBaseUrl}
+                          onChange={(e) => patch({ xaiImageBaseUrl: e.target.value })}
+                          className="field mt-1"
+                          placeholder="https://api.x.ai/v1"
+                        />
+                      </label>
+                      <label className="block font-mono text-[10px] uppercase text-muted">
+                        xAI API key
+                        <input
+                          type="password"
+                          value={settings.xaiImageToken}
+                          onChange={(e) => patch({ xaiImageToken: e.target.value })}
+                          className="field mt-1"
+                          placeholder="xai-…"
+                          autoComplete="off"
+                        />
+                      </label>
+                    </>
+                  ) : (
+                    <>
                   <label className="block font-mono text-[10px] uppercase text-muted">
                     Base URL
                     <input value={settings.imageBaseUrl} onChange={(e) => patch({ imageBaseUrl: e.target.value })} className="field mt-1" />
@@ -1400,6 +2128,8 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                         : 'DEV same-origin rewrite for local image servers.'}
                     </p>
                   </div>
+                    </>
+                  )}
                   {proxyOnUpstreamDown ? (
                     <p className="font-mono text-[10px] text-amber-300/90">
                       Proxy is on but upstream is down — try turning Via proxy off, or Start tunnel / Use LAN.

@@ -1,3 +1,5 @@
+import type { FileRef, PlanApproved, PlanItem, WorkflowStep } from '../lib/turnWorkflow';
+
 export type Tab = 'home' | 'workspace' | 'models' | 'jobs' | 'api' | 'settings' | 'images';
 export type ReasoningLevel = 'off' | 'low' | 'high' | 'max';
 export const ALL_TOOL_TYPES = [
@@ -237,6 +239,11 @@ export interface Message {
   toolCalls?: ToolCallPayload[];
   createdAt: number;
   status?: MessageStatus;
+  /** Live Plan → Edit → Check → Done checklist (DevMate-style, bound to the agent run). */
+  plan?: PlanItem[];
+  planApproved?: PlanApproved;
+  steps?: WorkflowStep[];
+  files?: FileRef[];
 }
 
 export interface Thread {
@@ -356,13 +363,21 @@ export interface ClientSettings {
   featherlessModel: string;
   /** When true, DEV rewrites local Featherless (:3000) URLs to `/featherless-v1`. Cloud api.featherless.ai uses `/featherless-api` regardless. */
   featherlessViaProxy: boolean;
-  /** Opt-in local/OpenAI-compatible image generation. Default false. */
+  /** Opt-in image generation. Default false. */
   imageGenEnabled: boolean;
+  /** Spark local bridge (default) or optional xAI Grok Imagine cloud. */
+  imageBackend: 'spark' | 'xai';
   imageBaseUrl: string;
   imageToken: string;
   imageModel: string;
   /** When true (default), DEV rewrites local image URLs to same-origin `/image-v1`. */
   imageViaProxy: boolean;
+  /** Optional xAI Imagine (`grok-imagine-image-2.0`). Independent of Spark URL/token. */
+  xaiImageBaseUrl: string;
+  xaiImageToken: string;
+  xaiImageModel: string;
+  xaiImageResolution: '1k' | '2k';
+  xaiImageQuality: 'auto' | 'low' | 'medium';
   /** Optional MCP stdio servers (spawned via localhost bridge). */
   mcpServers: McpServerConfig[];
   /** Freemium license key (localStorage). Empty = Free tier. */

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   applyInferenceProvider,
   INFERENCE_PROVIDERS,
@@ -25,15 +25,15 @@ import {
   sparkPushCommand,
   sparkQwenPushCommand,
 } from '../lib/sparkInstall';
+import { XAI_IMAGE_BASE_URL, XAI_IMAGE_MODEL, XAI_QUALITIES, isXaiImageBackend, xaiImageSettingsPatch } from '../lib/xaiImage';
 
-import type { ClientSettings, ReasoningLevel, Tab } from '../types';
+import type { ClientSettings, InferenceProvider, ReasoningLevel, Tab } from '../types';
 import {
   DEFAULT_FEATHERLESS_MODEL,
   FEATHERLESS_EMPTY_STATE,
   PINNED_FEATHERLESS_MODELS,
   abliterationGradeFeatherlessPatch,
   filterFeatherlessQwenModels,
-  isPinnedFeatherlessModel,
   mergePinnedFeatherlessModels,
   resolveFeatherlessModelId,
 } from '../lib/featherlessQwen';
@@ -49,9 +49,39 @@ type FeatherSession = { ok?: boolean; signedIn?: boolean; expiresAt?: string | n
 
 const CLOUD_FEATHERLESS_BASE = 'https://api.featherless.ai/v1';
 
+const PROVIDER_HINT: Record<InferenceProvider, string> = {
+  platform: 'Virtual key from your abliterated.app account. Routes included Featherless models.',
+  abliteration: 'Cloud abliteration.ai. Paste an API token from the Abliteration console.',
+  'dgx-spark': 'Local Qwen vLLM on Spark :8000. No cloud key.',
+  featherless: 'Your Featherless key. Pinned Qwen / GLM chips, or any allowed model id.',
+  custom: 'Any OpenAI-compatible base URL, key, and model id.',
+};
+
 function isLocalFeatherOAuthBase(baseUrl: string): boolean {
   const u = (baseUrl || '').trim().replace(/\/$/, '');
   return u === 'http://127.0.0.1:3000/v1' || u === 'http://localhost:3000/v1';
+}
+
+function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+  return (
+    <section className="section-card">
+      <div>
+        <div className="section-card-title">{title}</div>
+        {hint ? <p className="section-card-hint">{hint}</p> : null}
+      </div>
+      <div className="section-card-body">{children}</div>
+    </section>
+  );
+}
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block font-mono text-[10px] uppercase tracking-[0.14em] text-muted">{label}</span>
+      {children}
+      {hint ? <p className="mt-1.5 text-[12px] leading-snug text-muted-foreground">{hint}</p> : null}
+    </label>
+  );
 }
 
 
@@ -522,169 +552,170 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
   const active = resolveActiveSettings(draft);
   const authMissing = missingInferenceAuthError(active);
   const signedIn = Boolean(featherSession?.signedIn);
-  // Keep helpers referenced until the dedicated Featherless provider panel is fully inlined in JSX.
+  const selectProvider = (id: InferenceProvider) => {
+    const next = applyInferenceProvider(draft, id);
+    setDraft(next);
+    setSettings(next);
+    onSettingsChange(next);
+  };
 
   return (
     <div className="h-full overflow-auto p-4">
-      <div className="mb-3 font-mono text-xs font-semibold tracking-wide text-zinc-200">API</div>
-      <div className="grid max-w-2xl gap-3">
-        <div>
-          <div className="mb-1 font-mono text-[10px] uppercase text-muted">Provider</div>
-          <div className="flex flex-wrap gap-1">
-            {INFERENCE_PROVIDERS.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => {
-                  const next = applyInferenceProvider(draft, p.id);
-                  setDraft(next);
-                  setSettings(next);
-                  onSettingsChange(next);
-                }}
-                className={
-                  'rounded border px-2 py-1 font-mono text-[11px] ' +
-                  (provider === p.id
-                    ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-300'
-                    : 'border-border text-zinc-300 hover:bg-zinc-900')
-                }
-              >
-                {p.label}
-              </button>
-            ))}
+      <header className="page-header">
+        <div className="page-header-title">API</div>
+        <p className="page-header-sub">
+          Chat completions use one provider at a time. Image gen on Spark stays separate.
+        </p>
+        <p className="mt-2 font-mono text-[11px] text-zinc-400">
+          Active <span className="text-emerald-300">{active.label}</span>
+          {sparkInactive ? ' · Spark off — using cloud fields until enabled' : ''}
+          {featherInactive ? ' · Featherless off — using cloud fields until enabled' : ''}
+        </p>
+      </header>
+
+      <div className="mx-auto grid max-w-3xl gap-4 pb-8">
+        <Section title="Provider" hint={PROVIDER_HINT[provider]}>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {INFERENCE_PROVIDERS.map((p) => {
+              const on = provider === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => selectProvider(p.id)}
+                  className={
+                    'rounded-lg border px-3 py-2.5 text-left transition-colors ' +
+                    (on
+                      ? 'border-emerald-500/60 bg-emerald-500/10'
+                      : 'border-border bg-background/40 hover:border-primary/40 hover:bg-accent/40')
+                  }
+                >
+                  <div className={'text-[13px] font-medium ' + (on ? 'text-emerald-200' : 'text-foreground')}>
+                    {p.label}
+                  </div>
+                  <div className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{PROVIDER_HINT[p.id]}</div>
+                </button>
+              );
+            })}
           </div>
-          <p className="mt-1 font-mono text-[10px] text-muted">
-            Active: {active.label}
-            {sparkInactive ? ' (Spark off — falling back to cloud fields until enabled)' : ''}
-            {featherInactive ? ' (Featherless off — falling back to cloud fields until enabled)' : ''}
-          </p>
           {authMissing ? (
-            <div className="mt-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 font-mono text-[11px] leading-5 text-amber-200">
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-amber-200">
               {authMissing}
             </div>
-          ) : null}
-        </div>
+          ) : (
+            <p className="text-[12px] text-muted-foreground">Ready to send completions with the settings below.</p>
+          )}
+        </Section>
 
         {provider === 'dgx-spark' ? (
-          <>
-            <p className="font-mono text-[10px] text-muted">
-              Qwen abliterated vLLM on Spark :8000 (served name {SPARK_CHAT_MODEL}). Set LAN host (e.g. 192.168.4.101)
-              then Use Spark Qwen. NVIDIA Sync tunnel uses 127.0.0.1 and Vite /spark-v1. No API key.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => patch(sparkChatSettingsPatch(draft))}
-                className="w-fit rounded border border-emerald-500/50 bg-emerald-500/10 px-3 py-1 font-mono text-[11px] text-emerald-200"
-              >
+          <Section
+            title="DGX Spark"
+            hint={`Qwen abliterated vLLM on :8000 (served name ${SPARK_CHAT_MODEL}). Set LAN host then Use Spark Qwen. NVIDIA Sync uses 127.0.0.1 and Vite /spark-v1.`}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => patch(sparkChatSettingsPatch(draft))} className="btn-primary h-8 px-3 text-[12px]">
                 Use Spark Qwen
               </button>
+              <label className="flex items-center gap-2 text-[13px] text-foreground">
+                <input
+                  type="checkbox"
+                  checked={draft.sparkEnabled}
+                  onChange={(e) => patch({ sparkEnabled: e.target.checked })}
+                />
+                Endpoint available
+              </label>
             </div>
-            <label className="flex items-center gap-2 font-mono text-[11px] text-zinc-200">
-              <input
-                type="checkbox"
-                checked={draft.sparkEnabled}
-                onChange={(e) => patch({ sparkEnabled: e.target.checked })}
-              />
-              Spark endpoint available
-            </label>
             {sparkInactive ? (
-              <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 font-mono text-[11px] text-amber-200">
-                Provider is DGX Spark but the endpoint is marked unavailable. Enable the toggle to test or chat.
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
+                Spark is selected but marked unavailable. Enable the toggle to test or chat.
               </div>
             ) : null}
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Spark base URL
-              <input
-                value={draft.sparkBaseUrl}
-                onChange={(e) => patch({ sparkBaseUrl: e.target.value })}
-                placeholder="http://127.0.0.1:8000/v1"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
-              />
-            </label>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Spark model
-              <input
-                value={draft.sparkModel}
-                onChange={(e) => patch({ sparkModel: e.target.value })}
-                placeholder="qwen-abliterated"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
-              />
-            </label>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Spark token (optional)
-              <input
-                type="password"
-                value={draft.sparkToken}
-                onChange={(e) => patch({ sparkToken: e.target.value })}
-                autoComplete="off"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
-              />
-            </label>
-            <label className="flex items-center gap-2 font-mono text-[11px] text-zinc-200">
-              <input
-                type="checkbox"
-                checked={draft.sparkViaProxy}
-                onChange={(e) => patch({ sparkViaProxy: e.target.checked })}
-              />
-              Proxy via Vite /spark-v1
-            </label>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Spark LAN host
-              <input
-                value={draft.sparkLanHost}
-                onChange={(e) => patch({ sparkLanHost: e.target.value })}
-                onBlur={() => {
-                  if (draft.inferenceProvider === 'dgx-spark') {
-                    patch(sparkChatSettingsPatch({ ...draft, sparkLanHost: draft.sparkLanHost }));
-                  }
-                }}
-                placeholder="192.168.4.101"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
-              />
-            </label>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              NVIDIA Sync SSH alias
-              <input
-                value={draft.sparkSshAlias}
-                onChange={(e) => patch({ sparkSshAlias: e.target.value })}
-                placeholder="flak3dd"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
-              />
-            </label>
-            <p className="font-mono text-[10px] leading-4 text-muted">
-              Install package lives in spark-install/. Push from this machine (weights stay on Spark):
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Base URL" hint="vLLM OpenAI-compatible /v1">
+                <input
+                  value={draft.sparkBaseUrl}
+                  onChange={(e) => patch({ sparkBaseUrl: e.target.value })}
+                  placeholder="http://127.0.0.1:8000/v1"
+                  className="field"
+                />
+              </Field>
+              <Field label="Model">
+                <input
+                  value={draft.sparkModel}
+                  onChange={(e) => patch({ sparkModel: e.target.value })}
+                  placeholder="qwen-abliterated"
+                  className="field"
+                />
+              </Field>
+              <Field label="Token (optional)">
+                <input
+                  type="password"
+                  value={draft.sparkToken}
+                  onChange={(e) => patch({ sparkToken: e.target.value })}
+                  autoComplete="off"
+                  className="field"
+                />
+              </Field>
+              <Field label="LAN host" hint="e.g. 192.168.4.101 — applied on blur">
+                <input
+                  value={draft.sparkLanHost}
+                  onChange={(e) => patch({ sparkLanHost: e.target.value })}
+                  onBlur={() => {
+                    if (draft.inferenceProvider === 'dgx-spark') {
+                      patch(sparkChatSettingsPatch({ ...draft, sparkLanHost: draft.sparkLanHost }));
+                    }
+                  }}
+                  placeholder="192.168.4.101"
+                  className="field"
+                />
+              </Field>
+              <Field label="NVIDIA Sync SSH alias">
+                <input
+                  value={draft.sparkSshAlias}
+                  onChange={(e) => patch({ sparkSshAlias: e.target.value })}
+                  placeholder="flak3dd"
+                  className="field"
+                />
+              </Field>
+              <label className="flex items-center gap-2 self-end pb-2 text-[13px] text-foreground">
+                <input
+                  type="checkbox"
+                  checked={draft.sparkViaProxy}
+                  onChange={(e) => patch({ sparkViaProxy: e.target.checked })}
+                />
+                Proxy via Vite /spark-v1
+              </label>
+            </div>
+            <p className="text-[12px] leading-5 text-muted-foreground">
+              Install package is in spark-install/. Push from this machine (weights stay on Spark):
               <br />
-              <code className="text-zinc-300">{sparkPushCommand(draft.sparkSshAlias)}</code>
+              <code className="break-all text-[11px] text-zinc-300">{sparkPushCommand(draft.sparkSshAlias)}</code>
             </p>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => void navigator.clipboard.writeText(sparkPushCommand(draft.sparkSshAlias))}
-                className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200"
+                className="btn-ghost h-8 px-3 text-[12px]"
               >
                 Copy install command
               </button>
               <button
                 type="button"
                 onClick={() => void navigator.clipboard.writeText(sparkQwenPushCommand(draft.sparkSshAlias))}
-                className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200"
+                className="btn-ghost h-8 px-3 text-[12px]"
               >
                 Copy Qwen push + start
               </button>
-              <button
-                type="button"
-                onClick={() => void window.ablitDesktop?.revealSparkInstall?.()}
-                className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200"
-              >
+              <button type="button" onClick={() => void window.ablitDesktop?.revealSparkInstall?.()} className="btn-ghost h-8 px-3 text-[12px]">
                 Reveal package
               </button>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 border-t border-border pt-3">
               <button
                 type="button"
                 onClick={() => void testSpark()}
                 disabled={testing || !draft.sparkEnabled}
-                className="w-fit rounded bg-zinc-100 px-3 py-1 font-mono text-[11px] font-medium text-zinc-900 disabled:opacity-50"
+                className="btn-primary h-8 px-3 text-[12px]"
               >
                 {testing ? 'Testing…' : 'Test Spark'}
               </button>
@@ -692,67 +723,24 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
                 type="button"
                 onClick={() => void listSparkModels()}
                 disabled={testing || !draft.sparkEnabled}
-                className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200 disabled:opacity-50"
+                className="btn-ghost h-8 px-3 text-[12px]"
               >
                 List models
               </button>
             </div>
-          </>
+          </Section>
         ) : provider === 'featherless' ? (
-          <>
-            <p className="font-mono text-[10px] text-muted">
-              Large Qwen only (Abliteration-grade agent path). Default {DEFAULT_FEATHERLESS_MODEL}.</p>
-            <button type="button" onClick={() => { const next = { ...draft, ...abliterationGradeFeatherlessPatch() }; setDraft(next); onSettingsChange(next); }} className="w-fit rounded border border-emerald-500/50 bg-emerald-500/10 px-3 py-1 font-mono text-[11px] text-emerald-200">Abliteration-grade Featherless</button>
-            <label className="flex items-center gap-2 font-mono text-[11px] text-zinc-200">
-              <input
-                type="checkbox"
-                checked={draft.featherlessEnabled !== false}
-                onChange={(e) => patch({ featherlessEnabled: e.target.checked })}
-              />
-              Featherless endpoint available
-            </label>
-            {featherInactive ? (
-              <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 font-mono text-[11px] text-amber-200">
-                Provider is Featherless but the endpoint is marked unavailable. Enable the toggle to test or chat.
-              </div>
-            ) : null}
+          <Section
+            title="Featherless"
+            hint={`Large Qwen (dense ≥32B / activated ≥16B; Qwen3.8-27B uncensored exception) plus pinned GLM. Default ${DEFAULT_FEATHERLESS_MODEL}.`}
+          >
             <div className="flex flex-wrap items-center gap-2">
-              <span
-                className={
-                  'rounded border px-2 py-0.5 font-mono text-[10px] ' +
-                  (signedIn
-                    ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-300'
-                    : 'border-zinc-600 bg-zinc-900 text-zinc-400')
-                }
-              >
-                OAuth: {signedIn ? 'signed in' : featherSession == null ? 'unknown' : 'signed out'}
-                {signedIn && featherSession?.expiresAt
-                  ? ' · exp ' + new Date(featherSession.expiresAt).toLocaleString()
-                  : ''}
-              </span>
               <button
                 type="button"
-                onClick={() => signInFeatherless()}
-                disabled={draft.featherlessEnabled === false || !isLocalFeatherOAuthBase(draft.featherlessBaseUrl)}
-                className="rounded border border-border px-2 py-1 font-mono text-[11px] text-zinc-200 hover:bg-zinc-900 disabled:opacity-50"
+                onClick={() => patch(abliterationGradeFeatherlessPatch())}
+                className="btn-primary h-8 px-3 text-[12px]"
               >
-                Sign in with Featherless
-              </button>
-              <button
-                type="button"
-                onClick={() => void logoutFeatherless()}
-                disabled={draft.featherlessEnabled === false || !isLocalFeatherOAuthBase(draft.featherlessBaseUrl)}
-                className="rounded border border-border px-2 py-1 font-mono text-[11px] text-zinc-200 hover:bg-zinc-900 disabled:opacity-50"
-              >
-                Logout
-              </button>
-              <button
-                type="button"
-                onClick={() => void refreshFeatherSession()}
-                disabled={!isLocalFeatherOAuthBase(draft.featherlessBaseUrl)}
-                className="rounded border border-border px-2 py-1 font-mono text-[11px] text-zinc-200 hover:bg-zinc-900 disabled:opacity-50"
-              >
-                Refresh session
+                Abliteration-grade preset
               </button>
               <button
                 type="button"
@@ -763,105 +751,143 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
                     featherlessEnabled: true,
                   })
                 }
-                className="rounded border border-emerald-500/40 px-2 py-1 font-mono text-[11px] text-emerald-300 hover:bg-emerald-500/10"
+                className="btn-ghost h-8 px-3 text-[12px]"
               >
-                Use cloud API key
+                Use cloud API
               </button>
+              <label className="flex items-center gap-2 text-[13px] text-foreground">
+                <input
+                  type="checkbox"
+                  checked={draft.featherlessEnabled !== false}
+                  onChange={(e) => patch({ featherlessEnabled: e.target.checked })}
+                />
+                Endpoint available
+              </label>
             </div>
-            {!isLocalFeatherOAuthBase(draft.featherlessBaseUrl) ? (
-              <p className="font-mono text-[10px] text-muted">
-                API-key mode: paste your Featherless key below. Sign-in is only for local :3000.
-              </p>
-            ) : (
-              <p className="font-mono text-[10px] text-amber-200/90">
-                Local mode: start the local server on :3000 or switch to cloud API key.
-              </p>
-            )}
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Featherless base URL
+            {featherInactive ? (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
+                Featherless is selected but marked unavailable. Enable the toggle to test or chat.
+              </div>
+            ) : null}
+
+            <div className="rounded-md border border-border bg-background/50 p-3">
+              <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Auth</div>
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span
+                  className={
+                    'rounded-md border px-2 py-0.5 font-mono text-[10px] ' +
+                    (signedIn
+                      ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-300'
+                      : 'border-border bg-background text-muted-foreground')
+                  }
+                >
+                  Local sign-in: {signedIn ? 'signed in' : featherSession == null ? 'cloud key' : 'signed out'}
+                  {signedIn && featherSession?.expiresAt
+                    ? ' · exp ' + new Date(featherSession.expiresAt).toLocaleString()
+                    : ''}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => signInFeatherless()}
+                  disabled={draft.featherlessEnabled === false || !isLocalFeatherOAuthBase(draft.featherlessBaseUrl)}
+                  className="btn-ghost h-8 px-3 text-[12px]"
+                >
+                  Sign in (local :3000)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void logoutFeatherless()}
+                  disabled={draft.featherlessEnabled === false || !isLocalFeatherOAuthBase(draft.featherlessBaseUrl)}
+                  className="btn-ghost h-8 px-3 text-[12px]"
+                >
+                  Logout
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void refreshFeatherSession()}
+                  disabled={!isLocalFeatherOAuthBase(draft.featherlessBaseUrl)}
+                  className="btn-ghost h-8 px-3 text-[12px]"
+                >
+                  Refresh session
+                </button>
+              </div>
+              {!isLocalFeatherOAuthBase(draft.featherlessBaseUrl) ? (
+                <p className="mb-2 text-[12px] text-muted-foreground">
+                  Cloud key mode. Paste a Featherless API key. Sign-in is only for local :3000.
+                </p>
+              ) : (
+                <p className="mb-2 text-[12px] text-amber-200/90">
+                  Local OAuth mode. Start the proxy on :3000, or switch to Use cloud API.
+                </p>
+              )}
+              <Field label="API key">
+                <input
+                  type="password"
+                  value={draft.featherlessToken}
+                  onChange={(e) => patch({ featherlessToken: e.target.value })}
+                  autoComplete="off"
+                  className="field"
+                  placeholder="fl-…"
+                />
+              </Field>
+            </div>
+
+            <Field label="Base URL" hint="Cloud: https://api.featherless.ai/v1 · Local OAuth: http://127.0.0.1:3000/v1">
               <input
                 value={draft.featherlessBaseUrl}
                 onChange={(e) => patch({ featherlessBaseUrl: e.target.value })}
                 placeholder="https://api.featherless.ai/v1"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+                className="field"
               />
-            </label>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Featherless model
-              <select
-                value={isPinnedFeatherlessModel(draft.featherlessModel) ? draft.featherlessModel : ''}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  if (!id) return;
-                  patch({ featherlessModel: id, ...recommendedApiPatch(id, draft) });
-                }}
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
-                aria-label="Pinned Featherless abliterated 32B models"
-              >
-                <option value="">
-                  {isPinnedFeatherlessModel(draft.featherlessModel)
-                    ? 'Pinned 32B abliterated…'
-                    : `Other · ${draft.featherlessModel || DEFAULT_FEATHERLESS_MODEL}`}
-                </option>
-                {PINNED_FEATHERLESS_MODELS.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label} — {m.id}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={draft.featherlessModel}
-                onChange={(e) => patch({ featherlessModel: e.target.value })}
-                placeholder={DEFAULT_FEATHERLESS_MODEL}
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
-                aria-label="Featherless model id"
-              />
-            </label>
-            <div className="flex flex-wrap gap-1">
-              {PINNED_FEATHERLESS_MODELS.map((m) => {
-                const on = draft.featherlessModel === m.id;
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    title={m.id}
-                    onClick={() => patch({ featherlessModel: m.id, ...recommendedApiPatch(m.id, draft) })}
-                    className={
-                      'rounded border px-2 py-0.5 font-mono text-[10px] ' +
-                      (on
-                        ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-200'
-                        : 'border-border text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200')
-                    }
-                  >
-                    {m.label}
-                  </button>
-                );
-              })}
-            </div>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              API key
-              <input
-                type="password"
-                value={draft.featherlessToken}
-                onChange={(e) => patch({ featherlessToken: e.target.value })}
-                autoComplete="off"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
-              />
-            </label>
-            <label className="flex items-center gap-2 font-mono text-[11px] text-zinc-200">
+            </Field>
+            <label className="flex items-center gap-2 text-[13px] text-foreground">
               <input
                 type="checkbox"
                 checked={draft.featherlessViaProxy === true}
                 onChange={(e) => patch({ featherlessViaProxy: e.target.checked })}
               />
-              Proxy via Vite /featherless-v1
+              Proxy local :3000 via Vite /featherless-v1
             </label>
-            <div className="flex flex-wrap gap-2">
+
+            <div>
+              <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Model</div>
+              <p className="mb-2 text-[12px] text-muted-foreground">Pick a pinned id, or type any allowed Featherless model.</p>
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {PINNED_FEATHERLESS_MODELS.map((m) => {
+                  const on = draft.featherlessModel === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      title={m.id}
+                      onClick={() => patch({ featherlessModel: m.id, ...recommendedApiPatch(m.id, draft) })}
+                      className={
+                        'rounded-md border px-2 py-1 text-left text-[11px] leading-tight ' +
+                        (on
+                          ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-200'
+                          : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground')
+                      }
+                    >
+                      {m.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <input
+                value={draft.featherlessModel}
+                onChange={(e) => patch({ featherlessModel: e.target.value })}
+                placeholder={DEFAULT_FEATHERLESS_MODEL}
+                className="field font-mono text-[12px]"
+                aria-label="Featherless model id"
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-2 border-t border-border pt-3">
               <button
                 type="button"
                 onClick={() => void testFeatherless()}
                 disabled={testing || draft.featherlessEnabled === false}
-                className="w-fit rounded bg-zinc-100 px-3 py-1 font-mono text-[11px] font-medium text-zinc-900 disabled:opacity-50"
+                className="btn-primary h-8 px-3 text-[12px]"
               >
                 {testing ? 'Testing…' : 'Test connection'}
               </button>
@@ -869,7 +895,7 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
                 type="button"
                 onClick={() => void listFeatherlessModels()}
                 disabled={testing || draft.featherlessEnabled === false}
-                className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200 disabled:opacity-50"
+                className="btn-ghost h-8 px-3 text-[12px]"
               >
                 List models
               </button>
@@ -877,212 +903,294 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
                 type="button"
                 onClick={() => void debugFeatherless()}
                 disabled={testing || draft.featherlessEnabled === false}
-                className="w-fit rounded border border-amber-500/50 px-3 py-1 font-mono text-[11px] text-amber-200 disabled:opacity-50"
+                className="btn-ghost h-8 px-3 text-[12px]"
               >
                 {testing ? 'Debugging…' : 'Debug responses'}
               </button>
             </div>
-          </>
-
+          </Section>
         ) : provider === 'platform' ? (
-          <>
-            <p className="font-mono text-[10px] text-muted">
-              Abliterated Cloud via LiteLLM gateway (virtual key + budget). Auth with license/account —
-              not a pasted Featherless master key. Featherless Scale ToS applies to platform traffic.
-            </p>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Gateway base URL
+          <Section
+            title="Platform"
+            hint="Abliterated Cloud via LiteLLM (virtual key + budget). Connect with your license — not a Featherless master key."
+          >
+            <Field label="Gateway base URL">
               <input
                 value={draft.baseUrl}
                 onChange={(e) => patch({ baseUrl: e.target.value })}
                 placeholder="https://abliterated.app/api/v1"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+                className="field"
               />
-            </label>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Virtual key (from Connect)
+            </Field>
+            <Field label="Virtual key" hint="Filled by Connect with account. Stored only in local settings.">
               <input
                 type="password"
                 value={draft.token}
                 onChange={(e) => patch({ token: e.target.value })}
                 autoComplete="off"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+                className="field"
               />
-            </label>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Default model alias
+            </Field>
+            <Field label="Default model alias" hint="standard or economy, or a raw Featherless id allowed on the key.">
               <input
                 value={draft.defaultModel}
                 onChange={(e) => patch({ defaultModel: e.target.value })}
                 placeholder="standard"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+                className="field"
               />
-            </label>
-            <div className="flex flex-wrap gap-2">
+            </Field>
+            <div className="flex flex-wrap gap-2 border-t border-border pt-3">
               <button
                 type="button"
                 onClick={() => void connectPlatform()}
                 disabled={testing}
-                className="w-fit rounded border border-emerald-500/50 bg-emerald-500/10 px-3 py-1 font-mono text-[11px] text-emerald-200 disabled:opacity-50"
+                className="btn-primary h-8 px-3 text-[12px]"
               >
                 {testing ? 'Connecting…' : 'Connect with account'}
               </button>
-              <button
-                type="button"
-                onClick={() => void testCloudOrCustom()}
-                disabled={testing}
-                className="w-fit rounded bg-zinc-100 px-3 py-1 font-mono text-[11px] font-medium text-zinc-900 disabled:opacity-50"
-              >
+              <button type="button" onClick={() => void testCloudOrCustom()} disabled={testing} className="btn-ghost h-8 px-3 text-[12px]">
                 {testing ? 'Testing…' : 'Test connection'}
               </button>
             </div>
-          </>
+          </Section>
         ) : provider === 'custom' ? (
-          <>
-            <p className="font-mono text-[10px] text-muted">
-              OpenAI-compatible endpoint. Fields start empty — enter your base URL, API key, and model id.
-            </p>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Base URL
+          <Section title="Custom" hint="OpenAI-compatible endpoint. Fields start empty.">
+            <Field label="Base URL">
               <input
                 value={draft.baseUrl}
                 onChange={(e) => patch({ baseUrl: e.target.value })}
                 placeholder="https://api.example.com/v1"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+                className="field"
               />
-            </label>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Token
+            </Field>
+            <Field label="Token">
               <input
                 type="password"
                 value={draft.token}
                 onChange={(e) => patch({ token: e.target.value })}
-                placeholder="sk-..."
+                placeholder="sk-…"
                 autoComplete="off"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+                className="field"
               />
-            </label>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Default model
+            </Field>
+            <Field label="Default model">
               <input
                 value={draft.defaultModel}
                 onChange={(e) => patch({ defaultModel: e.target.value })}
                 placeholder="model-id"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+                className="field"
               />
-            </label>
-            <button
-              type="button"
-              onClick={() => void testCloudOrCustom()}
-              disabled={testing}
-              className="w-fit rounded bg-zinc-100 px-3 py-1 font-mono text-[11px] font-medium text-zinc-900 disabled:opacity-50"
-            >
-              {testing ? 'Testing…' : 'Test connection'}
-            </button>
-          </>
+            </Field>
+            <div className="border-t border-border pt-3">
+              <button type="button" onClick={() => void testCloudOrCustom()} disabled={testing} className="btn-primary h-8 px-3 text-[12px]">
+                {testing ? 'Testing…' : 'Test connection'}
+              </button>
+            </div>
+          </Section>
         ) : (
-          <>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Base URL
+          <Section title="Abliteration" hint="Cloud abliteration.ai. Empty URL/token fall back to the built-in defaults.">
+            <Field label="Base URL">
               <input
                 value={draft.baseUrl}
                 onChange={(e) => patch({ baseUrl: e.target.value })}
                 placeholder="https://api.abliteration.ai/v1"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+                className="field"
               />
-            </label>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Token
+            </Field>
+            <Field label="Token">
               <input
                 type="password"
                 value={draft.token}
                 onChange={(e) => patch({ token: e.target.value })}
                 autoComplete="off"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+                className="field"
               />
-            </label>
-            <label className="block font-mono text-[10px] uppercase text-muted">
-              Default model
+            </Field>
+            <Field label="Default model">
               <input
                 value={draft.defaultModel}
                 onChange={(e) => patch({ defaultModel: e.target.value })}
                 placeholder="abliterated-model"
-                className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
+                className="field"
               />
-            </label>
-            <button
-              type="button"
-              onClick={() => void testCloudOrCustom()}
-              disabled={testing}
-              className="w-fit rounded bg-zinc-100 px-3 py-1 font-mono text-[11px] font-medium text-zinc-900 disabled:opacity-50"
-            >
-              {testing ? 'Testing…' : 'Test connection'}
-            </button>
-          </>
+            </Field>
+            <div className="border-t border-border pt-3">
+              <button type="button" onClick={() => void testCloudOrCustom()} disabled={testing} className="btn-primary h-8 px-3 text-[12px]">
+                {testing ? 'Testing…' : 'Test connection'}
+              </button>
+            </div>
+          </Section>
         )}
 
-        <div className="rounded border border-border bg-background/40 p-3 space-y-2">
-          <div className="font-mono text-[10px] uppercase text-muted">Local image generation (Spark)</div>
-          <p className="font-mono text-[10px] leading-4 text-muted">
-            Separate from chat providers (Platform / Custom / Featherless). Diffusers bridge on :7860 only (ComfyUI removed).
-            Defaults: krea2-raw-fp8 (Build D hero), krea2-turbo (fast), z-image-turbo-nsfw-nvfp4 (draft), flux2-klein-9b (after hero). Prompt LLM :8000 qwen-abliterated.
-          </p>
-          <p className="font-mono text-[10px] text-zinc-400 whitespace-pre-wrap">{sparkBridgeDownHint(draft)}</p>
-          <ul className="space-y-1 font-mono text-[10px] text-zinc-400">
+        <Section
+          title="Sampling"
+          hint="Applies to chat on the selected provider. Completions use max_tokens 4096; history is trimmed to this window."
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Reasoning">
+              <select
+                value={draft.reasoning}
+                onChange={(e) => patch({ reasoning: e.target.value as ReasoningLevel })}
+                className="field"
+              >
+                {REASONING.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field
+              label="Context length"
+              hint="Prompt window, not max_tokens. Empty = 32768 on Featherless, 131072 otherwise."
+            >
+              <input
+                type="number"
+                min={0}
+                value={draft.contextLength ?? ''}
+                onChange={(e) => patch({ contextLength: e.target.value ? Number(e.target.value) : undefined })}
+                className="field"
+                title="Model prompt window. Chat is trimmed to this minus max_tokens."
+              />
+            </Field>
+          </div>
+          {selectedModelId?.trim() ? (
+            <ModelSettingsGuidePanel
+              model={selectedModelId}
+              settings={draft}
+              onSettingsChange={(s) => {
+                setDraft(s);
+                onSettingsChange(s);
+              }}
+            />
+          ) : null}
+        </Section>
+
+        <Section
+          title="Image generation"
+          hint="Optional. Spark is the local Diffusers bridge (:7860). xAI Imagine is cloud grok-imagine-image-2.0 (paste an xAI key)."
+        >
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                patch({
+                  imageGenEnabled: true,
+                  imageBackend: 'spark',
+                  imageBaseUrl: draft.imageBaseUrl || sparkImageSettingsPatch(draft, UNCENSORED_IMAGE_MODEL).imageBaseUrl,
+                })
+              }
+              className={'h-8 px-3 text-[12px] ' + (!isXaiImageBackend(draft) ? 'btn-primary' : 'btn-ghost')}
+            >
+              Spark (local)
+            </button>
+            <button
+              type="button"
+              onClick={() => patch(xaiImageSettingsPatch(draft))}
+              className={'h-8 px-3 text-[12px] ' + (isXaiImageBackend(draft) ? 'btn-primary' : 'btn-ghost')}
+            >
+              xAI Imagine
+            </button>
+            <button type="button" onClick={() => onOpenTab?.('images')} className="btn-ghost h-8 px-3 text-[12px]">
+              Open Images tab
+            </button>
+          </div>
+          {isXaiImageBackend(draft) ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="xAI base URL">
+                <input
+                  value={draft.xaiImageBaseUrl}
+                  onChange={(e) => patch({ xaiImageBaseUrl: e.target.value })}
+                  placeholder={XAI_IMAGE_BASE_URL}
+                  className="field"
+                />
+              </Field>
+              <Field label="xAI API key" hint="From console.x.ai. Not the chat token.">
+                <input
+                  type="password"
+                  value={draft.xaiImageToken}
+                  onChange={(e) => patch({ xaiImageToken: e.target.value })}
+                  autoComplete="off"
+                  className="field"
+                  placeholder="xai-…"
+                />
+              </Field>
+              <Field label="Model">
+                <input value={draft.xaiImageModel || XAI_IMAGE_MODEL} onChange={(e) => patch({ xaiImageModel: e.target.value })} className="field" />
+              </Field>
+              <Field label="Resolution">
+                <select
+                  value={draft.xaiImageResolution || '2k'}
+                  onChange={(e) => patch({ xaiImageResolution: e.target.value === '1k' ? '1k' : '2k' })}
+                  className="field"
+                >
+                  <option value="1k">1k</option>
+                  <option value="2k">2k</option>
+                </select>
+              </Field>
+              <Field label="Quality" hint="auto / low / medium. 2.0 only.">
+                <select
+                  value={draft.xaiImageQuality || 'auto'}
+                  onChange={(e) =>
+                    patch({
+                      xaiImageQuality:
+                        e.target.value === 'low' || e.target.value === 'medium' ? e.target.value : 'auto',
+                    })
+                  }
+                  className="field"
+                >
+                  {XAI_QUALITIES.map((q) => (
+                    <option key={q} value={q}>
+                      {q}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+          ) : (
+            <>
+          <p className="whitespace-pre-wrap text-[12px] leading-5 text-muted-foreground">{sparkBridgeDownHint(draft)}</p>
+          <ul className="space-y-1 text-[12px] text-muted-foreground">
             {sparkOpsCheatSheet().map((row) => (
               <li key={row.label}>
-                <span className="text-zinc-500">{row.label}:</span> <code className="text-zinc-300">{row.cmd}</code>
+                <span className="text-zinc-500">{row.label}:</span> <code className="break-all text-zinc-300">{row.cmd}</code>
               </li>
             ))}
           </ul>
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => patch(sparkImageSettingsPatch(draft, UNCENSORED_IMAGE_MODEL))} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Use Spark image gen</button>
-            <button type="button" onClick={() => patch(sparkImageSettingsPatch(draft, FAST_IMAGE_MODEL))} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Use Spark Krea quality</button>
-            <button type="button" onClick={() => patch(sparkImageSettingsPatch(draft, DRAFT_IMAGE_MODEL))} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Use Spark Qwen-Image stub</button>
-            <button type="button" onClick={() => onOpenTab?.('images')} className="w-fit rounded border border-border px-3 py-1 font-mono text-[11px] text-zinc-200">Open Images tab</button>
+            <button
+              type="button"
+              onClick={() => patch(sparkImageSettingsPatch(draft, UNCENSORED_IMAGE_MODEL))}
+              className="btn-ghost h-8 px-3 text-[12px]"
+            >
+              Use Spark image gen
+            </button>
+            <button
+              type="button"
+              onClick={() => patch(sparkImageSettingsPatch(draft, FAST_IMAGE_MODEL))}
+              className="btn-ghost h-8 px-3 text-[12px]"
+            >
+              Use Spark Krea quality
+            </button>
+            <button
+              type="button"
+              onClick={() => patch(sparkImageSettingsPatch(draft, DRAFT_IMAGE_MODEL))}
+              className="btn-ghost h-8 px-3 text-[12px]"
+            >
+              Use Spark Qwen-Image stub
+            </button>
           </div>
-        </div>
+            </>
+          )}
+        </Section>
 
-        <label className="block font-mono text-[10px] uppercase text-muted">
-          Reasoning
-          <select
-            value={draft.reasoning}
-            onChange={(e) => patch({ reasoning: e.target.value as ReasoningLevel })}
-            className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
-          >
-            {REASONING.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-        </label>
-        {selectedModelId?.trim() ? (
-          <ModelSettingsGuidePanel
-            model={selectedModelId}
-            settings={draft}
-            onSettingsChange={(s) => {
-              setDraft(s);
-              onSettingsChange(s);
-            }}
-          />
+        {result ? (
+          <Section title="Last test">
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background p-3 font-mono text-[11px] leading-5 text-zinc-300">
+              {result}
+            </pre>
+          </Section>
         ) : null}
-
-        <label className="block font-mono text-[10px] uppercase text-muted">
-          Context length (prompt window — not max_tokens)
-          <input
-            type="number"
-            min={0}
-            value={draft.contextLength ?? ''}
-            onChange={(e) => patch({ contextLength: e.target.value ? Number(e.target.value) : undefined })}
-            className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-xs text-zinc-100 outline-none"
-            title="Model prompt window. Chat is trimmed to this minus max_tokens. Empty = 32768 on Featherless, 131072 otherwise."
-          />
-        </label>
-        <p className="font-mono text-[10px] text-muted">
-          Completions use max_tokens 4096. Over-long history/tool dumps are dropped from the oldest turn so the prompt fits this window (Featherless plan default 32768).
-        </p>
-        {result ? <pre className="whitespace-pre-wrap rounded border border-border bg-background p-2 font-mono text-[11px] text-zinc-300">{result}</pre> : null}
       </div>
     </div>
   );

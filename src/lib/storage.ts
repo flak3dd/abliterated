@@ -92,11 +92,17 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   featherlessModel: DEFAULT_FEATHERLESS_MODEL,
   featherlessViaProxy: false,
   imageGenEnabled: false,
+  imageBackend: 'spark',
   imageBaseUrl: 'http://127.0.0.1:7860/v1',
   imageToken: '',
   imageModel: 'krea2-raw-fp8',
   // Prefer off: Vite DEV browser still enables via getSettings when unset; Electron stays off.
   imageViaProxy: false,
+  xaiImageBaseUrl: 'https://api.x.ai/v1',
+  xaiImageToken: '',
+  xaiImageModel: 'grok-imagine-image-2.0',
+  xaiImageResolution: '2k',
+  xaiImageQuality: 'auto',
   mcpServers: [],
   skillsEnabled: true,
   licenseKey: import.meta.env.DEV ? 'ABLIT-ADMIN' : '',
@@ -242,7 +248,7 @@ export function getSettings(): ClientSettings {
     !storedPrompt || (LEGACY_PROMPTS as readonly string[]).includes(storedPrompt)
       ? SYSTEM_PROMPT
       : storedPrompt;
-  const _settings = {
+  const _settings: ClientSettings = {
     ...DEFAULT_SETTINGS,
     ...stored,
     baseUrl: stored.baseUrl?.trim() || DEFAULT_SETTINGS.baseUrl,
@@ -321,6 +327,7 @@ export function getSettings(): ClientSettings {
       return stored.featherlessViaProxy === true;
     })(),
     imageGenEnabled: stored.imageGenEnabled === true,
+    imageBackend: stored.imageBackend === 'xai' ? ('xai' as const) : ('spark' as const),
     imageBaseUrl: stored.imageBaseUrl?.trim() || DEFAULT_SETTINGS.imageBaseUrl,
     imageToken: stored.imageToken ?? DEFAULT_SETTINGS.imageToken,
     imageModel: (() => {
@@ -349,6 +356,16 @@ export function getSettings(): ClientSettings {
       if (isElectron) return false;
       return import.meta.env.DEV === true;
     })(),
+    xaiImageBaseUrl: stored.xaiImageBaseUrl?.trim() || DEFAULT_SETTINGS.xaiImageBaseUrl,
+    xaiImageToken: stored.xaiImageToken ?? DEFAULT_SETTINGS.xaiImageToken,
+    xaiImageModel: stored.xaiImageModel?.trim() || DEFAULT_SETTINGS.xaiImageModel,
+    xaiImageResolution: stored.xaiImageResolution === '1k' ? ('1k' as const) : ('2k' as const),
+    xaiImageQuality:
+      stored.xaiImageQuality === 'low'
+        ? ('low' as const)
+        : stored.xaiImageQuality === 'medium'
+          ? ('medium' as const)
+          : ('auto' as const),
     mcpServers: Array.isArray(stored.mcpServers) ? stored.mcpServers : [],
     skillsEnabled: stored.skillsEnabled !== false,
     licenseKey:

@@ -25,13 +25,14 @@ import {
   parseTodoBullets,
   shouldApplyBuildProcess,
 } from "./agentHelpers";
-import { looksLikeProvenImprovement, buildProveImproveNudge, looksReadOnlyOrControlPrompt } from './proveImprove';
+import { buildProveImproveNudge, shouldProveImproveNudge } from './proveImprove';
 import {
   needsInspectBeforeWrite,
   buildInspectBeforeWriteNudge,
   lockedGoalSystemBlock,
 } from "./harnessGates";
-import { finalizeReasoningChannel } from "./agentPhase";
+import { finalizeReasoningChannel, splitThinkFromContent } from "./agentPhase";
+import { looksLikeTokenCollapse, stripCollapsedText, TOKEN_COLLAPSE_REPLY_NOTE } from "./tokenCollapse";
 import { enforceThoughtNoCode } from "./reasoningWork";
 import { executeMcpToolCall, listConnectedMcpTools, mcpToolsToOpenAi } from "./mcpClient";
 import {
@@ -451,11 +452,27 @@ async function runJob(initial: Job, settings: ClientSettings) {
         onReasoningDelta: (t) => {
           assistantReasoning += t;
         },
+        onReset: () => {
+          assistantText = "";
+          assistantReasoning = "";
+        },
       });
 
       if (assistantText.trim()) {
         const clip = assistantText.trim().slice(0, 400);
         job = appendLog(job, `assistant: ${clip}${assistantText.length > 400 ? "…" : ""}`);
+      }
+
+      const splitThink = splitThinkFromContent(assistantText);
+      if (splitThink.thinking) {
+        assistantReasoning = [assistantReasoning, splitThink.thinking].filter(Boolean).join('\n\n');
+        assistantText = splitThink.content;
+      }
+      assistantText = stripCollapsedText(assistantText);
+      assistantReasoning = stripCollapsedText(assistantReasoning);
+      if (result.tokenCollapsed && isMissingContentAnswer(assistantText)) {
+        assistantText = TOKEN_COLLAPSE_REPLY_NOTE;
+        if (looksLikeTokenCollapse(assistantReasoning)) assistantReasoning = "";
       }
 
       // Finalize/coalesce BEFORE applyGrokEdits so diffs in reasoning are promoted first.
@@ -512,6 +529,10 @@ async function runJob(initial: Job, settings: ClientSettings) {
       });
 
       if (!toolCalls.length) {
+        if (result.tokenCollapsed || assistantText === TOKEN_COLLAPSE_REPLY_NOTE) {
+          job = appendLog(job, "token collapse — stopping");
+          break;
+        }
         if (isMissingContentAnswer(assistantText)) {
           const hasReasoning = !!(assistantReasoning || "").trim();
           if (!hasReasoning) {
@@ -554,8 +575,11 @@ async function runJob(initial: Job, settings: ClientSettings) {
         if (
           !settings.planModeEnabled &&
           !proveImproveNudgeUsed &&
-          !looksReadOnlyOrControlPrompt(job.prompt) &&
-          !looksLikeProvenImprovement(assistantText, toolsUsed)
+          shouldProveImproveNudge({
+            userText: job.prompt,
+            content: assistantText,
+            toolsUsed,
+          })
         ) {
           proveImproveNudgeUsed = true;
           history.push({ role: "user", content: buildProveImproveNudge() });

@@ -168,6 +168,14 @@ const abliterationProxy = {
     rewrite: (p: string) => p.replace(/^\/featherless-oauth/, ''),
     configure: featherlessLocalProxyConfigure,
   },
+  '/xai-v1': {
+    target: 'https://api.x.ai',
+    changeOrigin: true,
+    secure: true,
+    timeout: 0,
+    proxyTimeout: 0,
+    rewrite: (p: string) => p.replace(/^\/xai-v1/, '/v1'),
+  },
   '/image-v1': {
     target: process.env.ABLITERATED_IMAGE_URL || 'http://127.0.0.1:7860',
     changeOrigin: true,

@@ -1,4 +1,3 @@
-/** Vite runtime companion of index.ts — keep exports in sync. */
 export const ALL_TOOL_TYPES = [
     'web_fetch',
     'web_search',

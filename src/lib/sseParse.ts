@@ -28,6 +28,15 @@ export function isThinkingFamilyModel(model: string): boolean {
   return THINKING_MODEL_RE.test(model || '');
 }
 
+/**
+ * Abliterated Qwen3 weights on Featherless loop `!` when enable_thinking is on
+ * (broken chat template). Force content-only.
+ */
+export function shouldForceThinkingOff(model: string): boolean {
+  const m = model || '';
+  return /qwen3/i.test(m) && /abliterat/i.test(m);
+}
+
 /** Featherless/vLLM chat_template_kwargs for Qwen3-class thinking models. */
 export type ThinkingChatTemplateKwargs = {
   enable_thinking: boolean;
@@ -57,6 +66,9 @@ export function thinkingChatTemplateKwargs(
   reasoning: ReasoningLevelLite,
 ): ThinkingChatTemplateKwargs | undefined {
   if (!isThinkingFamilyModel(model)) return undefined;
+  if (shouldForceThinkingOff(model)) {
+    return { enable_thinking: false };
+  }
   const enable = reasoning !== 'off';
   const kwargs: ThinkingChatTemplateKwargs = { enable_thinking: enable };
   if (enable && isPreserveThinkingModel(model)) {

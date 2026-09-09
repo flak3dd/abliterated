@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, ArrowDown, RotateCcw, Send, Square, ListChecks } from 'lucide-react';
+import { ArrowLeft, ArrowDown, RotateCcw, Send, Square, ListChecks, PanelRight } from 'lucide-react';
 import { cn } from '../lib/cn';
 import {
   buildDeepenNowPrompt,
@@ -21,6 +21,7 @@ import {
   agentPhaseLabel,
   agentPhaseShortLabel,
   finalizeReasoningChannel,
+  splitThinkFromContent,
   stripThinkingWrappers,
   type AgentPhase,
   type AgentPhaseMeta,
@@ -67,18 +68,28 @@ import {
   parseTodoItems,
   type TodoItem,
   looksExploreIntent,
+  looksReadOnlyOrControlPrompt,
   shouldApplyBuildProcess,
+  shouldPrefetchWorkspace,
   buildReasoningThenBuildNudge,
   buildBuildModeTodoNudge,
   buildBuildModeImplementNudge,
   liftTodoListToContent,
   looksLikeBuildOutput,
   shouldSkipSelfDeepen,
-  looksReadOnlyOrControlPrompt,
   looksTrivialFileEdit,
+  looksPromptOnlyRequest,
   type AgentRunRecord,
 } from '../lib/agentHelpers';
-import { looksLikeProvenImprovement, buildProveImproveNudge, buildRunProof } from '../lib/proveImprove';
+import {
+  buildTurnPlan,
+  buildTurnSteps,
+  collectTurnFiles,
+  syncStepsFromRun,
+  type PlanItem,
+  type WorkflowStep,
+} from '../lib/turnWorkflow';
+import { buildProveImproveNudge, buildRunProof, shouldProveImproveNudge } from '../lib/proveImprove';
 import {
   needsInspectBeforeWrite,
   buildInspectBeforeWriteNudge,
@@ -109,9 +120,10 @@ import {
   buildSkillReadNudge,
   type CapabilityPlan,
 } from '../lib/capabilityRouter';
-import { buildFakeToolNudge, looksLikeFakeToolTheater, parseFakeToolCalls } from '../lib/fakeToolCalls';
+import { buildFakeToolNudge, looksLikeFakeToolTheater, looksLikeToolRetryNarration, parseFakeToolCalls } from '../lib/fakeToolCalls';
 import { detokenizeArtifacts } from '../lib/detokenizeArtifacts';
 import { streamChatCompletion } from '../lib/sse';
+import { looksLikeTokenCollapse, stripCollapsedText, TOKEN_COLLAPSE_REPLY_NOTE } from '../lib/tokenCollapse';
 import { getMessages, recordAgentRun, replaceThreadMessages, saveMessage, setSettings, uid, upsertThread } from '../lib/storage';
 import { formatSkillsCatalogPrompt, formatVerifyStrictSkillPrompt, shouldAutoInjectVerifyStrict, toCatalogEntries, type SkillCatalogEntry, type SkillRecord } from '../lib/skills';
 import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from '../lib/projectMemory';
@@ -164,6 +176,8 @@ interface Props {
   /** Persist ClientSettings patches (Completeness toggle syncs with Settings/Jobs). */
   onSettingsChange?: (s: ClientSettings) => void;
   onOpenTab?: (tab: Tab) => void;
+  filePanelOpen?: boolean;
+  onToggleFilePanel?: () => void;
 }
 
 /** Named hard clamp; effective turns come from settings.maxAgentTurns. */
@@ -232,7 +246,7 @@ function truncateForApi(content: string): string {
 }
 
 const LIVE_WORKSPACE_SUFFIX =
-  'Live workspace. Write EVERY code file into the connected working directory with write_file or a path-headed ```diff / // relative/path fence. Chat-only source is a failed build. Call list_dir/glob/read_file/grep — do not fake ls/tree in bash fences. Answers go in content. Reasoning is outline only — never code, diffs, bash, or // path files.';
+  'Live workspace. Write EVERY code file into the connected working directory with write_file or a path-headed ```diff / // relative/path fence. Chat-only source is a failed build. Large new files (prompts, long markdown): // relative/path fence in CONTENT — do not JSON-encode huge bodies into write_file and do not narrate tool syntax. Call list_dir/glob/read_file/grep — do not fake ls/tree in bash fences. Answers go in content. Reasoning is outline only — never code, diffs, bash, or // path files.';
 
 const PATH_MENTION_RE =
   /(?:^|[\s`'"(])((?:src|lib|app|daemon|public|tests?|scripts?|components?|screens?)\/[\w./+-]+|[\w./-]*package\.json|[\w./-]*tsconfig[\w./-]*|[\w./+-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|css|html|py|rs|go|toml|ya?ml))\b/gi;
@@ -253,41 +267,49 @@ function extractMentionedPaths(text: string): string[] {
 
 async function prefetchPinnedPaths(text: string, root: string): Promise<string[]> {
   if (!bridge.connected) return [];
-  const pins = extractAtPins(text).filter((p) => isPathInsideRoot(p, root || undefined));
+  const pins = extractAtPins(text).filter((p) => isPathInsideRoot(p, root || undefined)).slice(0, 8);
+  if (!pins.length) return [];
+  const parts = await Promise.all(
+    pins.map(async (pin) => {
+      try {
+        const entries = await bridge.listDir(pin).catch(() => null);
+        if (entries) {
+          const listing = entries
+            .slice(0, 80)
+            .map((e) => `${e.dir ? 'd' : 'f'} ${e.path}`)
+            .join('\n');
+          return `PINNED DIR @${pin}:\n\`\`\`\n${listing}\n\`\`\``;
+        }
+      } catch {
+        /* file */
+      }
+      try {
+        const content = await bridge.readFile(pin);
+        const clipped = content.length > 24_000 ? `${content.slice(0, 24_000)}\n/* truncated */` : content;
+        return `PINNED FILE @${pin}:\n\`\`\`\n${clipped}\n\`\`\``;
+      } catch {
+        return null;
+      }
+    }),
+  );
   const notes: string[] = [];
   let budget = 12_000;
-  for (const pin of pins.slice(0, 12)) {
-    if (budget <= 0) break;
-    try {
-      const entries = await bridge.listDir(pin).catch(() => null);
-      if (entries) {
-        const listing = entries
-          .slice(0, 80)
-          .map((e) => `${e.dir ? 'd' : 'f'} ${e.path}`)
-          .join('\n');
-        const block = `PINNED DIR @${pin}:\n\`\`\`\n${listing}\n\`\`\``;
-        notes.push(block);
-        budget -= block.length;
-        continue;
-      }
-    } catch {
-      /* try as file */
-    }
-    try {
-      const content = await bridge.readFile(pin);
-      const clipped = content.length > Math.min(24_000, budget) ? `${content.slice(0, Math.min(24_000, budget))}\n/* truncated */` : content;
-      const block = `PINNED FILE @${pin}:\n\`\`\`\n${clipped}\n\`\`\``;
-      notes.push(block);
-      budget -= block.length;
-    } catch {
-      /* missing pins are fine */
-    }
+  for (const n of parts) {
+    if (!n || budget <= 0) continue;
+    const block = n.length > budget ? `${n.slice(0, budget)}\n/* truncated */` : n;
+    notes.push(block);
+    budget -= block.length;
   }
   return notes;
 }
 
-async function prefetchWorkspaceFiles(text: string, root: string): Promise<string[]> {
+async function prefetchWorkspaceFiles(
+  text: string,
+  root: string,
+  opts?: { explore?: boolean; build?: boolean },
+): Promise<string[]> {
   if (!bridge.connected) return [];
+  if (!shouldPrefetchWorkspace(text, opts)) return [];
   const notes: string[] = [];
   let budget = 12_000;
 
@@ -297,7 +319,8 @@ async function prefetchWorkspaceFiles(text: string, root: string): Promise<strin
     budget -= n.length;
   }
 
-  if (looksExploreIntent(text) && budget > 500) {
+  const pins = extractAtPins(text);
+  if (opts?.explore && !pins.length && budget > 500) {
     try {
       const entries = await bridge.listDir('.');
       if (entries?.length) {
@@ -317,28 +340,34 @@ async function prefetchWorkspaceFiles(text: string, root: string): Promise<strin
   }
 
   const paths = extractMentionedPaths(text).filter((p) => isPathInsideRoot(p, root || undefined));
-  const pinnedSet = new Set(extractAtPins(text));
-  for (const filePath of paths.slice(0, 8)) {
-    if (budget <= 0) break;
-    if (pinnedSet.has(filePath)) continue;
-    try {
-      const content = await bridge.readFile(filePath);
+  const pinnedSet = new Set(pins);
+  const toRead = paths.filter((p) => !pinnedSet.has(p)).slice(0, 4);
+  if (toRead.length && budget > 0) {
+    const bodies = await Promise.all(
+      toRead.map(async (filePath) => {
+        try {
+          const content = await bridge.readFile(filePath);
+          return { filePath, content };
+        } catch {
+          return null;
+        }
+      }),
+    );
+    for (const row of bodies) {
+      if (!row || budget <= 0) continue;
       const take = Math.min(24_000, budget);
-      const clipped = content.length > take ? `${content.slice(0, take)}\n/* truncated */` : content;
-      const block = `WORKSPACE FILE ${filePath}:\n\`\`\`\n${clipped}\n\`\`\``;
+      const clipped = row.content.length > take ? `${row.content.slice(0, take)}\n/* truncated */` : row.content;
+      const block = `WORKSPACE FILE ${row.filePath}:\n\`\`\`\n${clipped}\n\`\`\``;
       notes.push(block);
       budget -= block.length;
-    } catch {
-      /* missing files are fine */
     }
   }
 
-  // Smart prefetch: distinctive tokens → semantic_search → top files
-  if (budget > 6_000) {
+  if ((opts?.explore || opts?.build) && budget > 6_000) {
     const tokens = extractSearchTokens(text, 4);
     if (tokens.length) {
       try {
-        const hits = await bridge.semanticSearch(tokens.join(' '), { maxSnippets: 12 });
+        const hits = await bridge.semanticSearch(tokens.join(' '), { maxSnippets: 8 });
         if (hits && hits !== 'no matches' && !hits.startsWith('no matches')) {
           const files: string[] = [];
           const seen = new Set<string>([...pinnedSet, ...paths]);
@@ -349,21 +378,26 @@ async function prefetchWorkspaceFiles(text: string, root: string): Promise<strin
             if (seen.has(fp)) continue;
             seen.add(fp);
             files.push(fp);
-            if (files.length >= 4) break;
+            if (files.length >= 2) break;
           }
-          for (const filePath of files) {
-            if (budget <= 0) break;
-            if (!isPathInsideRoot(filePath, root || undefined)) continue;
-            try {
-              const content = await bridge.readFile(filePath);
-              const take = Math.min(16_000, budget);
-              const clipped = content.length > take ? `${content.slice(0, take)}\n/* truncated */` : content;
-              const block = `RELATED FILE ${filePath}:\n\`\`\`\n${clipped}\n\`\`\``;
-              notes.push(block);
-              budget -= block.length;
-            } catch {
-              /* ignore */
-            }
+          const related = await Promise.all(
+            files.map(async (filePath) => {
+              if (!isPathInsideRoot(filePath, root || undefined)) return null;
+              try {
+                const content = await bridge.readFile(filePath);
+                return { filePath, content };
+              } catch {
+                return null;
+              }
+            }),
+          );
+          for (const row of related) {
+            if (!row || budget <= 0) continue;
+            const take = Math.min(16_000, budget);
+            const clipped = row.content.length > take ? `${row.content.slice(0, take)}\n/* truncated */` : row.content;
+            const block = `RELATED FILE ${row.filePath}:\n\`\`\`\n${clipped}\n\`\`\``;
+            notes.push(block);
+            budget -= block.length;
           }
         }
       } catch {
@@ -433,6 +467,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     onApprovePlan,
     onSettingsChange,
     onOpenTab,
+    filePanelOpen = false,
+    onToggleFilePanel,
   },
   ref,
 ) {
@@ -955,7 +991,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     if (planMode) {
       setLatestGrok([]);
       setGrokEmptyHint(undefined);
-      return;
+      return [] as GrokApplyResult[];
     }
     const edits = parseGrokEdits(source, workspaceRoot);
     const writeToWorkspace = shouldWriteWorkspaceFiles({
@@ -976,6 +1012,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         ? 'no path-headed edits — chat only'
         : undefined,
     );
+    return results;
   };
 
   const makeToolMessage = (tool: ToolCallPayload, content: string): Message => ({
@@ -1200,6 +1237,49 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     phaseMetaRef.current = { runStartedAt: startedAt };
     setPhase('starting', { runStartedAt: startedAt }, 1);
     const toolsUsed: string[] = [];
+    let turnPlan: PlanItem[] = [];
+    let turnSteps: WorkflowStep[] = [];
+    const grokAcc: GrokApplyResult[] = [];
+    const writeCalls: ToolCallPayload[] = [];
+    let workflowHostId: string | null = null;
+    let promptOnly = false;
+    let pins: string[] = [];
+    const paintWorkflow = (host: Message) => {
+      const toolEvidence = current
+        .filter((m) => m.role === 'tool')
+        .map((m) => m.content || '')
+        .join('\n');
+      const synced = syncStepsFromRun({
+        steps: turnSteps,
+        plan: turnPlan,
+        phase: agentPhaseRef.current,
+        toolsUsed,
+        grokResults: grokAcc,
+        verifyEvidence: looksLikeVerifyEvidence(`${host.content || ''}\n${toolEvidence}`, toolsUsed),
+        promptOnly,
+        content: host.content,
+      });
+      turnSteps = synced.steps;
+      turnPlan = synced.plan;
+      host.plan = synced.plan;
+      host.steps = synced.steps;
+      host.files = collectTurnFiles({
+        pins,
+        grokResults: grokAcc,
+        toolCalls: [...writeCalls, ...(host.toolCalls || [])],
+      });
+      if (!host.planApproved) host.planApproved = planMode ? 'awaiting' : 'approved';
+    };
+    const attachWorkflow = (msg: Message) => {
+      if (workflowHostId && workflowHostId !== msg.id) {
+        const prev = messagesRef.current.find((m) => m.id === workflowHostId);
+        if (prev && (prev.steps || prev.plan)) {
+          persist({ ...prev, steps: undefined, plan: undefined, files: undefined });
+        }
+      }
+      workflowHostId = msg.id;
+      paintWorkflow(msg);
+    };
     let turnsDone = 0;
     let deepensUsed = 0;
     let fakeToolRetryUsed = false;
@@ -1247,8 +1327,17 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           shouldApplyBuildProcess(lastUser.content, { buildMode: !!buildMode, planMode: !!planMode })
         );
       const exploreIntent = !!(lastUser && looksExploreIntent(lastUser.content));
+      promptOnly = !!(lastUser && looksPromptOnlyRequest(lastUser.content));
+      pins = lastUser ? extractAtPins(lastUser.content) : [];
+      turnPlan = buildTurnPlan(lastUser?.content || '', pins, { promptOnly });
+      turnSteps = buildTurnSteps(lastUser?.content || '', pins);
       const prefetched =
-        lastUser && bridge.connected ? await prefetchWorkspaceFiles(lastUser.content, workspaceRoot) : [];
+        lastUser && bridge.connected
+          ? await prefetchWorkspaceFiles(lastUser.content, workspaceRoot, {
+              explore: exploreIntent,
+              build: grokBuildProcess,
+            })
+          : [];
       if (ac.signal.aborted) {
         stopReason = 'abort';
         return;
@@ -1290,6 +1379,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           createdAt: Date.now(),
           status: 'streaming',
         };
+        attachWorkflow(assistant);
         persist(assistant);
         try {
           const live = settingsRef.current;
@@ -1311,8 +1401,20 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             extraTools: extraMcpTools.length
               ? (extraMcpTools as Parameters<typeof streamChatCompletion>[0]['extraTools'])
               : undefined,
-            toolChoice: turn === 1 && (exploreIntent || capNow.forceTools) ? 'required' : 'auto',
+            toolChoice:
+              turn === 1 &&
+              (exploreIntent || capNow.forceTools) &&
+              !looksReadOnlyOrControlPrompt(lastUser?.content || '')
+                ? 'required'
+                : 'auto',
             flightKey: `chat:${thread.id}`,
+            onReset: () => {
+              assistant.content = '';
+              assistant.reasoning = '';
+              turnHasContentRef.current = false;
+              turnHasReasoningRef.current = false;
+              persistStream({ ...assistant });
+            },
             onDelta: (text) => {
               if (!turnHasContentRef.current) {
                 // First real content delta — replace any live-mirrored reasoning preview.
@@ -1356,17 +1458,33 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           if (assistant.reasoning) {
             assistant.reasoning = detokenizeArtifacts(assistant.reasoning);
           }
+          const splitThink = splitThinkFromContent(assistant.content || '');
+          if (splitThink.thinking) {
+            assistant.reasoning = [assistant.reasoning, splitThink.thinking].filter(Boolean).join('\n\n');
+            assistant.content = splitThink.content;
+          }
+          assistant.content = stripCollapsedText(assistant.content || '');
+          if (assistant.reasoning) assistant.reasoning = stripCollapsedText(assistant.reasoning);
+          if (result.tokenCollapsed && isMissingContentAnswer(assistant.content)) {
+            assistant.content = TOKEN_COLLAPSE_REPLY_NOTE;
+            assistant.reasoning = looksLikeTokenCollapse(assistant.reasoning || '')
+              ? ''
+              : assistant.reasoning;
+          }
           assistant.status = 'complete';
-          // Thought never keeps code — lift fences/diffs into content (files), then Plan strips writes.
-          enforceThoughtNoCode(assistant, { liftToContent: !planMode });
-          const coalesceOn = settingsRef.current.coalesceReasoningToContent !== false;
-          if (planMode) applyPlanReasoningGuard(assistant);
-          finalizeReasoningChannel(assistant, coalesceOn && !planMode);
-          assistant.content = liftTodoListToContent(assistant.content || '', assistant.reasoning || '');
-          if (planMode) applyPlanReasoningGuard(assistant);
-          else enforceThoughtNoCode(assistant, { liftToContent: true });
-          flushStreamPersist({ ...assistant });
-          await runGrokLayer(assistant);
+          const finalizeAssistant = async () => {
+            const coalesceOn = settingsRef.current.coalesceReasoningToContent !== false;
+            enforceThoughtNoCode(assistant, { liftToContent: !planMode });
+            if (planMode) applyPlanReasoningGuard(assistant);
+            finalizeReasoningChannel(assistant, coalesceOn && !planMode);
+            assistant.content = liftTodoListToContent(assistant.content || '', assistant.reasoning || '');
+            if (planMode) applyPlanReasoningGuard(assistant);
+            else enforceThoughtNoCode(assistant, { liftToContent: true });
+            grokAcc.push(...((await runGrokLayer(assistant)) || []));
+            paintWorkflow(assistant);
+            flushStreamPersist({ ...assistant });
+          };
+          await finalizeAssistant();
 
           if (ac.signal.aborted) {
             // Already finalized + attempted grok above (runGrokLayer no-ops in planMode).
@@ -1378,8 +1496,17 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             break;
           }
           if (!toolCalls.length) {
+            if (result.tokenCollapsed || assistant.content === TOKEN_COLLAPSE_REPLY_NOTE) {
+              setPhase('error', {}, turn);
+              stopReason = 'error';
+              flushStreamPersist({ ...assistant });
+              break;
+            }
             const content = assistant.content || '';
             const detectContent = stripThinkForDetect(content);
+            const retryNarration =
+              looksLikeToolRetryNarration(detectContent) ||
+              looksLikeToolRetryNarration(assistant.reasoning || '');
             const fakeParsed = parseFakeToolCalls(detectContent);
             if (fakeParsed.length) {
               fakeToolParsedCount += fakeParsed.length;
@@ -1392,7 +1519,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               assistant.toolCalls = toolCalls;
               flushStreamPersist({ ...assistant });
               // Fall through into existing tool execution path.
-            } else if (looksLikeFakeToolTheater(detectContent) && !fakeToolRetryUsed) {
+            } else if ((looksLikeFakeToolTheater(detectContent) || retryNarration) && !fakeToolRetryUsed) {
               // One strike only — never loop "emit API tool_calls" nudges across deepen.
               fakeToolRetryUsed = true;
               setPhase(
@@ -1410,7 +1537,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               };
               current = persist(nudge);
               continue;
-            } else if (looksLikeFakeToolTheater(detectContent) && fakeToolRetryUsed) {
+            } else if ((looksLikeFakeToolTheater(detectContent) || retryNarration) && fakeToolRetryUsed) {
               // Already nudged once; stop rather than deepen into another theater loop.
               setPhase('finishing', {}, turn);
               stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
@@ -1419,7 +1546,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               // Empty content after coalesce: no API recovery. Setting off → reasoning panel only.
               if (isMissingContentAnswer(assistant.content)) {
                 const hasReasoning = !!(assistant.reasoning || '').trim();
-                if (hasReasoning && !coalesceOn) {
+                if (hasReasoning && settingsRef.current.coalesceReasoningToContent === false) {
                   setPhase('finishing', {}, turn);
                   stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
                   break;
@@ -1442,17 +1569,10 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                 }
                 // After strip: empty content → coalesce again (zero-cost), never API retry.
                 if (isMissingContentAnswer(assistant.content)) {
-                  enforceThoughtNoCode(assistant, { liftToContent: !planMode });
-                  if (planMode) applyPlanReasoningGuard(assistant);
-                  if (finalizeReasoningChannel(assistant, coalesceOn && !planMode)) {
-                    if (planMode) applyPlanReasoningGuard(assistant);
-                    else enforceThoughtNoCode(assistant, { liftToContent: true });
-                    flushStreamPersist({ ...assistant });
-                    await runGrokLayer(assistant);
-                  }
+                  await finalizeAssistant();
                   if (isMissingContentAnswer(assistant.content)) {
                     const hasReasoning = !!(assistant.reasoning || '').trim();
-                    if (hasReasoning && !coalesceOn) {
+                    if (hasReasoning && settingsRef.current.coalesceReasoningToContent === false) {
                       setPhase('finishing', {}, turn);
                       stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
                       break;
@@ -1594,9 +1714,15 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               if (
                 !planMode &&
                 !proveImproveNudgeUsed &&
+                !buildTodoNudgeUsed &&
+                !buildImplementNudgeUsed &&
+                !buildVerifyNudgeUsed &&
                 lastUser?.content &&
-                !looksReadOnlyOrControlPrompt(lastUser.content) &&
-                !looksLikeProvenImprovement(content, toolsUsed) &&
+                shouldProveImproveNudge({
+                  userText: lastUser.content,
+                  content,
+                  toolsUsed,
+                }) &&
                 !isAnswerCompleteMarker(content)
               ) {
                 proveImproveNudgeUsed = true;
@@ -1663,6 +1789,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               if (
                 !planMode &&
                 !skillCreateNudgeUsed &&
+                !skillReadNudgeUsed &&
                 needsSkillCreateNudge(capStop, toolsUsed) &&
                 !isAnswerCompleteMarker(content)
               ) {
@@ -1685,6 +1812,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               }
               // Content is non-empty here (coalesce / empty handling above).
               setPhase('finishing', {}, turn);
+              paintWorkflow(assistant);
+              flushStreamPersist({ ...assistant });
               stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
               break;
             }
@@ -1726,6 +1855,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           let latest = getMessages(thread.id);
           for (const tool of toolCalls) {
             toolsUsed.push(tool.name);
+            writeCalls.push(tool);
             setPhase('tool_exec', { toolName: tool.name }, turn);
             if (ac.signal.aborted) {
               latest = persist(makeToolMessage({ ...tool, status: 'error', result: 'aborted' }, 'aborted'));
@@ -1736,6 +1866,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             latest = persist(msg);
           }
           current = latest;
+          paintWorkflow(assistant);
+          flushStreamPersist({ ...assistant });
           if (ac.signal.aborted) {
             stopReason = 'abort';
             break;
@@ -1761,7 +1893,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             else enforceThoughtNoCode(assistant, { liftToContent: true });
             if (!assistant.content.trim() && !assistant.reasoning?.trim()) assistant.content = '(stopped)';
             // Apply diffs from coalesced reasoning even on abort (no-op if planMode).
-            await runGrokLayer(assistant);
+            grokAcc.push(...((await runGrokLayer(assistant)) || []));
+            paintWorkflow(assistant);
+            flushStreamPersist({ ...assistant });
             stopReason = 'abort';
           } else {
             setPhase('error', {}, turn);
@@ -1806,6 +1940,10 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         }
       }
       const lastAsst = [...getMessages(thread.id)].reverse().find((m) => m.role === 'assistant');
+      if (lastAsst) {
+        paintWorkflow(lastAsst);
+        persist({ ...lastAsst });
+      }
       const toolEvidenceEnd = getMessages(thread.id)
         .filter((m) => m.role === 'tool')
         .map((m) => m.content || '')
@@ -2063,19 +2201,21 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <header className="flex items-center gap-2 border-b border-border bg-surface px-3 py-2">
-        <button type="button" onClick={onBack} className="rounded p-1 text-muted transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500">
-          <ArrowLeft size={14} />
+      <header className="flex items-center gap-2 border-b border-border bg-background/80 px-4 py-3.5 backdrop-blur">
+        <button
+          type="button"
+          onClick={onBack}
+          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
+        >
+          <ArrowLeft size={16} />
         </button>
         <div className="min-w-0 flex-1">
-          <div className="truncate font-mono text-xs text-zinc-100">{thread.title}</div>
-          <div className="font-mono text-[10px] text-muted">
+          <div className="truncate text-[20px] font-semibold tracking-tight text-foreground">{thread.title}</div>
+          <div className="truncate font-mono text-[10.5px] text-muted-foreground">
             {resolveActiveSettings(settings).label} · {agentProfile.label} · {planMode ? 'PLAN · ' : buildMode ? 'BUILD · ' : ''}
             {agentProfile.useThoughtLock ? 'THOUGHT · ' : ''}
-            {completenessOn ? 'COMPLETE · ' : ''}tools {agentProfile.sendTools ? agentProfile.toolNames.join(', ') : 'none'} · {statusLabel}
-          </div>
-          <div className="truncate font-mono text-[10px] text-zinc-500">
-            {grokHeader}
+            {completenessOn ? 'COMPLETE · ' : ''}{statusLabel}
+            {grokHeader ? ` · ${grokHeader}` : ''}
             {workspaceRoot ? ` · ${workspaceRoot}` : ''}
           </div>
         </div>
@@ -2108,9 +2248,23 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         >
           <ListChecks size={11} /> Deepen now
         </button>
-        <button type="button" onClick={() => void retry()} disabled={busy} className="rounded p-1 text-muted transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500 disabled:opacity-40">
+        <button type="button" onClick={() => void retry()} disabled={busy} className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40">
           <RotateCcw size={14} />
         </button>
+        {onToggleFilePanel ? (
+          <button
+            type="button"
+            aria-label={filePanelOpen ? 'Hide workspace panel' : 'Show workspace panel'}
+            aria-pressed={filePanelOpen}
+            onClick={onToggleFilePanel}
+            className={cn(
+              'hidden rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:inline-flex',
+              filePanelOpen && 'bg-accent text-foreground',
+            )}
+          >
+            <PanelRight size={16} />
+          </button>
+        ) : null}
       </header>
       {onSettingsChange ? (
         <ModelSettingsGuidePanel
@@ -2143,8 +2297,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                 />
               ) : (
                 <>
-                  <div className="text-center font-mono text-xs text-zinc-300">Ready when you are</div>
-                  <ul className="space-y-1.5 font-mono text-[11px] leading-5 text-muted">
+                  <div className="text-center text-lg font-semibold tracking-tight text-foreground">Ready when you are</div>
+                  <ul className="space-y-1.5 text-[13px] leading-5 text-muted-foreground">
                     <li>
                       · Pin context with <span className="text-zinc-300">@src/path.ts</span>
                     </li>
@@ -2186,6 +2340,17 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                   completionFooterEnabled={settings.completionFooterEnabled !== false}
                   onContinuePrompt={handleContinuePrompt}
                   skipHighlight={m.status === 'streaming'}
+                  onApprovePlan={() => {
+                    const host = messagesRef.current.find((x) => x.planApproved === 'awaiting');
+                    if (host) persist({ ...host, planApproved: 'approved' });
+                    onApprovePlan?.();
+                    if (!onApprovePlan) onTogglePlanMode?.();
+                  }}
+                  onDeclinePlan={() => onTogglePlanMode?.()}
+                  onOpenFile={(path) => {
+                    fillInput(`@${path} `);
+                    if (!filePanelOpen) onToggleFilePanel?.();
+                  }}
                 />
               ))}
             </>
@@ -2280,7 +2445,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         </div>
       ) : null}
       <form
-        className="border-t border-border bg-surface p-2"
+        className="border-t border-border bg-background p-3"
         onSubmit={(e) => {
           e.preventDefault();
           void send();
@@ -2308,7 +2473,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         ) : busy ? (
           <div className="mb-1 font-mono text-[10px] text-zinc-600">Esc stops</div>
         ) : null}
-        <div className="flex items-end gap-2">
+        <div className="mx-auto max-w-3xl rounded-2xl border border-border bg-panel shadow-[0_18px_40px_-32px_rgba(0,0,0,0.9)] transition-colors focus-within:border-primary/50">
+        <div className="flex flex-col">
           <textarea
             ref={inputRef}
             value={input}
@@ -2322,8 +2488,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             rows={2}
             placeholder={placeholder}
             disabled={needsWorkingDir}
-            className="field max-h-32 flex-1 resize-none"
+            className="w-full resize-none bg-transparent px-4 pt-3.5 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground field max-h-32 border-0 focus-visible:ring-0"
           />
+        <div className="flex flex-wrap items-end gap-2 px-3 pb-3 pt-1.5">
           <label
             className={
               'flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded border px-2 py-1 font-mono text-[10px] ' +
@@ -2382,10 +2549,12 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               ) : null}
             </>
           ) : (
-            <button type="submit" disabled={needsWorkingDir || !input.trim()} className="btn-primary shrink-0">
-              <Send size={11} /> Send
+            <button type="submit" disabled={needsWorkingDir || !input.trim()} className="btn-icon shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40" aria-label="Send">
+              <Send size={16} />
             </button>
           )}
+        </div>
+        </div>
         </div>
       </form>
     </div>

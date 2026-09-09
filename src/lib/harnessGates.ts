@@ -8,6 +8,14 @@ export const BUILD_WRITE_TOOL_NAMES = new Set([
   'str_replace',
 ]);
 
+/** Surgical edits of existing files — inspect first. write_file is a whole-file create/overwrite. */
+export const SURGICAL_WRITE_TOOL_NAMES = new Set([
+  'apply_patch',
+  'search_replace',
+  'edit_file',
+  'str_replace',
+]);
+
 export const EXPLORE_TOOL_NAMES = new Set([
   'read_file',
   'grep',
@@ -93,7 +101,7 @@ export function needsInspectBeforeWrite(opts: {
   if (opts.trivialEdit) return false;
   const pending = (opts.pendingToolNames || []).map((n) => String(n || '').toLowerCase());
   const used = (opts.toolsUsed || []).map((n) => String(n || '').toLowerCase());
-  const pendingWrite = pending.some((n) => BUILD_WRITE_TOOL_NAMES.has(n));
+  const pendingWrite = pending.some((n) => SURGICAL_WRITE_TOOL_NAMES.has(n));
   if (!pendingWrite) return false;
   const inspected =
     used.some((n) => EXPLORE_TOOL_NAMES.has(n)) || pending.some((n) => EXPLORE_TOOL_NAMES.has(n));
@@ -102,8 +110,8 @@ export function needsInspectBeforeWrite(opts: {
 
 export function buildInspectBeforeWriteNudge(): string {
   return (
-    'Inspect before write: call read_file, grep, or list_dir on the target path this turn before the first write_file or diff. ' +
-    'Trivial one-line edits may skip. Do not write blind.'
+    'Inspect before write: call read_file, grep, or list_dir on the target path this turn before the first patch/edit. ' +
+    'Whole-file write_file of a new path may skip. Trivial one-line edits may skip. Do not patch blind.'
   );
 }
 

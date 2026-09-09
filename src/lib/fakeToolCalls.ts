@@ -1,5 +1,21 @@
 export type ParsedFakeTool = { name: string; arguments: Record<string, unknown> };
 
+/** Model narrating a write_file/tool-syntax retry instead of calling the tool. */
+export function looksLikeToolRetryNarration(text: string): boolean {
+  const t = (text || '').trim();
+  if (!t || t.length > 2500) return false;
+  if (
+    /```(?:diff|patch|ts|tsx|js|jsx|mjs|cjs|py|go|rs)\b/i.test(t) ||
+    /^\/\/ [\w./+-]+\s*$/m.test(t)
+  ) {
+    return false;
+  }
+  if (!/\b(write_file|tool_calls?|function call|correct (?:syntax|format))\b/i.test(t)) return false;
+  return /\b(struggling|try again|trying again|let me try|correct syntax|correct format|make sure i(?:['’]m| am) using|using the correct)\b/i.test(
+    t,
+  );
+}
+
 /** Safe read-only tools we may synthesize from theater text. */
 const SAFE_ALLOWLIST = new Set([
   'list_dir',
@@ -321,6 +337,7 @@ export function parseJsonToolCallFence(content: string): ParsedFakeTool[] {
 /** True if content looks like tool theater in markdown (bash/shell fences or bare tool lines). */
 export function looksLikeFakeToolTheater(content: string): boolean {
   if (!content || !content.trim()) return false;
+  if (looksLikeToolRetryNarration(content)) return true;
   if (looksLikeJsonToolCallFence(content)) return true;
   const fences = extractFenceBodies(content);
   const promptRe = new RegExp('^\\' + String.fromCharCode(36) + '\\s+');
@@ -378,8 +395,8 @@ export function parseFakeToolCalls(content: string): ParsedFakeTool[] {
 /** Short system/user nudge for retry when theater is present but nothing safe to parse. */
 export function buildFakeToolNudge(): string {
   return (
-    'Tool recovery (one retry): Your last reply showed tools as markdown/JSON theater. ' +
-    'Those do not execute. Call the real function tools now (API tools channel), or answer without fake tool JSON. ' +
-    'Do not paste ```json tool_calls again.'
+    'Tool recovery (one retry): Your last reply showed tools as markdown/JSON theater or described a write_file retry. ' +
+    'Those do not execute. For large/new files emit a // relative/path fence with the full file in CONTENT. ' +
+    'For small writes, call the real function tools (API tools channel). Do not paste tool JSON and do not narrate syntax.'
   );
 }

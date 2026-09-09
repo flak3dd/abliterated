@@ -27,7 +27,9 @@ import {
 } from '../../lib/grokLayer';
 import { cn } from '../../lib/cn';
 import { isMidRunMessageContent, stripMidRunPrefix } from '../../lib/agentHelpers';
-import { NO_CONTENT_REASONING_NOTE } from '../../lib/agentPhase';
+import { NO_CONTENT_REASONING_NOTE, stripThinkingWrappers } from '../../lib/agentPhase';
+import { PlanCard } from './PlanCard';
+import { StepTimeline } from './StepTimeline';
 import { parseCompletionFooter } from '../../lib/completionFooter';
 import {
   PLAN_CODE_OMITTED_NOTE,
@@ -400,6 +402,9 @@ export type MessageBubbleProps = {
   /** One-click send (or fill) a Continue prompt from the completion footer. */
   onContinuePrompt?: (text: string) => void;
   terminalTone?: TerminalTone;
+  onApprovePlan?: () => void;
+  onDeclinePlan?: () => void;
+  onOpenFile?: (path: string) => void;
 };
 
 function MessageBubbleInner({
@@ -417,6 +422,9 @@ function MessageBubbleInner({
   completionFooterEnabled = true,
   onContinuePrompt,
   terminalTone = 'discuss',
+  onApprovePlan,
+  onDeclinePlan,
+  onOpenFile,
 }: MessageBubbleProps) {
   const [copied, setCopied] = useState(false);
 
@@ -433,7 +441,7 @@ function MessageBubbleInner({
       if (stripped) return stripped;
       if (liftReasoningWork(m.content || '')) return PLAN_CODE_OMITTED_NOTE;
     }
-    const body = m.content || '';
+    const body = stripThinkingWrappers(m.content || '');
     if (reasoningForUi && body.trim() === reasoningForUi.trim()) return '';
     if (body.trim() === NO_CONTENT_REASONING_NOTE && reasoningForUi) return '';
     return body;
@@ -480,10 +488,10 @@ function MessageBubbleInner({
   const ToolIcon = m.toolCall ? getToolIcon(m.toolCall.name) : Zap;
 
   return (
-    <div className={cn('mb-3.5 max-w-3xl', isUser && 'ml-auto')}>
-      <div className="mb-1 flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-muted">
-        <span className={cn('font-semibold', isUser ? 'text-sky-400/90' : 'text-zinc-400')}>
-          {m.role}
+    <div className={cn('mb-5 max-w-3xl animate-fade-up', isUser && 'ml-auto flex flex-col items-end')}>
+      <div className="mb-1.5 flex items-center gap-2 font-mono text-[10.5px] text-muted-foreground">
+        <span className={cn('font-medium', isUser ? 'text-primary' : 'text-muted-foreground')}>
+          {isUser ? 'You' : 'Abliterated'}
         </span>
         {isUser && isMidRunMessageContent(m.content) ? (
           <span className="rounded bg-sky-950/60 px-1 py-0.2 text-[9px] text-sky-300 border border-sky-800/40">
@@ -511,12 +519,36 @@ function MessageBubbleInner({
 
       <div
         className={cn(
-          'rounded-lg border px-3.5 py-2.5 shadow-sm transition-colors',
+          'px-4 py-3 text-[15px] leading-relaxed shadow-sm transition-colors',
           isUser
-            ? 'border-sky-900/40 bg-zinc-900/90 shadow-sky-950/20'
-            : 'border-border bg-surface-raised/40',
+            ? 'max-w-[min(560px,86%)] rounded-2xl rounded-br-md border border-primary/40 bg-primary/15'
+            : 'rounded-xl border border-border bg-panel/70',
         )}
       >
+        {m.role === 'assistant' && m.plan && m.plan.length ? (
+          <PlanCard
+            items={m.plan}
+            awaiting={m.planApproved === 'awaiting'}
+            onApprove={onApprovePlan}
+            onDecline={onDeclinePlan}
+          />
+        ) : null}
+        {m.role === 'assistant' && m.steps && m.steps.length ? <StepTimeline steps={m.steps} /> : null}
+        {m.role === 'assistant' && m.files && m.files.length ? (
+          <div className="mb-2 flex flex-wrap gap-1">
+            {m.files.map((f) => (
+              <button
+                key={f.path}
+                type="button"
+                title={f.path}
+                onClick={() => onOpenFile?.(f.path)}
+                className="rounded border border-border bg-surface px-1.5 py-0.5 font-mono text-[10px] text-zinc-300 hover:border-sky-500/50 hover:text-sky-200"
+              >
+                {f.path.split('/').pop()}
+              </button>
+            ))}
+          </div>
+        ) : null}
         {m.toolCall ? (
           <>
             <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] border-b border-border/60 pb-1.5">

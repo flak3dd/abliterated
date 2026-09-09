@@ -11,6 +11,8 @@ export const FEATHERLESS_MIN_CONTEXT = 16384;
 
 /** First-class Featherless picker: abliterated 32B Qwen (and QwQ / R1-Distill-Qwen). */
 export const PINNED_FEATHERLESS_MODELS: readonly { id: string; label: string }[] = [
+  { id: 'medismera/Qwen3.8-27B-OBLITERATED-Mythos-Class-Agentic', label: 'Qwen3.8-27B Mythos · medismera' },
+  { id: 'zai-org/GLM-5.3', label: 'GLM-5.3 · zai-org' },
   { id: 'huihui-ai/Qwen3-32B-abliterated', label: 'Qwen3-32B · huihui' },
   { id: 'huihui-ai/Qwen2.5-32B-Instruct-abliterated', label: 'Qwen2.5-32B Instruct · huihui' },
   { id: 'sci4ai/Qwen2.5-32B-Instruct-Abliterated', label: 'Qwen2.5-32B Instruct · sci4ai' },

@@ -2,6 +2,7 @@ export { looksLikeVerifyEvidence, buildVerifyBeforeDoneNudge, buildIncompleteCap
 import type { ToolType } from '../types';
 import { PLAN_MODE_TOOLS } from '../types';
 import { withCompletenessChecklist } from './deepenComplete';
+import { looksLikeStubAnswer, looksLikeTokenCollapse } from './tokenCollapse';
 
 /** Pure helpers for agent loop settings, telemetry, pins, and prefetch tokens. */
 
@@ -76,7 +77,10 @@ export function buildSelfDeepenNudge(opts?: { completeness?: boolean }): string 
 
 /** True when the assistant left the user-visible content channel empty (whitespace counts as empty). */
 export function isMissingContentAnswer(content: string, _reasoning?: string): boolean {
-  return !(content || '').trim();
+  const t = (content || '').trim();
+  if (!t) return true;
+  if (looksLikeStubAnswer(t)) return true;
+  return looksLikeTokenCollapse(t);
 }
 
 export const EMPTY_CONTENT_REPLY_NOTE =
@@ -487,6 +491,7 @@ export function shouldSkipSelfDeepen(
   if (opts.status === 'error') return true;
   const t = (content || '').trim();
   if (!t) return true;
+  if (looksLikeTokenCollapse(t)) return true;
   if (t.length < 40) return true;
   if (hasUnfinishedCodeFence(t) && /```(?:diff|patch)\b/i.test(t)) return true;
   if (
@@ -711,6 +716,22 @@ export function looksExploreIntent(userText: string): boolean {
   return /\b(analys[ee]|analyze)\s+(dir|directory|folder)\b|\blist\s+files\b|what'?s\s+in\s+the\s+workspace|\bshow\s+(me\s+)?(the\s+)?tree\b/i.test(
     t,
   );
+}
+
+/** Skip workspace prefetch (semantic_search + extra reads) unless pins, path mentions, explore, or build. */
+export function shouldPrefetchWorkspace(
+  text: string,
+  opts?: { explore?: boolean; build?: boolean },
+): boolean {
+  const t = (text || '').trim();
+  if (!t) return false;
+  if (opts?.explore || opts?.build) return true;
+  if (extractAtPins(t).length) return true;
+  if (/(?:^|[\s`'"(])(?:src|lib|app|daemon|public|scripts?|components?|screens?)\/[\w./+-]+/.test(t)) {
+    return true;
+  }
+  if (/\b[\w./+-]+\.(?:ts|tsx|js|jsx|mjs|py|rs|go|md|css)\b/.test(t)) return true;
+  return false;
 }
 
 /** True when a bash/tool line looks like an accidental review-history git_commit. */

@@ -305,9 +305,19 @@ export async function deleteLibraryImage(entry: StoredImageMeta): Promise<void> 
   await idbDelete(entry.id);
 }
 
-/** Asymptotic estimate toward ~95% based on elapsed time (no server stream). */
-export function estimateImageProgress(elapsedMs: number, expectedMs = 45000): number {
-  const tau = Math.max(8000, expectedMs * 0.45);
-  const p = 95 * (1 - Math.exp(-elapsedMs / tau));
-  return Math.min(95, Math.max(0, Math.round(p)));
+/** Elapsed label for image progress (e.g. "12s", "1m 05s"). */
+export function formatImageElapsed(elapsedMs: number): string {
+  const s = Math.max(0, Math.floor(elapsedMs / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}m ${String(rem).padStart(2, '0')}s`;
+}
+
+/** Soft status when Spark has not yet reported a real percent. */
+export function imageProgressSoftStatus(host: string): string {
+  const h = (host || '').trim();
+  if (/:7860\b/.test(h)) return 'Generating on :7860…';
+  if (h && h !== '—') return `Generating on ${h}…`;
+  return 'Waiting on Spark…';
 }

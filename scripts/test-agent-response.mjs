@@ -169,6 +169,18 @@ function parseTodoBullets(text) {
   return out.length >= 2 ? out : [];
 }
 
+function shouldPrefetchWorkspace(text, opts) {
+  const t = (text || '').trim();
+  if (!t) return false;
+  if (opts?.explore || opts?.build) return true;
+  if (extractAtPins(t).length) return true;
+  if (/(?:^|[\s`'"(])(?:src|lib|app|daemon|public|scripts?|components?|screens?)\/[\w./+-]+/.test(t)) {
+    return true;
+  }
+  if (/\b[\w./+-]+\.(?:ts|tsx|js|jsx|mjs|py|rs|go|md|css)\b/.test(t)) return true;
+  return false;
+}
+
 function extractAtPins(text) {
   const out = [];
   const seen = new Set();
@@ -608,6 +620,15 @@ Continue:
 await test('extractAtPins extracts valid paths and removes punctuation', () => {
   const pins = extractAtPins('Check @src/App.tsx, and then @daemon/bridge.js! Also ignore @.');
   assert.deepEqual(pins, ['src/App.tsx', 'daemon/bridge.js']);
+});
+
+await test('shouldPrefetchWorkspace skips short Q&A and runs for pins/build', () => {
+  assert.equal(shouldPrefetchWorkspace('what is 2+2?'), false);
+  assert.equal(shouldPrefetchWorkspace('thanks'), false);
+  assert.equal(shouldPrefetchWorkspace('fix @src/App.tsx'), true);
+  assert.equal(shouldPrefetchWorkspace('edit src/lib/sse.ts please'), true);
+  assert.equal(shouldPrefetchWorkspace('implement auth', { build: true }), true);
+  assert.equal(shouldPrefetchWorkspace('list files', { explore: true }), true);
 });
 
 await test('isGatedToolStatus correctly identifies gating states', () => {

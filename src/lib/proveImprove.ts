@@ -2,6 +2,8 @@
 
 import { BUILD_WRITE_TOOL_NAMES, EXPLORE_TOOL_NAMES, summarizeRunProof, type RunProof } from './harnessGates';
 import { looksLikeVerifyEvidence } from './verifyDone';
+import { looksPromptOnlyRequest, looksReadOnlyOrControlPrompt } from './agentHelpers';
+import { looksLikeToolRetryNarration } from './fakeToolCalls';
 
 const BUILD_WRITE_TOOLS = BUILD_WRITE_TOOL_NAMES;
 const EXPLORE_TOOLS = EXPLORE_TOOL_NAMES;
@@ -23,7 +25,22 @@ function looksLikeContentArtifacts(text: string): boolean {
   return false;
 }
 
-export { looksReadOnlyOrControlPrompt } from './agentHelpers';
+export { looksReadOnlyOrControlPrompt, looksPromptOnlyRequest };
+
+/** Skip prove-improve for prompt-only, read-only, already-proven, or tool-retry theater. */
+export function shouldProveImproveNudge(opts: {
+  userText?: string;
+  content: string;
+  toolsUsed?: string[];
+  planMode?: boolean;
+}): boolean {
+  if (opts.planMode) return false;
+  const user = opts.userText || '';
+  if (looksPromptOnlyRequest(user) || looksReadOnlyOrControlPrompt(user)) return false;
+  if (looksLikeToolRetryNarration(opts.content)) return false;
+  if (looksLikeProvenImprovement(opts.content, opts.toolsUsed)) return false;
+  return true;
+}
 
 /** True when this turn already landed provable improvement evidence. */
 export function looksLikeProvenImprovement(content: string, toolsUsed?: string[]): boolean {

@@ -1,5 +1,6 @@
 import { ALL_TOOL_TYPES, type ChatOpenAiMessage, type ClientSettings, type ToolCallPayload, type ToolType } from '../types';
 import { canonicalizeToolName } from './agentHelpers';
+import { parseToolCallArguments } from './toolArgs';
 import { missingInferenceAuthError, rejectedInferenceAuthError, resolveActiveSettings } from './activeEndpoint';
 import { endpointUrl } from './apiUrl';
 import { detokenizeArtifacts } from './detokenizeArtifacts';
@@ -14,7 +15,14 @@ import {
   completionChunkError,
   isThinkingFamilyModel,
   thinkingChatTemplateKwargs,
+  shouldForceThinkingOff,
 } from './sseParse';
+import {
+  looksLikeStubAnswer,
+  looksLikeTokenCollapse,
+  shouldAbortTokenCollapse,
+  stripCollapsedText,
+} from './tokenCollapse';
 import {
   defaultContextWindow,
   fitChatPayload,
@@ -39,6 +47,8 @@ export interface StreamChatArgs {
   extraTools?: typeof CHAT_TOOLS;
   onDelta: (text: string) => void;
   onReasoningDelta?: (text: string) => void;
+  /** Wipe painted deltas before a collapse retry so `!!!!` does not stay on screen. */
+  onReset?: () => void;
   onToolCallComplete?: (tool: ToolCallPayload) => void;
   toolChoice?: 'auto' | 'required';
   /** Per-caller flight lane (e.g. "chat" or "job:<id>"). Same lane stays single-flight. */
@@ -50,6 +60,8 @@ export interface StreamChatArgs {
 export type StreamChatResult = {
   finishReason: string;
   toolCalls: ToolCallPayload[];
+  /** True when the model dumped repeated `!` (or similar) and recovery did not land an answer. */
+  tokenCollapsed?: boolean;
 };
 
 function lastUserPrompt(messages: ChatOpenAiMessage[]): string {
@@ -110,7 +122,7 @@ export const CHAT_TOOLS = [
     function: {
       name: 'write_file',
       description:
-        'Create or overwrite a whole file in the connected working directory (relative path). Use this for new files. Prefer unified diffs for surgical edits. Plan mode blocked. Writes hit disk immediately when a workspace folder is connected.',
+        'Create or overwrite a whole file (relative path + content). For large new files (prompts, long markdown) emit a // relative/path fence in CONTENT instead of JSON-encoding the body. Prefer unified diffs for surgical edits. Plan mode blocked.',
       parameters: {
         type: 'object',
         properties: {
@@ -118,7 +130,7 @@ export const CHAT_TOOLS = [
           file: { type: 'string', description: 'Alias for path' },
           content: { type: 'string', description: 'Full file contents to write' },
         },
-        required: ['content'],
+        required: ['path', 'content'],
       },
     },
   },
@@ -324,10 +336,15 @@ export const CHAT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          prompt: { type: 'string', description: 'Image prompt' },
+          prompt: { type: 'string', description: 'Image prompt or edit/faceswap instruction (optional when intent=faceswap or id_*)' },
           size: { type: 'string', description: 'e.g. 1024x1024, 768x768, 512x512' },
+          intent: { type: 'string', description: 'generate | edit | faceswap | id_clean | id_back | id_portrait' },
+          image: { type: 'string', description: 'Target/reference image as raw base64 (edit, faceswap, or ID document)' },
+          id_image: { type: 'string', description: 'Identity face as raw base64 (faceswap or id_portrait headshot)' },
+          id_type: { type: 'string', description: 'ID document type: drivers_license | passport | national_id | residence_permit | other' },
+          country: { type: 'string', description: 'ISO country code for ID jobs (e.g. AU, US)' },
         },
-        required: ['prompt'],
+        required: [],
       },
     },
   },
@@ -607,12 +624,7 @@ function isToolType(name: string): name is ToolType {
 function materializeTools(acc: Map<number, ToolAcc>, onToolCallComplete?: (tool: ToolCallPayload) => void): ToolCallPayload[] {
   const out: ToolCallPayload[] = [];
   for (const tool of acc.values()) {
-    let parsed: Record<string, unknown> = {};
-    try {
-      parsed = tool.arguments ? (JSON.parse(tool.arguments) as Record<string, unknown>) : {};
-    } catch {
-      parsed = { raw: tool.arguments };
-    }
+    const parsed = parseToolCallArguments(tool.arguments || '');
     const rawName = canonicalizeToolName(tool.name || '');
     const name = isToolType(rawName) || rawName.startsWith('mcp__') ? rawName : rawName || 'shell';
     const payload: ToolCallPayload = {
@@ -681,7 +693,7 @@ export async function streamChatCompletion(args: StreamChatArgs): Promise<Stream
 }
 
 async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamChatResult> {
-  const { settings, model, messages, abortSignal, enabledTools, extraTools, onDelta, onReasoningDelta, onToolCallComplete, toolChoice } = args;
+  const { settings, model, messages, abortSignal, enabledTools, extraTools, onDelta, onReasoningDelta, onReset, onToolCallComplete, toolChoice } = args;
   const active = resolveActiveSettings(settings);
   const provider = settings.inferenceProvider ?? 'abliteration';
   const providerInactive =
@@ -836,11 +848,17 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     featherless &&
     isThinkingFamilyModel(model) &&
     settings.reasoning !== 'off' &&
+    !shouldForceThinkingOff(model) &&
     maxTokens < 8192
   ) {
     body.max_tokens = 8192;
   } else {
     body.max_tokens = maxTokens;
+  }
+  if (featherless && isThinkingFamilyModel(model)) {
+    body.frequency_penalty = 0.5;
+    body.presence_penalty = 0.3;
+    body.stop = ['!!!!!!!!'];
   }
   if (usingBuiltin) {
     body.stream_options = { include_usage: true };
@@ -1055,6 +1073,9 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     let usageTokens = 0;
     let completionChars = 0;
     let reasoningChars = 0;
+    let accContent = '';
+    let accReasoning = '';
+    let abortedForCollapse = false;
 
     const handleData = (payload: string) => {
       const trimmed = payload.trim();
@@ -1071,9 +1092,14 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
       const streamErr = completionChunkError(json);
       if (streamErr) throw new Error(streamErr);
       const applied = applyCompletionChunk(json, {
-        onContent: (text) => onDelta(detokenizeArtifacts(text)),
+        onContent: (text) => {
+          const t = detokenizeArtifacts(text);
+          accContent += t;
+          onDelta(t);
+        },
         onReasoning: (text) => {
           const r = detokenizeArtifacts(text);
+          accReasoning += r;
           if (onReasoningDelta) onReasoningDelta(r);
           else onDelta(r);
         },
@@ -1090,38 +1116,54 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
       if (applied.usageTokens > 0) usageTokens = applied.usageTokens;
       completionChars += applied.contentChars;
       reasoningChars += applied.reasoningChars;
+      if (shouldAbortTokenCollapse(accContent, accReasoning)) {
+        abortedForCollapse = true;
+        sawDone = true;
+      }
     };
 
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        rawAll += chunk;
-        buffer += chunk;
-        const parts = buffer.split('\n');
-        buffer = parts.pop() ?? '';
-        for (const rawLine of parts) {
-          const line = rawLine.replace(/\r$/, '');
-          if (!line) continue;
-          if (line.startsWith('data:')) {
-            sawSse = true;
-            handleData(line.slice(5).trimStart());
-          } else if (line.startsWith('{')) {
-            handleData(line);
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          rawAll += chunk;
+          buffer += chunk;
+          const parts = buffer.split('\n');
+          buffer = parts.pop() ?? '';
+          for (const rawLine of parts) {
+            const line = rawLine.replace(/\r$/, '');
+            if (!line) continue;
+            if (line.startsWith('data:')) {
+              sawSse = true;
+              handleData(line.slice(5).trimStart());
+            } else if (line.startsWith('{')) {
+              handleData(line);
+            }
+            if (sawDone) break;
           }
           if (sawDone) break;
         }
-        if (sawDone) break;
+      } catch (err) {
+        if (!abortedForCollapse) throw err;
       }
-      const leftover = buffer.trim();
-      if (leftover.startsWith('data:')) {
-        handleData(leftover.slice(5).trimStart());
-      } else if (leftover.startsWith('{')) {
-        handleData(leftover);
-      } else if (!sawSse) {
-        const text = rawAll.trim();
-        if (text.startsWith('{')) handleData(text);
+      if (abortedForCollapse) {
+        try {
+          await reader.cancel();
+        } catch {
+          /* ignore */
+        }
+      } else {
+        const leftover = buffer.trim();
+        if (leftover.startsWith('data:')) {
+          handleData(leftover.slice(5).trimStart());
+        } else if (leftover.startsWith('{')) {
+          handleData(leftover);
+        } else if (!sawSse) {
+          const text = rawAll.trim();
+          if (text.startsWith('{')) handleData(text);
+        }
       }
       return {
         finishReason,
@@ -1129,6 +1171,9 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
         usageTokens,
         completionChars,
         reasoningChars,
+        accContent,
+        accReasoning,
+        collapsed: shouldAbortTokenCollapse(accContent, accReasoning),
       };
     } finally {
       try {
@@ -1144,6 +1189,24 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
   /** Content channel empty (reasoning-only still counts — Qwen3 often burns max_tokens here). */
   const isContentEmpty = (c: { completionChars: number; toolCalls: ToolCallPayload[] }) =>
     c.completionChars === 0 && c.toolCalls.length === 0;
+  const isCollapsedJunk = (c: {
+    collapsed?: boolean;
+    accContent?: string;
+    accReasoning?: string;
+    toolCalls: ToolCallPayload[];
+  }) => {
+    if (c.toolCalls.length) return false;
+    const salvage = stripCollapsedText(c.accContent || '');
+    if (salvage.trim() && !looksLikeStubAnswer(salvage) && !looksLikeTokenCollapse(salvage)) {
+      return false;
+    }
+    return (
+      c.collapsed === true ||
+      looksLikeTokenCollapse(c.accContent || '') ||
+      looksLikeTokenCollapse(c.accReasoning || '') ||
+      looksLikeStubAnswer(salvage || c.accContent || '')
+    );
+  };
 
   const postOnce = async (payload: Record<string, unknown>): Promise<Response> => {
     try {
@@ -1168,6 +1231,7 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
   if (
     featherless &&
     isThinkingFamilyModel(model) &&
+    !isCollapsedJunk(consumed) &&
     isContentEmpty(consumed) &&
     (consumed.reasoningChars > 0 || isEmptyReply(consumed))
   ) {
@@ -1212,6 +1276,45 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     }
   }
 
+  // Repeated `!` / punctuation collapse: abort already happened; retry once with
+  // thinking off + repetition penalties so the UI does not keep a wall of bangs.
+  if (!abortSignal?.aborted && isCollapsedJunk(consumed)) {
+    onReset?.();
+    body.stream = true;
+    body.frequency_penalty = 0.6;
+    body.presence_penalty = 0.4;
+    const stop = Array.isArray(body.stop) ? (body.stop as unknown[]) : [];
+    if (!stop.includes('!!!!!!!!')) body.stop = [...stop, '!!!!!!!!'];
+    if (typeof body.max_tokens === 'number') {
+      body.max_tokens = Math.min(Math.max(body.max_tokens as number, 256), 2048);
+    } else {
+      body.max_tokens = 2048;
+    }
+    if (isThinkingFamilyModel(model)) {
+      body.chat_template_kwargs = { enable_thinking: false };
+    }
+    const retryCollapse = await postOnce(body);
+    if (retryCollapse.ok && retryCollapse.body) {
+      const again = await consumeResponse(retryCollapse);
+      if (!isCollapsedJunk(again)) {
+        consumed = again;
+      } else {
+        onReset?.();
+        consumed = {
+          ...again,
+          accContent: '',
+          accReasoning: '',
+          completionChars: 0,
+          reasoningChars: 0,
+          collapsed: true,
+          toolCalls: again.toolCalls,
+        };
+      }
+    } else {
+      onReset?.();
+    }
+  }
+
   if (usingBuiltin) {
     let tokens = consumed.usageTokens;
     if (tokens <= 0) {
@@ -1220,5 +1323,9 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     }
     recordBuiltinUsage(tokens);
   }
-  return { finishReason: consumed.finishReason, toolCalls: consumed.toolCalls };
+  return {
+    finishReason: consumed.finishReason,
+    toolCalls: consumed.toolCalls,
+    tokenCollapsed: isCollapsedJunk(consumed),
+  };
 }

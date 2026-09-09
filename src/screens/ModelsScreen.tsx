@@ -362,7 +362,7 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
       </div>
       {isFeatherless ? (
         <div className="mb-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 font-mono text-[10px] leading-5 text-emerald-100/90">
-          Large Qwen only (Abliteration-grade agent path) — dense ≥32B or activated ≥16B; A3B rejected; Qwen3.8-27B abliterated exception.
+          Large Qwen only (Abliteration-grade agent path) — dense ≥32B or activated ≥16B; A3B rejected; Qwen3.8-27B abliterated exception. Pinned chips also include GLM-5.3.
           <button type="button" className="ml-2 underline text-emerald-300" onClick={() => { const next = { ...settings, ...abliterationGradeFeatherlessPatch() }; setSettings(next); onSettingsChange(next); }}>Apply Abliteration-grade preset</button>
           <div className="mt-1.5 flex flex-wrap gap-1">
             {PINNED_FEATHERLESS_MODELS.map((m) => {

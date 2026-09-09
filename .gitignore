@@ -17,6 +17,10 @@ workspace/
 synovatech/
 .ide-qa-evidence/
 spark-image/.env
+spark-image/logs/
+__pycache__/
+*.py[cod]
+.ablit/*.py
 
 # Code signing secrets (never commit)
 build/signing/

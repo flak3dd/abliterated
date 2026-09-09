@@ -67,6 +67,10 @@ _ALIAS_MAP = {
     QWEN_IMAGE_MODEL_ID: QWEN_IMAGE_MODEL_ID, "qwen-image": QWEN_IMAGE_MODEL_ID,
     "instruction": QWEN_IMAGE_MODEL_ID, "type": QWEN_IMAGE_MODEL_ID,
     QWEN_EDIT_MODEL_ID: QWEN_EDIT_MODEL_ID, "qwen-edit": QWEN_EDIT_MODEL_ID, "edit": QWEN_EDIT_MODEL_ID,
+    "faceswap": QWEN_EDIT_MODEL_ID, "face-swap": QWEN_EDIT_MODEL_ID, "id-swap": QWEN_EDIT_MODEL_ID,
+    "id": QWEN_EDIT_MODEL_ID, "id_clean": QWEN_EDIT_MODEL_ID, "id-clean": QWEN_EDIT_MODEL_ID,
+    "id_back": QWEN_EDIT_MODEL_ID, "id-back": QWEN_EDIT_MODEL_ID,
+    "id_portrait": QWEN_EDIT_MODEL_ID, "id-portrait": QWEN_EDIT_MODEL_ID,
     SEEDVR2_MODEL_ID: SEEDVR2_MODEL_ID, "seedvr2": SEEDVR2_MODEL_ID, "upscale": SEEDVR2_MODEL_ID,
 }
 

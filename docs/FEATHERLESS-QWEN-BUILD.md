@@ -20,6 +20,8 @@ Do not edit SYSTEM_PROMPT V17 / bridge; no X-Reasoning to Featherless.
 - Qwen/Qwen3-VL-32B-Instruct
 - huihui-ai/Huihui-Qwen3.8-27B-abliterated
 - OBLITERATUS/Qwen3.8-27B-heretic
+- medismera/Qwen3.8-27B-OBLITERATED-Mythos-Class-Agentic
+- zai-org/GLM-5.3 (pinned Featherless endpoint; not Qwen-family)
 
 ## §3.2 REJECT
 - Qwen/Qwen2.5-7B-Instruct

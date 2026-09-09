@@ -5,8 +5,9 @@
 import { resolveActiveSettings } from "./activeEndpoint";
 import { executeAgentTool } from "./agentTools";
 import { bridge } from "./bridgeClient";
-import { clampMaxAgentTurns } from "./agentHelpers";
+import { clampMaxAgentTurns, isMissingContentAnswer } from "./agentHelpers";
 import { streamChatCompletion } from "./sse";
+import { stripCollapsedText, TOKEN_COLLAPSE_REPLY_NOTE } from "./tokenCollapse";
 import { workspaceGate } from "./workspaceGuard";
 import {
   TASK_GRAPH_PATH,
@@ -469,7 +470,15 @@ async function runRoleLoop(opts: {
       onDelta: (chunk) => {
         assistantText += chunk;
       },
+      onReset: () => {
+        assistantText = "";
+      },
     });
+
+    assistantText = stripCollapsedText(assistantText);
+    if (result.tokenCollapsed && isMissingContentAnswer(assistantText)) {
+      assistantText = TOKEN_COLLAPSE_REPLY_NOTE;
+    }
 
     history.push({
       role: "assistant",

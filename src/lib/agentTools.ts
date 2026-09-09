@@ -2,6 +2,7 @@ import { bridge } from './bridgeClient';
 import { isPathLocked, type WriteLockTable } from './writeLocks';
 import { workspaceGate } from './workspaceGuard';
 import { generateImage, imageResultToMarkdown } from './imageGen';
+import { isXaiImageBackend, resolveXaiImageModel, XAI_IMAGE_MODEL } from './xaiImage';
 import { saveGeneratedImage } from './imageLibrary';
 import { isDeadlyCommand } from './grokLayer';
 import { isMcpToolName } from './mcpClient';
@@ -11,6 +12,7 @@ import {
   formatTodoBlock,
   type TodoItem,
 } from './agentHelpers';
+import { parseToolCallArguments } from './toolArgs';
 import { formatSkillFile, similarSkillExists, slugifySkillId, toCatalogEntries } from './skills';
 import { runWebSearch } from './webSearch';
 import { assertSafeFetchUrl } from './urlSafety';
@@ -30,6 +32,15 @@ export function toolArgString(args: Record<string, unknown>, keys: string[]): st
   for (const key of keys) {
     const v = args[key];
     if (typeof v === 'string' && v.trim()) return v;
+  }
+  if (typeof args.raw === 'string' && args.raw.trim()) {
+    const recovered = parseToolCallArguments(args.raw);
+    if (recovered !== args) {
+      for (const key of keys) {
+        const v = recovered[key];
+        if (typeof v === 'string' && v.trim()) return v;
+      }
+    }
   }
   return '';
 }
@@ -219,7 +230,7 @@ export async function executeAgentTool(
   }
 
   if (name === 'read_file') {
-    const file = toolArgString(tool.arguments, ['path', 'file', 'target']);
+    const file = toolArgString(tool.arguments, ['path', 'file', 'target', 'file_path', 'filename']);
     if (!file) return err(tool, 'missing path');
     if (!bridge.connected) return disconnected(tool, file, autoAcceptEdits, mode);
     try {
@@ -230,10 +241,16 @@ export async function executeAgentTool(
   }
 
   if (name === 'write_file') {
-    const file = toolArgString(tool.arguments, ['path', 'file', 'target']);
-    const content = toolArgString(tool.arguments, ['content', 'text', 'body']);
+    const file = toolArgString(tool.arguments, ['path', 'file', 'target', 'file_path', 'filename']);
+    const content = toolArgString(tool.arguments, ['content', 'text', 'body', 'contents']);
     if (!file) return err(tool, 'missing path');
-    if (content === '' && tool.arguments.content == null && tool.arguments.text == null && tool.arguments.body == null) {
+    if (
+      content === '' &&
+      tool.arguments.content == null &&
+      tool.arguments.text == null &&
+      tool.arguments.body == null &&
+      tool.arguments.contents == null
+    ) {
       return err(tool, 'missing content');
     }
     if (opts.writeLocks) {
@@ -455,20 +472,51 @@ export async function executeAgentTool(
   }
 
   if (name === 'generate_image') {
-    const prompt = toolArgString(tool.arguments, ['prompt', 'text', 'description']);
+    const prompt = toolArgString(tool.arguments, ['prompt', 'text', 'description']) || '';
     const size = toolArgString(tool.arguments, ['size']) || '1024x1024';
-    if (!prompt) return err(tool, 'missing prompt');
+    const intent = toolArgString(tool.arguments, ['intent']) || '';
+    const imageB64 = toolArgString(tool.arguments, ['image', 'image_b64']);
+    const idImageB64 = toolArgString(tool.arguments, ['id_image', 'id_b64', 'identity']);
+    const idType = toolArgString(tool.arguments, ['id_type', 'document_type']);
+    const country = toolArgString(tool.arguments, ['country', 'country_code']);
+    const idJob = /^id[_-](clean|back|portrait|faceswap)$/i.test(intent);
+    const faceswap = !idJob && (/faceswap|face_swap|id.?swap/i.test(intent) || !!idImageB64);
+    if (!prompt && !faceswap && !idJob) return err(tool, 'missing prompt');
+    if (faceswap && (!imageB64 || !idImageB64)) {
+      return err(tool, 'faceswap needs image (target) and id_image (identity face)');
+    }
+    if (idJob && !imageB64) return err(tool, 'ID job needs image (document scan)');
+    if (/id[_-]portrait/i.test(intent) && !idImageB64) {
+      return err(tool, 'id_portrait needs id_image (headshot)');
+    }
     if (!settings.imageGenEnabled) {
-      return err(tool, 'Image generation disabled. Enable in Images tab (spark-image/).');
+      return err(tool, 'Image generation disabled. Enable in Images tab (Spark or xAI Imagine).');
     }
     try {
-      const result = await generateImage({ settings, prompt, size });
+      const xai = isXaiImageBackend(settings);
+      const result = await generateImage({
+        settings,
+        prompt: prompt || (faceswap ? 'ID faceswap' : ''),
+        size,
+        intent: faceswap ? 'faceswap' : intent || undefined,
+        imageB64: imageB64 || undefined,
+        idImageB64: idImageB64 || undefined,
+        idType: idType || undefined,
+        country: country || undefined,
+        model: xai
+          ? resolveXaiImageModel(settings.xaiImageModel)
+          : faceswap || idJob
+            ? 'qwen-edit-2511-fp8'
+            : undefined,
+      });
       if (result.b64 || result.url) {
         try {
           await saveGeneratedImage({
             prompt,
             size,
-            model: settings.imageModel || 'flux2-klein-9b',
+            model: xai
+              ? resolveXaiImageModel(settings.xaiImageModel, XAI_IMAGE_MODEL)
+              : settings.imageModel || 'flux2-klein-9b',
             b64: result.b64,
             url: result.url,
           });

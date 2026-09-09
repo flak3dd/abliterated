@@ -13,7 +13,7 @@ interface ShortcutItem {
 }
 
 const SHORTCUTS: ShortcutItem[] = [
-  { category: 'Navigation', keys: ['⌘', '1'], description: 'Go to Sessions (Home)' },
+  { category: 'Navigation', keys: ['⌘', '1'], description: 'Go to Chat' },
   { category: 'Navigation', keys: ['⌘', '2'], description: 'Go to Workspace' },
   { category: 'Navigation', keys: ['⌘', '3'], description: 'Go to Models' },
   { category: 'Navigation', keys: ['⌘', '4'], description: 'Go to Jobs' },

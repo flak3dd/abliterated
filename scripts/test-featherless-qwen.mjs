@@ -27,6 +27,8 @@ const {
 assert.equal(DEFAULT_FEATHERLESS_MODEL, 'Qwen/Qwen3-32B');
 
 const ADMIT = [
+  'medismera/Qwen3.8-27B-OBLITERATED-Mythos-Class-Agentic',
+  'zai-org/GLM-5.3',
   'Qwen/Qwen3-32B',
   'huihui-ai/Qwen3-32B-abliterated',
   'huihui-ai/Qwen2.5-32B-Instruct-abliterated',
@@ -65,6 +67,7 @@ for (const id of REJECT) {
   assert.equal(isLargeQwenAgentModel(id), false, 'reject ' + id);
 }
 assert.equal(isQwen38Abliterated27B('huihui-ai/Huihui-Qwen3.8-27B-abliterated'), true);
+assert.equal(isQwen38Abliterated27B('medismera/Qwen3.8-27B-OBLITERATED-Mythos-Class-Agentic'), true);
 assert.equal(isQwen38Abliterated27B('Qwen/Qwen3.8-27B'), false);
 assert.equal(isQwen38Abliterated27B('huihui-ai/Huihui-Qwen3.5-27B-abliterated'), false);
 
@@ -79,7 +82,9 @@ assert.equal(migOk.migrated, false);
 const filtered = filterFeatherlessQwenModels([...ADMIT, ...REJECT].map((id) => ({ id })));
 assert.equal(filtered.length, ADMIT.length);
 
-assert.equal(PINNED_FEATHERLESS_MODELS.length, 8);
+assert.equal(PINNED_FEATHERLESS_MODELS.length, 10);
+assert.equal(PINNED_FEATHERLESS_MODELS[0].id, 'medismera/Qwen3.8-27B-OBLITERATED-Mythos-Class-Agentic');
+assert.equal(PINNED_FEATHERLESS_MODELS[1].id, 'zai-org/GLM-5.3');
 for (const p of PINNED_FEATHERLESS_MODELS) {
   assert.equal(isPinnedFeatherlessModel(p.id), true, 'pinned ' + p.id);
   assert.equal(isLargeQwenAgentModel(p.id), true, 'admit pinned ' + p.id);

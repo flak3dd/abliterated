@@ -34,6 +34,7 @@ const {
   completionChunkError,
   thinkingChatTemplateKwargs,
   isThinkingFamilyModel,
+  shouldForceThinkingOff,
 } = mod;
 
 function collect(json) {
@@ -145,10 +146,17 @@ assert.equal(toolMsg.tools[0].arguments, '{"path":"a.ts"}');
 assert.equal(toolMsg.result.finishReason, 'tool_calls');
 
 assert.equal(isThinkingFamilyModel('Qwen/Qwen3-32B'), true);
+assert.equal(isThinkingFamilyModel('zai-org/GLM-5.3'), true);
+assert.equal(isThinkingFamilyModel('medismera/Qwen3.8-27B-OBLITERATED-Mythos-Class-Agentic'), true);
 assert.equal(isThinkingFamilyModel('qwen-abliterated'), true);
 assert.equal(isThinkingFamilyModel('Qwen/Qwen2.5-7B-Instruct'), false);
 assert.deepEqual(thinkingChatTemplateKwargs('Qwen/Qwen3-32B', 'max'), { enable_thinking: true, thinking_budget: 16384 });
 assert.deepEqual(thinkingChatTemplateKwargs('Qwen/Qwen3-32B', 'off'), { enable_thinking: false });
+assert.equal(shouldForceThinkingOff('roslein/Qwen3-32B-abliterated'), true);
+assert.deepEqual(thinkingChatTemplateKwargs('roslein/Qwen3-32B-abliterated', 'max'), {
+  enable_thinking: false,
+});
+assert.equal(shouldForceThinkingOff('Qwen/Qwen3-32B'), false);
 assert.equal(thinkingChatTemplateKwargs('Qwen/Qwen2.5-7B-Instruct', 'max'), undefined);
 assert.equal(thinkingChatTemplateKwargs('Qwen/Qwen3.5-27B', 'max').preserve_thinking, true);
 assert.equal(thinkingChatTemplateKwargs('Qwen/Qwen3-32B', 'low').thinking_budget, 1024);
