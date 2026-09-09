@@ -162,12 +162,16 @@ export default function App() {
       if (!workspaceGate(root, bridge.currentAppRoot).ok) return;
       const prev = workspaceRef.current;
       if (!isPlaceholderRoot(prev.rootPath)) return;
+      const currentThread = getThreads().find((t) => t.id === activeThreadIdRef.current);
+      if (currentThread && !currentThread.workspaceRoot) return;
       const next = { ...prev, rootPath: root };
       setWorkspace(next);
       setWorkspaceState(next);
     };
 
-    const unsubRoot = bridge.onRootChange(applyDaemonRoot);
+    const unsubRoot = bridge.onRootChange((root) => {
+      applyDaemonRoot(root);
+    });
     const unsubAppRoot = bridge.onAppRootChange((appRoot) => {
       clearForbiddenWorkspace(appRoot);
     });
@@ -275,6 +279,12 @@ export default function App() {
     };
     setThreads(upsertThread(thread));
     setActiveThreadId(thread.id);
+    const prev = workspaceRef.current;
+    if (prev.rootPath) {
+      const wsNext = { ...prev, rootPath: '' };
+      setWorkspace(wsNext);
+      setWorkspaceState(wsNext);
+    }
     setTab('home');
   }, []);
 
@@ -304,20 +314,7 @@ export default function App() {
     }
   }, []);
 
-  /** Keep an already-stamped session in sync when the root changes. New chats stay empty until the picker confirms. */
-  useEffect(() => {
-    const id = activeThreadIdRef.current;
-    if (!id) return;
-    const root = workspace.rootPath.trim() || undefined;
-    setThreads((prev) => {
-      const existing = prev.find((t) => t.id === id);
-      if (!existing?.workspaceRoot) return prev;
-      if ((existing.workspaceRoot || undefined) === root) return prev;
-      return upsertThread({ ...existing, workspaceRoot: root, updatedAt: Date.now() });
-    });
-  }, [workspace.rootPath]);
-
-  /** Open a past thread, rebind model, backfill/restore workspace root. */
+  /** Open a past thread, rebind model, restore thread workspace root. */
   const openThread = useCallback((id: string) => {
     const s = settingsRef.current;
     const active = resolveActiveSettings(s);
@@ -329,52 +326,25 @@ export default function App() {
     }
     const model = active.defaultModel || existing.model;
     const currentRoot = workspaceRef.current.rootPath.trim();
-    let next: Thread = existing;
-    let changed = false;
     if (existing.model !== model) {
-      next = { ...next, model };
-      changed = true;
-    }
-    if (
-      !existing.workspaceRoot &&
-      currentRoot &&
-      workspaceGate(currentRoot, bridge.currentAppRoot).ok
-    ) {
-      next = { ...next, workspaceRoot: currentRoot };
-      changed = true;
-    }
-    if (changed) {
-      next = { ...next, updatedAt: Date.now() };
+      const next = { ...existing, model, updatedAt: Date.now() };
       setThreads(upsertThread(next));
     }
     setActiveThreadId(id);
     setTab('home');
 
-    const threadRoot = (next.workspaceRoot || '').trim();
-    if (
-      threadRoot &&
-      !isPlaceholderRoot(threadRoot) &&
-      threadRoot !== currentRoot &&
-      workspaceGate(threadRoot, bridge.currentAppRoot).ok
-    ) {
+    const threadRoot = (existing.workspaceRoot || '').trim();
+    const targetRoot =
+      threadRoot && !isPlaceholderRoot(threadRoot) && workspaceGate(threadRoot, bridge.currentAppRoot).ok
+        ? threadRoot
+        : '';
+    if (targetRoot !== currentRoot) {
       const prev = workspaceRef.current;
-      const wsNext = { ...prev, rootPath: threadRoot };
+      const wsNext = { ...prev, rootPath: targetRoot };
       setWorkspace(wsNext);
       setWorkspaceState(wsNext);
-      if (bridge.connected) {
-        void (async () => {
-          try {
-            const root = await bridge.setRoot(threadRoot);
-            const p = workspaceRef.current;
-            if (root && root !== p.rootPath) {
-              const normalized = { ...p, rootPath: root };
-              setWorkspace(normalized);
-              setWorkspaceState(normalized);
-            }
-          } catch {
-            /* keep stamped path in history; local workspace already updated */
-          }
-        })();
+      if (bridge.connected && targetRoot) {
+        void bridge.setRoot(targetRoot).catch(() => undefined);
       }
     }
   }, []);

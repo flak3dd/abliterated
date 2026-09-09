@@ -252,13 +252,8 @@ async function runJob(initial: Job, settings: ClientSettings) {
       });
       job = appendLog(job, `worktree: ${prep.note} (${prep.path})`);
       if (prep.shouldSetRoot && prep.absPath) {
-        try {
-          const root = await bridge.setRoot(prep.absPath);
-          effectiveRoot = root || prep.absPath;
-          job = appendLog(job, `workspace root set to worktree: ${effectiveRoot}`);
-        } catch (e) {
-          job = appendLog(job, `worktree setRoot failed: ${e instanceof Error ? e.message : String(e)}`);
-        }
+        effectiveRoot = prep.absPath;
+        job = appendLog(job, `workspace root set to worktree: ${effectiveRoot}`);
       }
     } catch (e) {
       job = appendLog(job, `worktree error: ${e instanceof Error ? e.message : String(e)}`);
