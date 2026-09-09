@@ -52,8 +52,22 @@ const DISCOVERY_SHELL = /\b(ls|tree|cat|find|dir|ll)\b/;
 const MAX_FAKE_TOOLS = 6;
 const FENCE_OPEN = String.fromCharCode(96,96,96);
 const FENCE_RE = new RegExp(FENCE_OPEN + '([a-zA-Z0-9_-]*)\\s*\\n?([\\s\\S]*?)' + FENCE_OPEN, 'g');
-const FENCE_LANGS = new Set(['', 'bash', 'shell', 'sh', 'zsh', 'console', 'text']);
-const JSON_FENCE_LANGS = new Set(['json', 'javascript', 'js']);
+const FENCE_LANGS = new Set([
+  '',
+  'bash',
+  'shell',
+  'sh',
+  'zsh',
+  'console',
+  'text',
+  'tool',
+  'tool_code',
+  'tool-code',
+  'toolcall',
+  'tool_call',
+  'xml',
+]);
+const JSON_FENCE_LANGS = new Set(['json', 'javascript', 'js', 'tool', 'tool_code', 'tool-code', 'toolcall']);
 
 function unquote(s: string): string {
   const t = s.trim();

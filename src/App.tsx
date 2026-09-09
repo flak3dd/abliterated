@@ -31,6 +31,8 @@ import {
 } from './lib/storage';
 import { getLicenseState } from './lib/license';
 import { workspaceGate } from './lib/workspaceGuard';
+import { SetupWizard } from './components/setup/SetupWizard';
+import { hydrateDurableStore } from './lib/durableStore';
 import { ApiScreen } from './screens/ApiScreen';
 import { ChatScreen, type ChatScreenHandle } from './screens/ChatScreen';
 import { HomeScreen } from './screens/HomeScreen';
@@ -727,6 +729,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void hydrateDurableStore().then(() => {
+      setThreads(getThreads());
+      setJobs(getJobs());
+    });
+  }, []);
+
+  useEffect(() => {
     if (bridgeStatus === 'connected') {
       void syncMcpServers(settings.mcpServers || []);
     }
@@ -734,6 +743,9 @@ export default function App() {
 
   return (
     <div className="flex h-full bg-background text-zinc-100">
+      {!settings.setupComplete ? (
+        <SetupWizard settings={settings} onSettingsChange={applySettings} />
+      ) : null}
       <DesktopRail
         current={tab}
         onChange={setTab}

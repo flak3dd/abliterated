@@ -4,6 +4,7 @@
  * Spawns daemon/bridge.js on 17322 if the port is free; kills only the child we spawned on quit.
  */
 import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import fs from 'node:fs';
@@ -352,6 +353,76 @@ function registerIpc() {
     await shell.openPath(dir);
     return { ok: true, path: dir };
   });
+  ipcMain.handle('ablit:startSparkImage', async (_e, alias) => {
+    const host = String(alias || '').trim();
+    if (!/^[A-Za-z0-9._-]+$/.test(host)) return { ok: false, error: 'invalid ssh alias' };
+    const { spawn: sp } = await import('node:child_process');
+    return await new Promise((resolve) => {
+      const child = sp('ssh', [host, 'bash', '~/abliterated-spark/spark-image/spark_ctl.sh', 'start'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let out = '';
+      child.stdout?.on('data', (b) => {
+        out += String(b);
+      });
+      child.stderr?.on('data', (b) => {
+        out += String(b);
+      });
+      child.on('close', (code) => resolve({ ok: code === 0, log: out.slice(-4000) }));
+      child.on('error', (err) => resolve({ ok: false, error: err.message }));
+    });
+  });
+  ipcMain.handle('ablit:checkUpdate', async () => {
+    if (!app.isPackaged) return { ok: false, reason: 'dev' };
+    try {
+      autoUpdater.allowPrerelease = true;
+      const result = await autoUpdater.checkForUpdates();
+      const info = result?.updateInfo;
+      return {
+        ok: true,
+        version: info?.version || '',
+        current: app.getVersion(),
+      };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+  ipcMain.handle('ablit:downloadUpdate', async () => {
+    if (!app.isPackaged) return { ok: false, reason: 'dev' };
+    try {
+      await autoUpdater.downloadUpdate();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+  ipcMain.handle('ablit:quitAndInstall', () => {
+    if (!app.isPackaged) return false;
+    autoUpdater.quitAndInstall();
+    return true;
+  });
+}
+
+function wireAutoUpdater() {
+  if (!app.isPackaged) return;
+  autoUpdater.autoDownload = false;
+  autoUpdater.allowPrerelease = true;
+  autoUpdater.on('update-available', (info) => {
+    mainWindow?.webContents.send('ablit:updateStatus', { state: 'available', version: info.version });
+  });
+  autoUpdater.on('update-not-available', () => {
+    mainWindow?.webContents.send('ablit:updateStatus', { state: 'none' });
+  });
+  autoUpdater.on('download-progress', (p) => {
+    mainWindow?.webContents.send('ablit:updateStatus', { state: 'downloading', percent: p.percent });
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    mainWindow?.webContents.send('ablit:updateStatus', { state: 'ready', version: info.version });
+  });
+  autoUpdater.on('error', (err) => {
+    mainWindow?.webContents.send('ablit:updateStatus', { state: 'error', error: err.message });
+  });
+  void autoUpdater.checkForUpdates().catch(() => undefined);
 }
 
 if (gotLock) {
@@ -372,6 +443,7 @@ if (gotLock) {
     registerIpc();
     await ensureBridge();
     createWindow();
+    wireAutoUpdater();
     // Cold-start deep link (Windows / Linux argv, or macOS open-url queued)
     const deep = findLicenseDeepLink(process.argv);
     if (deep) applyLicenseDeepLink(deep);

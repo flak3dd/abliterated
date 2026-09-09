@@ -23,7 +23,7 @@ import {
 import { useToast } from '../components/common/Toast';
 import { bridge } from '../lib/bridgeClient';
 import { cn } from '../lib/cn';
-import { compactFileToDataUrl, friendlyImageError, generateImage, imageEndpointUrl, isBridgeOfflineError, pingImageEndpoint, type ImageGenResult } from '../lib/imageGen';
+import { compactFileToDataUrl, friendlyImageError, generateImage, generateTestImage, imageEndpointUrl, isBridgeOfflineError, pingImageEndpoint, type ImageGenResult } from '../lib/imageGen';
 import {
   XAI_IMAGE_MODEL,
   XAI_QUALITIES,
@@ -1543,6 +1543,24 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         </button>
         <button
           type="button"
+          className="chip hover:border-sky-500/40 hover:text-sky-200"
+          title="ssh alias + spark_ctl.sh start"
+          onClick={() => {
+            const alias = (settings.sparkSshAlias || '').trim();
+            if (!alias) {
+              toast.info('Set Spark SSH alias in Endpoint first');
+              return;
+            }
+            void window.ablitDesktop?.startSparkImage?.(alias).then((r) => {
+              if (r?.ok) toast.success('Spark image start sent', r.log?.slice(0, 120) || alias);
+              else toast.error('Spark start failed', r?.error || r?.log || 'ssh failed');
+            });
+          }}
+        >
+          Start Spark image
+        </button>
+        <button
+          type="button"
           className={chipOn(settings.inferenceProvider === 'dgx-spark' && settings.sparkModel === SPARK_CHAT_MODEL)}
           onClick={applySparkQwen}
           title={SPARK_CHAT_MODEL}
@@ -2008,7 +2026,35 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                 {busy ? (
                   <button type="button" onClick={cancelGenerate} className="btn-danger">Stop</button>
                 ) : (
+                  <>
                   <button type="button" disabled={busy} onClick={() => void testEndpoint()} className="btn-ghost">Test</button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className="btn-ghost"
+                    title="Run a tiny generate against the active backend (Spark, or xAI if Spark is down and a key is set)"
+                    onClick={() => {
+                      void (async () => {
+                        setBusy(true);
+                        setError('');
+                        try {
+                          const r = await generateTestImage(settings);
+                          setB64(r.b64 || null);
+                          setRemoteUrl(r.url || null);
+                          toast.success('Test generate ok');
+                        } catch (err) {
+                          const { friendly, detail } = friendlyImageError(err);
+                          setError(detail);
+                          toast.error(friendly.split('.')[0] || 'Test generate failed');
+                        } finally {
+                          setBusy(false);
+                        }
+                      })();
+                    }}
+                  >
+                    Test generate
+                  </button>
+                  </>
                 )}
                 {busy ? <span className="status-badge status-badge--busy">Generating… {progressLabel || ''}</span> : null}
                 {progressFailed && !busy ? <span className="status-badge status-badge--err">Failed</span> : null}

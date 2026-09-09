@@ -394,6 +394,8 @@ export interface ClientSettings {
   deviceId?: string;
   /** True when the user completed Sign up or Log in successfully. */
   accountLoggedIn?: boolean;
+  /** First-run wizard finished (or skipped). */
+  setupComplete?: boolean;
   /** Discover/follow SKILL.md recipes (default true). */
   skillsEnabled: boolean;
   /** Optional Brave Search API key (X-Subscription-Token). Empty = keyless HTML search. */

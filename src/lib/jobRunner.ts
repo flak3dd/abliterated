@@ -138,8 +138,41 @@ export function cancelJob(id: string): void {
       logs: [...job.logs, `[${new Date().toISOString()}] cancelled`],
     });
   } else if (job.status === "running") {
-    appendLog(job, "cancel requested");
+    persist({
+      ...job,
+      status: "error",
+      error: "cancelled",
+      stopReason: "abort",
+      endedAt: Date.now(),
+      logs: [...job.logs, `[${new Date().toISOString()}] cancelled`],
+    });
   }
+}
+
+/** Re-queue a finished/failed job in place. */
+export function retryJob(id: string): Job | null {
+  const job = getJobs().find((j) => j.id === id);
+  if (!job) return null;
+  if (job.status === "queued" || job.status === "running") return job;
+  persist({
+    ...job,
+    status: "queued",
+    error: undefined,
+    stopReason: undefined,
+    endedAt: undefined,
+    logs: [...job.logs, `[${new Date().toISOString()}] retry queued`],
+  });
+  void pumpQueue();
+  return job;
+}
+
+/** Promote a chat prompt onto the Jobs queue. */
+export function enqueueChatAsJob(opts: { prompt: string; threadId?: string; title?: string }): Job {
+  return enqueueJob({
+    prompt: opts.prompt,
+    threadId: opts.threadId,
+    title: opts.title || opts.prompt.slice(0, 72),
+  });
 }
 
 export function deleteJob(id: string): void {

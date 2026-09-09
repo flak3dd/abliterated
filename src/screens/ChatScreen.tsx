@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, ArrowDown, RotateCcw, Send, Square, ListChecks, PanelRight } from 'lucide-react';
+import { ArrowLeft, ArrowDown, RotateCcw, Send, Square, ListChecks, PanelRight, Play } from 'lucide-react';
 import { cn } from '../lib/cn';
 import {
   buildDeepenNowPrompt,
@@ -125,6 +125,7 @@ import { detokenizeArtifacts } from '../lib/detokenizeArtifacts';
 import { streamChatCompletion } from '../lib/sse';
 import { looksLikeTokenCollapse, stripCollapsedText, TOKEN_COLLAPSE_REPLY_NOTE } from '../lib/tokenCollapse';
 import { getMessages, recordAgentRun, replaceThreadMessages, saveMessage, setSettings, uid, upsertThread } from '../lib/storage';
+import { enqueueChatAsJob } from '../lib/jobRunner';
 import { formatSkillsCatalogPrompt, formatVerifyStrictSkillPrompt, shouldAutoInjectVerifyStrict, toCatalogEntries, type SkillCatalogEntry, type SkillRecord } from '../lib/skills';
 import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from '../lib/projectMemory';
 import { formatSessionMemory, mempalaceOpts } from '../lib/mempalace';
@@ -2549,9 +2550,25 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               ) : null}
             </>
           ) : (
+            <>
+              <button
+                type="button"
+                className="btn-ghost h-8 px-2 text-[11px]"
+                disabled={needsWorkingDir || !input.trim()}
+                title="Queue this prompt as a background job"
+                onClick={() => {
+                  const p = input.trim();
+                  if (!p) return;
+                  enqueueChatAsJob({ prompt: p, threadId: thread.id, title: p.slice(0, 72) });
+                  setInput('');
+                }}
+              >
+                <Play size={11} /> Job
+              </button>
             <button type="submit" disabled={needsWorkingDir || !input.trim()} className="btn-icon shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40" aria-label="Send">
               <Send size={16} />
             </button>
+            </>
           )}
         </div>
         </div>

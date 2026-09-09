@@ -67,6 +67,18 @@ assert.ok(looksLikeToolRetryNarration(retry), 'kyc write_file retry narration');
 assert.ok(looksLikeFakeToolTheater(retry), 'retry narration is theater');
 assert.equal(looksLikeToolRetryNarration('Here is the docFront prompt for the KYC still.'), false);
 
+const toolCode = [
+  'Inspecting.',
+  fence + 'tool_code',
+  'list_dir .',
+  'git_status',
+  fence,
+].join('\n');
+assert.ok(looksLikeFakeToolTheater(toolCode), 'tool_code fence is theater');
+const fromToolCode = parseFakeToolCalls(toolCode).map((p) => p.name);
+assert.ok(fromToolCode.includes('list_dir'), 'tool_code list_dir');
+assert.ok(fromToolCode.includes('git_status'), 'tool_code git_status');
+
 console.log("fakeToolCalls ok", JSON.stringify(parsed));
 
 fs.rmSync(outDir, { recursive: true, force: true });

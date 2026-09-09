@@ -24,13 +24,14 @@
     "test:mempalace": "node scripts/test-mempalace.mjs",
     "test:sse": "node scripts/test-sse-parse.mjs",
     "test:xai-image": "node scripts/test-xai-image.mjs",
+    "test:thread-io": "node scripts/test-thread-io.mjs",
     "test:token-collapse": "node scripts/test-token-collapse.mjs",
     "test:featherless-qwen": "node scripts/test-featherless-qwen.mjs",
     "test:model-guide": "node scripts/test-model-settings-guide.mjs",
     "test:context": "node scripts/test-context-window.mjs",
     "test:model-profile": "node scripts/test-model-agent-profile.mjs",
     "test:task-graph": "node scripts/test-task-graph.mjs",
-    "test": "npm run smoke && npm run test:agent && npm run test:reasoning && npm run test:sse && npm run test:token-collapse && npm run test:xai-image && npm run test:model-guide && npm run test:context && npm run test:model-profile && npm run test:task-graph && npm run test:build && npm run test:workspace && npm run test:grok-edits && npm run test:memory && npm run test:mempalace && npm run test:vdone && npm run test:multi-agent && npm run test:featherless-qwen && npm run test:prove-improve && npm run test:tool-args && npm run test:turn-workflow && npm run test:eval-fixtures && npm run test:capability-router && npm run test:url-safety && npm run test:license-harden && npm run test:spark-install",
+    "test": "npm run smoke && npm run test:agent && npm run test:reasoning && npm run test:sse && npm run test:token-collapse && npm run test:xai-image && npm run test:thread-io && npm run test:model-guide && npm run test:context && npm run test:model-profile && npm run test:task-graph && npm run test:build && npm run test:workspace && npm run test:grok-edits && npm run test:memory && npm run test:mempalace && npm run test:vdone && npm run test:multi-agent && npm run test:featherless-qwen && npm run test:prove-improve && npm run test:tool-args && npm run test:turn-workflow && npm run test:eval-fixtures && npm run test:capability-router && npm run test:url-safety && npm run test:license-harden && npm run test:spark-install",
     "image:mock": "cd spark-image && ABLITERATED_IMAGE_MOCK=1 ABLITERATED_IMAGE_HOST=127.0.0.1 ABLITERATED_IMAGE_PORT=7860 python3 serve-openai-bridge.py",
     "spark:push": "bash spark-install/push.sh",
     "test:spark-install": "node scripts/test-spark-install.mjs",
@@ -58,6 +59,7 @@
   },
   "dependencies": {
     "clsx": "^2.1.1",
+    "electron-updater": "^6.8.9",
     "lucide-react": "^0.475.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -175,6 +177,20 @@
         ]
       }
     ],
-    "afterSign": "scripts/notarize.cjs"
+    "afterSign": "scripts/notarize.cjs",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "flak3dd",
+        "repo": "abliterated"
+      }
+    ],
+    "linux": {
+      "target": [
+        "tar.gz"
+      ],
+      "category": "Development",
+      "icon": "build/icon-win.png"
+    }
   }
 }

@@ -5,6 +5,7 @@ import {
   clearFinishedJobs,
   deleteJob,
   enqueueJob,
+  retryJob,
   subscribeJobs,
 } from '../lib/jobRunner';
 import { cn } from '../lib/cn';
@@ -350,6 +351,16 @@ export function JobsScreen({ jobs, onJobsChange, onSettingsChange }: Props) {
                 </button>
 
                 <div className="flex items-center gap-1.5 shrink-0">
+                  {job.status === 'error' || job.status === 'incomplete' || job.status === 'done' ? (
+                    <button
+                      type="button"
+                      title="Retry this job"
+                      onClick={() => retryJob(job.id)}
+                      className="btn-icon h-7 w-7 text-zinc-400 hover:text-emerald-300"
+                    >
+                      <RotateCw size={11} />
+                    </button>
+                  ) : (
                   <button
                     type="button"
                     title="Clone / re-run prompt"
@@ -358,6 +369,7 @@ export function JobsScreen({ jobs, onJobsChange, onSettingsChange }: Props) {
                   >
                     <RotateCw size={11} />
                   </button>
+                  )}
 
                   {job.status === 'queued' || job.status === 'running' ? (
                     <button

@@ -34,7 +34,8 @@ export function isThinkingFamilyModel(model: string): boolean {
  */
 export function shouldForceThinkingOff(model: string): boolean {
   const m = model || '';
-  return /qwen3/i.test(m) && /abliterat/i.test(m);
+  // Qwen3 + abliterated/obliterated forks loop `!` when thinking is on.
+  return /qwen3/i.test(m) && /abliterat|obliterat/i.test(m);
 }
 
 /** Featherless/vLLM chat_template_kwargs for Qwen3-class thinking models. */

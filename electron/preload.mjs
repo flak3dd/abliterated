@@ -27,4 +27,20 @@ contextBridge.exposeInMainWorld('ablitDesktop', {
     };
   },
   platform: process.platform,
+  checkUpdate: () => ipcRenderer.invoke('ablit:checkUpdate'),
+  downloadUpdate: () => ipcRenderer.invoke('ablit:downloadUpdate'),
+  quitAndInstall: () => ipcRenderer.invoke('ablit:quitAndInstall'),
+  startSparkImage: (alias) => ipcRenderer.invoke('ablit:startSparkImage', alias),
+  onUpdateStatus: (cb) => {
+    if (typeof cb !== 'function') return () => {};
+    const handler = (_event, payload) => {
+      try {
+        cb(payload);
+      } catch {
+        /* renderer */
+      }
+    };
+    ipcRenderer.on('ablit:updateStatus', handler);
+    return () => ipcRenderer.removeListener('ablit:updateStatus', handler);
+  },
 });

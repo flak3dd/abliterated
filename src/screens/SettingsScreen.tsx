@@ -134,6 +134,75 @@ function SwitchRow({
   );
 }
 
+function DesktopUpdatePanel() {
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    return window.ablitDesktop?.onUpdateStatus?.((p) => {
+      if (p.state === 'available') setNote(`Update ${p.version} available`);
+      else if (p.state === 'downloading') setNote(`Downloading ${Math.round(p.percent || 0)}%`);
+      else if (p.state === 'ready') {
+        setReady(true);
+        setNote(`Ready to install ${p.version || ''}`);
+      } else if (p.state === 'error') setNote(p.error || 'Update error');
+      else if (p.state === 'none') setNote('You are on the current build');
+    });
+  }, []);
+  if (!window.ablitDesktop?.checkUpdate) {
+    return (
+      <Section title="Desktop updates" hint="Packaged Electron builds check GitHub Releases (including beta).">
+        <p className="font-mono text-[11px] text-muted">Browser / DEV — updates apply to the installed app only.</p>
+      </Section>
+    );
+  }
+  return (
+    <Section title="Desktop updates" hint="Checks GitHub Releases for 1.0.2-beta and later. Allow prereleases.">
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="btn-ghost h-8 px-3 text-[12px]"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            void window.ablitDesktop?.checkUpdate?.().then((r) => {
+              setBusy(false);
+              if (r?.ok && r.version && r.version !== r.current) setNote(`Update ${r.version} (you have ${r.current})`);
+              else if (r?.ok) setNote(`Current ${r.current || ''}`);
+              else setNote(r?.error || r?.reason || 'Check failed');
+            });
+          }}
+        >
+          Check
+        </button>
+        <button
+          type="button"
+          className="btn-ghost h-8 px-3 text-[12px]"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            void window.ablitDesktop?.downloadUpdate?.().then((r) => {
+              setBusy(false);
+              setNote(r?.ok ? 'Downloading…' : r?.error || r?.reason || 'Download failed');
+            });
+          }}
+        >
+          Download
+        </button>
+        <button
+          type="button"
+          className="btn-primary h-8 px-3 text-[12px]"
+          disabled={!ready}
+          onClick={() => void window.ablitDesktop?.quitAndInstall?.()}
+        >
+          Restart & install
+        </button>
+      </div>
+      {note ? <p className="font-mono text-[11px] text-zinc-300">{note}</p> : null}
+    </Section>
+  );
+}
+
 function FieldLabel({
   label,
   children,
@@ -1970,6 +2039,8 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
 
           {cryptoMsg ? <p className="font-mono text-[11px] text-sky-300">{cryptoMsg}</p> : null}
         </Section>
+
+        <DesktopUpdatePanel />
 
         <Section
           title="License"

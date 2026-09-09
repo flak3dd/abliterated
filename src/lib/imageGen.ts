@@ -343,6 +343,30 @@ async function generateXaiImage(args: ImageGenArgs): Promise<ImageGenResult> {
 }
 
 export async function generateImage(args: ImageGenArgs): Promise<ImageGenResult> {
+  const { settings, onProgress } = args;
+  if (!settings.imageGenEnabled) {
+    throw new Error('Image generation is disabled. Enable it in Settings / Images (see spark-image/).');
+  }
+  const xai = isXaiImageBackend(settings);
+  if (xai) {
+    return generateXaiImage(args);
+  }
+  try {
+    return await generateSparkImage(args);
+  } catch (err) {
+    const token = (settings.xaiImageToken || '').trim();
+    if (token && isBridgeOfflineError(err instanceof Error ? err.message : String(err))) {
+      onProgress?.(4, true, { status: 'waiting' });
+      return generateXaiImage({
+        ...args,
+        settings: { ...settings, imageBackend: 'xai', imageGenEnabled: true },
+      });
+    }
+    throw err;
+  }
+}
+
+async function generateSparkImage(args: ImageGenArgs): Promise<ImageGenResult> {
   const {
     settings,
     prompt,
@@ -362,13 +386,6 @@ export async function generateImage(args: ImageGenArgs): Promise<ImageGenResult>
     abortSignal,
     onProgress,
   } = args;
-  if (!settings.imageGenEnabled) {
-    throw new Error('Image generation is disabled. Enable it in Settings / Images (see spark-image/).');
-  }
-  const xai = isXaiImageBackend(settings);
-  if (xai) {
-    return generateXaiImage(args);
-  }
   const url = imageEndpointUrl(settings, '/images/generations');
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const token = (settings.imageToken || '').trim();
@@ -479,6 +496,20 @@ export async function generateImage(args: ImageGenArgs): Promise<ImageGenResult>
     revisedPrompt: first.revisedPrompt,
     images: mapped.length > 1 ? mapped : undefined,
   };
+}
+
+/** Tiny 1k ping-generate so Images Test can prove the live backend, not just /models. */
+export async function generateTestImage(
+  settings: ClientSettings,
+  abortSignal?: AbortSignal,
+): Promise<ImageGenResult> {
+  return generateImage({
+    settings: { ...settings, imageGenEnabled: true },
+    prompt: 'A 1x1 px solid mid-grey square, no text, no logo, flat studio lighting.',
+    size: '512x512',
+    n: 1,
+    abortSignal,
+  });
 }
 
 export function imageResultToMarkdown(result: ImageGenResult, prompt: string): string {

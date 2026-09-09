@@ -31,6 +31,11 @@ interface AblitDesktopApi {
   sparkInstallPath?: () => Promise<string>;
   revealSparkInstall?: () => Promise<{ ok: boolean; path: string }>;
   platform: string;
+  checkUpdate?: () => Promise<{ ok: boolean; version?: string; current?: string; error?: string; reason?: string }>;
+  downloadUpdate?: () => Promise<{ ok: boolean; error?: string; reason?: string }>;
+  quitAndInstall?: () => Promise<boolean>;
+  startSparkImage?: (alias: string) => Promise<{ ok: boolean; log?: string; error?: string }>;
+  onUpdateStatus?: (cb: (payload: { state: string; version?: string; percent?: number; error?: string }) => void) => () => void;
 }
 
 interface Window {

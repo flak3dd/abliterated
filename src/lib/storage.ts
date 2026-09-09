@@ -29,6 +29,7 @@ import {
   type AgentRunRecord,
 } from './agentHelpers';
 import { getLicenseState } from './license';
+import { durableSet, isBulkyStorageKey, wipeDurableStore } from './durableStore';
 import { LEGACY_PROMPTS, SYSTEM_PROMPT } from './systemPrompt';
 import { DEFAULT_FEATHERLESS_MODEL, migrateFeatherlessModel } from './featherlessQwen.js';
 
@@ -112,6 +113,7 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   loginId: '',
   deviceId: '',
   accountLoggedIn: false,
+  setupComplete: false,
   webSearchBraveKey: '',
   webSearchSearxUrl: '',
   jobWorktreesEnabled: false,
@@ -193,10 +195,15 @@ function pruneMessagesForQuota(messages: Message[]): Message[] {
   return windowMessages(kept);
 }
 
+function persistDurable(key: string, value: unknown): void {
+  if (isBulkyStorageKey(key)) void durableSet(key, value);
+}
+
 function writeJson(key: string, value: unknown): void {
   const payload = () => JSON.stringify(value);
   try {
     localStorage.setItem(key, payload());
+    persistDurable(key, value);
     return;
   } catch (err) {
     if (!isQuotaError(err)) {
@@ -236,8 +243,10 @@ function writeJson(key: string, value: unknown): void {
   }
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    persistDurable(key, value);
   } catch (err) {
     console.warn(`[ablit] localStorage write still failing for ${key}`, err);
+    persistDurable(key, value);
   }
 }
 
@@ -381,6 +390,12 @@ export function getSettings(): ClientSettings {
     loginId: typeof stored.loginId === 'string' ? stored.loginId.trim() : '',
     deviceId: typeof stored.deviceId === 'string' ? stored.deviceId.trim() : '',
     accountLoggedIn: stored.accountLoggedIn === true,
+    setupComplete:
+      stored.setupComplete === true ||
+      Boolean((stored.licenseKey || '').trim()) ||
+      Boolean((stored.featherlessToken || '').trim()) ||
+      Boolean((stored.token || '').trim()) ||
+      stored.accountLoggedIn === true,
     webSearchBraveKey:
       typeof stored.webSearchBraveKey === 'string' ? stored.webSearchBraveKey.trim() : '',
     webSearchSearxUrl:
@@ -562,6 +577,7 @@ export function wipeAll(): void {
   localStorage.removeItem(KEYS.jobs);
   localStorage.removeItem(KEYS.workspace);
   localStorage.removeItem(KEYS.agentRuns);
+  void wipeDurableStore();
 }
 
 export function uid(prefix = 'id'): string {

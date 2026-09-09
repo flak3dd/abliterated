@@ -153,6 +153,7 @@ assert.equal(isThinkingFamilyModel('Qwen/Qwen2.5-7B-Instruct'), false);
 assert.deepEqual(thinkingChatTemplateKwargs('Qwen/Qwen3-32B', 'max'), { enable_thinking: true, thinking_budget: 16384 });
 assert.deepEqual(thinkingChatTemplateKwargs('Qwen/Qwen3-32B', 'off'), { enable_thinking: false });
 assert.equal(shouldForceThinkingOff('roslein/Qwen3-32B-abliterated'), true);
+assert.equal(shouldForceThinkingOff('medismera/Qwen3.8-27B-OBLITERATED-Mythos-Class-Agentic'), true);
 assert.deepEqual(thinkingChatTemplateKwargs('roslein/Qwen3-32B-abliterated', 'max'), {
   enable_thinking: false,
 });

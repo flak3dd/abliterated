@@ -471,6 +471,22 @@ export function looksReadOnlyOrControlPrompt(userText: string): boolean {
       return true;
     }
   }
+  if (looksFactualQuestion(t)) return true;
+  return false;
+}
+
+/** Short Q&A / fact ask — not a codebase build. Length up to 160 so "What is 2+2?" class prompts skip Plan/Build. */
+export function looksFactualQuestion(userText: string): boolean {
+  const t = (userText || '').trim();
+  if (!t || t.length > 160) return false;
+  const lower = t.toLowerCase();
+  if (looksBuildIntent(t) || looksPromptOnlyRequest(t)) return false;
+  if (/\b(implement|scaffold|refactor|migrate|rewrite|create|build|edit|fix|write_file|patch)\b/.test(lower)) {
+    return false;
+  }
+  if (/\b(src\/|workspace|pull request|typecheck|file tree)\b/.test(lower)) return false;
+  if (/^\s*(what|who|when|where|why|how|is|are|can|does|do|explain)\b/i.test(t)) return true;
+  if (/\?\s*$/.test(t) && !/\b(file|repo|directory|folder)\b/.test(lower)) return true;
   return false;
 }
 

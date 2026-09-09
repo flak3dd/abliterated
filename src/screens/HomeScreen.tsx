@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Pin, Plus, Search, Trash2 } from 'lucide-react';
+import { Download, Pin, Plus, Search, Trash2, Upload } from 'lucide-react';
 import { resolveActiveSettings } from '../lib/activeEndpoint';
 import { cn } from '../lib/cn';
-import { deleteThread, getMessages, uid, upsertThread } from '../lib/storage';
+import { deleteThread, getMessages, getThreads, uid, upsertThread } from '../lib/storage';
+import { downloadThread, importThreadPayload, searchThreads } from '../lib/threadIo';
 import { workspaceGate } from '../lib/workspaceGuard';
 import { bridge } from '../lib/bridgeClient';
 import { DEFAULT_ENABLED_TOOLS, type ClientSettings, type Thread } from '../types';
@@ -40,14 +41,8 @@ export function HomeScreen({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = q
-      ? threads.filter(
-          (t) =>
-            t.title.toLowerCase().includes(q) ||
-            t.model.toLowerCase().includes(q) ||
-            (t.workspaceRoot || '').toLowerCase().includes(q),
-        )
-      : threads;
+    const ids = q ? new Set(searchThreads(query)) : null;
+    const list = ids ? threads.filter((t) => ids.has(t.id)) : threads;
     return [...list].sort((a, b) => {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
       return b.updatedAt - a.updatedAt;
@@ -92,6 +87,25 @@ export function HomeScreen({
         {compact ? (
           <>
             <div className="min-w-0 flex-1 text-[13px] font-semibold tracking-tight text-foreground">Chats</div>
+            <button
+              type="button"
+              className="btn-icon"
+              title="Import chat"
+              aria-label="Import chat"
+              onClick={() => {
+                const raw = window.prompt('Paste exported JSON or markdown');
+                if (!raw?.trim()) return;
+                try {
+                  const t = importThreadPayload(raw);
+                  onThreadsChange(getThreads());
+                  onOpenThread(t.id);
+                } catch (err) {
+                  window.alert(err instanceof Error ? err.message : 'Import failed');
+                }
+              }}
+            >
+              <Upload size={14} />
+            </button>
             <button type="button" onClick={createSession} className="btn-icon" title="New chat" aria-label="New chat">
               <Plus size={14} />
             </button>
@@ -176,6 +190,14 @@ export function HomeScreen({
                         {fullRoot}
                       </div>
                     ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    title="Export markdown"
+                    className="text-muted hover:text-sky-300"
+                    onClick={() => downloadThread(t.id, 'md')}
+                  >
+                    <Download size={13} />
                   </button>
                   <button type="button" onClick={() => remove(t.id)} className="text-muted hover:text-red-400">
                     <Trash2 size={13} />

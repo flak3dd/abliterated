@@ -194,10 +194,34 @@ export function featuresForTier(tier: LicenseTier): LicenseFeatures {
   return { ...TIER_FEATURES[tier] };
 }
 
-export function getLicenseState(settings: { licenseKey?: string } | null | undefined): LicenseState {
+function licenseCacheForcesFree(key: string): boolean {
+  try {
+    const raw = localStorage.getItem('ablit_license_verify');
+    if (!raw) return false;
+    const cache = JSON.parse(raw) as { key?: string; ok?: boolean; checkedAt?: number; authoritative?: boolean };
+    if (!cache || cache.key !== key) return false;
+    if (cache.ok || !cache.authoritative) return false;
+    const age = Date.now() - (cache.checkedAt || 0);
+    return age > 7 * 24 * 60 * 60 * 1000;
+  } catch {
+    return false;
+  }
+}
+
+export function getLicenseState(
+  settings: { licenseKey?: string; billingSiteUrl?: string } | null | undefined,
+): LicenseState {
   let key = normalizeLicenseKey(settings?.licenseKey ?? '');
-  const tier = resolveLicenseTier(key);
+  let tier = resolveLicenseTier(key);
   if (!key && tier === 'admin') key = ADMIN_LICENSE_KEY;
+  const stubTest = /-(TEST)-0001$/i.test(key);
+  if (key && tier !== 'free' && tier !== 'admin' && !stubTest && licenseCacheForcesFree(key)) {
+    tier = 'free';
+  } else if (key && tier !== 'free' && tier !== 'admin' && !stubTest && !isDevRuntime()) {
+    void import('./licenseVerify').then((m) => {
+      void m.refreshLicenseVerification(key, settings?.billingSiteUrl);
+    });
+  }
   const features = featuresForTier(tier);
   return {
     tier,

@@ -2,7 +2,7 @@
 
 import { BUILD_WRITE_TOOL_NAMES, EXPLORE_TOOL_NAMES, summarizeRunProof, type RunProof } from './harnessGates';
 import { looksLikeVerifyEvidence } from './verifyDone';
-import { looksPromptOnlyRequest, looksReadOnlyOrControlPrompt } from './agentHelpers';
+import { looksFactualQuestion, looksPromptOnlyRequest, looksReadOnlyOrControlPrompt } from './agentHelpers';
 import { looksLikeToolRetryNarration } from './fakeToolCalls';
 
 const BUILD_WRITE_TOOLS = BUILD_WRITE_TOOL_NAMES;
@@ -36,7 +36,7 @@ export function shouldProveImproveNudge(opts: {
 }): boolean {
   if (opts.planMode) return false;
   const user = opts.userText || '';
-  if (looksPromptOnlyRequest(user) || looksReadOnlyOrControlPrompt(user)) return false;
+  if (looksPromptOnlyRequest(user) || looksReadOnlyOrControlPrompt(user) || looksFactualQuestion(user)) return false;
   if (looksLikeToolRetryNarration(opts.content)) return false;
   if (looksLikeProvenImprovement(opts.content, opts.toolsUsed)) return false;
   return true;
