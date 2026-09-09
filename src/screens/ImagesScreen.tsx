@@ -1803,7 +1803,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                 title="Edit the front scan while keeping printed text and graphics"
                 onClick={() => void runIdAlteration()}
               >
-                Alter front (keep text)
+                Run alteration
               </button>
               <button
                 type="button"
@@ -1812,7 +1812,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                 title="Build a licence + selfie pair from the front scan"
                 onClick={() => void runIdLicenceSelfie()}
               >
-                Build licence selfie pair
+                Run licence selfie
               </button>
               <button
                 type="button"
