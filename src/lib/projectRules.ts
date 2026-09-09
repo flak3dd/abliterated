@@ -20,8 +20,9 @@ export async function saveProjectRules(text: string): Promise<void> {
   const body = text.endsWith('\n') ? text : `${text}\n`;
   try {
     await bridge.createDirectory('.ablit');
-  } catch {
-    /* exists */
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/restarting|refused|install|disconnected|escape/i.test(msg)) throw err;
   }
   const ok = await bridge.writeFile(PROJECT_RULES_PATH, body);
   if (!ok) throw new Error('Failed to write .ablit/rules.md');

@@ -1,6 +1,6 @@
 import { hunkToPatch, parseUnifiedDiff } from './diffParser';
 import { bridge } from './bridgeClient';
-import { isPathInsideAppRoot, workspaceGate } from './workspaceGuard';
+import { isPathInsideAppRoot, joinRoot, workspaceGate } from './workspaceGuard';
 
 export type GrokEdit = {
   file: string;
@@ -319,6 +319,32 @@ export function parseGrokEdits(text: string, root?: string): GrokEdit[] {
   return filterEscapes([...patchEdits, ...writeEdits], root);
 }
 
+/** Path-headed fences are the write channel — land when the workspace is writable. Auto-accept gates git/shell, not these. */
+export function shouldApplyGrokEditsNow(opts: {
+  autoAccept?: boolean;
+  writeToWorkspace?: boolean;
+}): boolean {
+  return opts.writeToWorkspace === true;
+}
+
+/**
+ * Drop content-fence edits whose file is already targeted by a write tool
+ * (write_file / apply_patch) this same turn. The structured tool channel is
+ * preferred and writes it, so applying the fence too would double-write (or, on
+ * a malformed fence, clobber the tool's result). Paths are compared canonicalized
+ * against the workspace root, so `foo.ts`, `./foo.ts`, and an absolute form match.
+ */
+export function dedupeEditsByToolTargets<T extends { file: string }>(
+  edits: T[],
+  toolTargetFiles: string[],
+  root: string,
+): T[] {
+  const targets = toolTargetFiles.map((f) => (f || '').trim()).filter(Boolean);
+  if (!targets.length) return edits;
+  const canon = new Set(targets.map((f) => joinRoot(root, f)));
+  return edits.filter((e) => !canon.has(joinRoot(root, e.file)));
+}
+
 export async function applyGrokEdits(
   edits: GrokEdit[],
   opts: { autoAccept?: boolean; writeToWorkspace?: boolean; root?: string },
@@ -326,7 +352,7 @@ export async function applyGrokEdits(
   const root = opts.root || bridge.currentRoot;
   const results: GrokApplyResult[] = [];
   const gate = workspaceGate(root, bridge.currentAppRoot);
-  const applyNow = opts.writeToWorkspace === true || opts.autoAccept === true;
+  const applyNow = shouldApplyGrokEditsNow(opts);
 
   for (const edit of edits) {
     if (!gate.ok) {
@@ -351,7 +377,7 @@ export async function applyGrokEdits(
     }
     try {
       if (edit.kind === 'patch') {
-        const ok = await bridge.applyPatch(edit.file, edit.patch || '');
+        const ok = await bridge.applyPatch(edit.file, edit.patch || '', { root });
         if (ok) noteFileApplied(edit.file);
         results.push(
           ok
@@ -359,7 +385,7 @@ export async function applyGrokEdits(
             : { file: edit.file, kind: edit.kind, status: 'error', error: 'apply failed' },
         );
       } else {
-        const ok = await bridge.writeFile(edit.file, edit.content || '');
+        const ok = await bridge.writeFile(edit.file, edit.content || '', { root });
         if (ok) noteFileApplied(edit.file);
         results.push(
           ok

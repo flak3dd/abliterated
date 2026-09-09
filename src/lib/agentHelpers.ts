@@ -384,6 +384,9 @@ export function looksBuildIntent(userText: string): boolean {
   if (!t) return false;
   if (looksPromptOnlyRequest(t)) return false;
   if (/\bfile structure\b|\bfolder structure\b|\bproject skeleton\b|\bscaffold\b/.test(t)) return true;
+  // Explicit "build" as the leading imperative enters the build scope at any length
+  // (bare "build", "build the app", "please build a crawler"). Prompt-only guarded above.
+  if (/^\s*(?:please\s+|now\s+|can\s+you\s+|could\s+you\s+|pls\s+)?build\b/.test(t)) return true;
   // Clear build/implement asks (incl. short "build a web crawler") — not length-gated at 40.
   if (/\b(build|implement|bootstrap|wire\s+up|set\s+up|setup)\b/.test(t) && t.length >= 12) return true;
   return /\b(create|add|new)\b.{0,48}\b(file|folder|dir(?:ectory)?|module|app|feature|project|structure|layout|tree|skeleton)\b/.test(
@@ -399,15 +402,13 @@ export function needsBuildProtocol(userText: string): boolean {
 
 /** Short reminder; full Work rules live in SYSTEM_PROMPT. */
 export const BUILD_PROCESS_SECTION =
-  '## Build mode — LOCKED (implementation run)\n' +
-  'Abliterated Loop this turn: classify → gather → act → verify → ship → stop (CONTENT executes; reasoning never does).\n' +
-  '1. Classify job ticket + A–G; if Thought is on: Goal / Inspect / step # — why — success in reasoning. No code there.\n' +
-  '2. Call `todo` with 3–12 items (scaffold first if new files/folders).\n' +
-  '3. Explore with list_dir/glob/grep/semantic_search/read_file — do not invent listings.\n' +
-  '4. Emit real ```diff or // relative/path fences in CONTENT and `todo` merge=true to tick items.\n' +
-  '5. After a meaningful change, one scoped verify ```bash fence (verify/ship gate).\n' +
-  'A ToDo or essay with no diffs is a FAILED build. Do not stop at the list. Do not spawn other coding CLIs.\n' +
-  'HARD LOCK: never write placeholder/stub/"implement here" scripts. Full-length working code only. Write every file into the connected working directory (write_file or path-headed fences). Do not stop until the product works and tests have been run.';
+  '## Build scope — LOCKED (staged implementation run)\n' +
+  'A "build" request runs three ORDERED phases in this scope. Do not ship until all three are done. Reasoning is outline only (Goal / Inspect / step — why — success); CONTENT executes, reasoning never does.\n' +
+  'PHASE 1 — SCAFFOLD (complete up front): map the full file/folder tree, then create EVERY file and directory the product needs as the initial skeleton — real paths via write_file or `// relative/path` fences. Land the whole structure before filling any file. Explore with list_dir/glob/grep/semantic_search/read_file first — do not invent listings. Call `todo` with 3–12 items covering scaffold + each file.\n' +
+  'PHASE 2 — BUILD OUT (comprehensive): implement every scaffolded file with full working code via real ```diff or `// relative/path` fences in CONTENT (or write_file). Fill each file completely; `todo` merge=true to tick items as files finish. Never leave a scaffolded file empty or stubbed.\n' +
+  'PHASE 3 — VERIFY (proven results): after the buildout, run one scoped verify — the `verify` tool or a ```bash fence with tsc/lint/tests — confirm it passes, then report the verified result.\n' +
+  'A ToDo or essay with no scaffolded files + diffs is a FAILED build. Do not stop at the list. Do not spawn other coding CLIs.\n' +
+  'HARD LOCK: never write placeholder/stub/"implement here" scripts. Full-length working code only. Write every file into the connected working directory. Do not stop until the structure is complete, every file is built out, and verification has run.';
 
 export function buildThoughtModeNudge(): string {
   return (
@@ -548,17 +549,19 @@ export function buildBuildModeNudge(): string {
 
 export function buildBuildModeTodoNudge(): string {
   return (
-    'Build process: call `todo` with 3–12 items, then scaffold (if needed) and implement with ```diff or // path fences. Do not only reason or only list tasks.'
+    'Build scope Phase 1 (scaffold): call `todo` with 3–12 items, then create the COMPLETE file/folder skeleton first — ' +
+    'every file and directory the product needs, as real paths (write_file or // relative/path fences). ' +
+    'Land the whole structure before filling any file. Do not only reason or only list tasks.'
   );
 }
 
 export function buildBuildModeImplementNudge(): string {
   return (
-    'Build process: you wrote a ToDo list but did not emit a real ```diff / // path fence OR call write_file. ' +
-    'That is not a build. Now: (1) if new structure is required, create the skeleton first; ' +
-    '(2) implement the next unchecked ToDo with a real ```diff or // relative/path fence in content, OR call write_file; ' +
-    '(3) call `todo` with merge=true to tick finished items. Do not reply with another list only. ' +
-    'NEVER emit placeholder/stub/"implement here" code. Write the full working implementation and verify it.'
+    'Build scope Phase 2 (build out): you scaffolded or listed but did not emit a real ```diff / // path fence OR call write_file. ' +
+    'That is not a build. Now: (1) if the file skeleton is not complete, finish scaffolding every needed file first; ' +
+    '(2) comprehensively implement each scaffolded file with full working code via a real ```diff or // relative/path fence in content, OR call write_file; ' +
+    '(3) call `todo` with merge=true to tick finished files. Do not reply with another list only. ' +
+    'NEVER emit placeholder/stub/"implement here" code. Write the full working implementation, then verify it (Phase 3).'
   );
 }
 

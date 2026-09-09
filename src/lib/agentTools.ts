@@ -262,7 +262,7 @@ export async function executeAgentTool(
     const preview = file + '\n---\n' + content.slice(0, 4000);
     if (!bridge.connected) return disconnected(tool, preview, autoAcceptEdits, mode);
     try {
-      await bridge.writeFile(file, content);
+      await bridge.writeFile(file, content, { root: opts.workspaceRoot || undefined });
       return ok(tool, 'wrote ' + file + ' (' + content.length + ' chars)');
     } catch (e) {
       return err(tool, e instanceof Error ? e.message : String(e));

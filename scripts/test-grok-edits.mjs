@@ -38,7 +38,30 @@ const {
   parseGrokEdits,
   resolveCodeFenceWrite,
   hasNonShellCodeFences,
+  shouldApplyGrokEditsNow,
+  applyGrokEdits,
+  dedupeEditsByToolTargets,
 } = createRequire(import.meta.url)(path.join(outDir, 'lib/grokLayer.js'));
+
+// dedupeEditsByToolTargets: content fences already covered by a write tool this
+// turn are dropped (prefer the structured tool channel; no double-write).
+{
+  const root = '/Users/me/project';
+  const edits = [
+    { file: 'src/a.ts', kind: 'write' },
+    { file: './src/b.ts', kind: 'write' },
+    { file: 'src/c.ts', kind: 'write' },
+  ];
+  // Tool targets in mixed forms must all match canonically.
+  const kept = dedupeEditsByToolTargets(edits, ['src/a.ts', '/Users/me/project/src/b.ts'], root);
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].file, 'src/c.ts');
+  // No tool targets → nothing dropped.
+  assert.equal(dedupeEditsByToolTargets(edits, [], root).length, 3);
+  assert.equal(dedupeEditsByToolTargets(edits, ['', '   '], root).length, 3);
+  // A tool target that matches nothing leaves edits intact.
+  assert.equal(dedupeEditsByToolTargets(edits, ['src/z.ts'], root).length, 3);
+}
 
 const whole = parseGrokEdits('```ts\n// src/hello.ts\nexport const n = 1;\n```', '/Users/me/project');
 assert.equal(whole.length, 1);
@@ -78,6 +101,19 @@ assert.ok(String(resolved?.body).includes('export const ping'));
 assert.equal(resolveCodeFenceWrite('ts', 'export const x = 1\n'), null);
 assert.equal(hasNonShellCodeFences('```ts\nconst x = 1\n```'), true);
 assert.equal(hasNonShellCodeFences('```bash\necho hi\n```'), false);
+
+assert.equal(shouldApplyGrokEditsNow({ autoAccept: false, writeToWorkspace: true }), true);
+assert.equal(shouldApplyGrokEditsNow({ autoAccept: true, writeToWorkspace: false }), false);
+assert.equal(shouldApplyGrokEditsNow({ autoAccept: true, writeToWorkspace: true }), true);
+assert.equal(shouldApplyGrokEditsNow({}), false);
+
+const pendingApply = await applyGrokEdits(
+  [{ file: 'src/hello.ts', kind: 'write', content: 'export const n = 1\n' }],
+  { autoAccept: false, writeToWorkspace: false, root: '/Users/me/project' },
+);
+assert.equal(pendingApply.length, 1);
+assert.equal(pendingApply[0].status, 'pending');
+assert.equal(pendingApply[0].file, 'src/hello.ts');
 
 fs.rmSync(outDir, { recursive: true, force: true });
 console.log('test-grok-edits: ok');

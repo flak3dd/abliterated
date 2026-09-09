@@ -6,6 +6,7 @@ import { filterPinnedProjectMemory } from "./projectRules";
 import { formatSessionMemory, mempalaceOpts } from "./mempalace";
 import { bridge } from "./bridgeClient";
 import { applyGrokEdits, parseGrokEdits } from "./grokLayer";
+import { enqueuePendingEdits } from "./applyInbox";
 import { buildJobCompletenessSystemBlock } from "./deepenComplete";
 import {
   buildLargeJobNudge,
@@ -25,6 +26,7 @@ import {
   liftTodoListToContent,
   parseTodoBullets,
   shouldApplyBuildProcess,
+  filterPlanModeTools,
 } from "./agentHelpers";
 import { buildProveImproveNudge, shouldProveImproveNudge } from './proveImprove';
 import {
@@ -264,7 +266,10 @@ async function runJob(initial: Job, settings: ClientSettings) {
   }
 
   const turnCap = clampMaxAgentTurns(settings.maxAgentTurns);
-  const enabledTools: ToolType[] = [...DEFAULT_ENABLED_TOOLS];
+  const enabledTools: ToolType[] =
+    settings.planModeEnabled === true
+      ? filterPlanModeTools(DEFAULT_ENABLED_TOOLS)
+      : [...DEFAULT_ENABLED_TOOLS];
   const active = resolveActiveSettings(settings);
 
   const large = looksLargeJob(job.prompt);
@@ -536,17 +541,30 @@ async function runJob(initial: Job, settings: ClientSettings) {
         }
       }
 
-      if (bridge.connected) {
+      if (bridge.connected && settings.planModeEnabled !== true) {
         const source = assistantText || assistantReasoning;
-        const edits = parseGrokEdits(source, workspaceRoot);
+        // Fast path: skip heavy parsing if no code blocks or diffs exist
+        if (!source.includes('```') && !source.includes('@@')) {
+          // no edits to apply
+        } else {
+          const edits = parseGrokEdits(source, workspaceRoot);
         if (edits.length) {
           const applied = await applyGrokEdits(edits, {
             writeToWorkspace: true,
-            autoAccept: true,
+            autoAccept: settings.autoAcceptEdits === true,
             root: effectiveRoot,
           });
+          const pending = edits.filter((_, i) => applied[i]?.status === 'pending');
+          if (pending.length) enqueuePendingEdits(pending, `job:${job.id}`);
           const n = applied.filter((r) => r.status === 'ok').length;
-          job = appendLog(job, `wrote ${n}/${applied.length} file(s) to workspace`);
+          const p = applied.filter((r) => r.status === 'pending').length;
+          job = appendLog(
+            job,
+            p
+              ? `wrote ${n}/${applied.length} file(s); ${p} pending in Apply inbox (auto-accept off)`
+              : `wrote ${n}/${applied.length} file(s) to workspace`,
+          );
+        }
         }
       }
 
@@ -674,9 +692,68 @@ async function runJob(initial: Job, settings: ClientSettings) {
         continue;
       }
 
+      // Split tools into safe parallel tools and gated sequential tools
+      const gatedToolNames = new Set(['git_commit', 'create_pr', 'checkpoint_restore', 'shell', 'verify']);
+      const parallelTools: typeof toolCalls = [];
+      const sequentialTools: typeof toolCalls = [];
+
       for (const tc of toolCalls) {
-        if (ac.signal.aborted) throw new DOMException("Aborted", "AbortError");
         toolsUsed.push(tc.name);
+        if (gatedToolNames.has(tc.name)) {
+          sequentialTools.push(tc);
+        } else {
+          parallelTools.push(tc);
+        }
+      }
+
+      // Execute safe tools in parallel first
+      if (parallelTools.length > 0) {
+        job = appendLog(job, `executing ${parallelTools.length} tools in parallel`);
+
+        const results = await Promise.all(
+          parallelTools.map(async (tc) => {
+            if (ac.signal.aborted) throw new DOMException("Aborted", "AbortError");
+            job = appendLog(job, `tool ${tc.name} ${JSON.stringify(tc.arguments).slice(0, 200)}`);
+            const exec = await executeAgentTool(tc, {
+              enabledTools,
+              autoAcceptEdits: settings.autoAcceptEdits,
+              autoRunShell: settings.autoRunShell,
+              settings,
+              workspaceRoot: effectiveRoot,
+              mode: "headless",
+              checkpointNamespace: `job ${job.id}`,
+              executeMcpTool: executeMcpToolCall,
+              todoItems: (job.todos || []).map((text) => {
+                const m = text.match(/^\[([xX ])\]\s*(.*)$/);
+                if (m) return { text: (m[2] || '').trim() || text, done: m[1].toLowerCase() === 'x' };
+                return { text, done: false };
+              }),
+              onTodos: (items) => {
+                job = persist({
+                  ...job,
+                  todos: items.map((t) => (t.done ? `[x] ${t.text}` : t.text)),
+                });
+              },
+            });
+            return { tc, exec };
+          })
+        );
+
+        // Process results
+        for (const { tc, exec } of results) {
+          const clip = exec.content.slice(0, 500);
+          job = appendLog(job, `${tc.name} → ${exec.status}: ${clip}${exec.content.length > 500 ? "…" : ""}`);
+          history.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            content: exec.content.slice(0, 48_000),
+          });
+        }
+      }
+
+      // Execute gated tools sequentially
+      for (const tc of sequentialTools) {
+        if (ac.signal.aborted) throw new DOMException("Aborted", "AbortError");
         job = appendLog(job, `tool ${tc.name} ${JSON.stringify(tc.arguments).slice(0, 200)}`);
         const exec = await executeAgentTool(tc, {
           enabledTools,

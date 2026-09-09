@@ -147,19 +147,19 @@ function addendum(opts: {
   if (opts.tier === 'none') {
     lines.push(
       'Native function tools are OFF for this checkpoint. Do not emit tool-call JSON, ```json tool_calls fences, or fake tool results.',
-      'Write every file into the connected working directory as ```diff or a // relative/path fence in CONTENT. Thought is prose only.',
+      'Write every file this turn as ```diff or a // relative/path fence in CONTENT — the client applies them. Thought is prose only.',
       'If you need a file you do not have, name the path instead of inventing its contents. Chat-only source is a failed build.',
     );
   } else if (opts.tier === 'core') {
     lines.push(
       'Compact tool set only: ' + CORE_AGENT_TOOLS.join(', ') + '.',
       'One tool at a time via the API tools channel. Never paste tool JSON in markdown fences.',
-      'CODE ONLY IN CONTENT via write_file or ```diff / // path — files must land in the working directory. Never in thought.',
+      'CODE ONLY IN CONTENT via write_file or ```diff / // path. Both land in the working directory this turn. Never in thought.',
     );
   } else {
     lines.push(
       'Full native tools are available. Call write_file or emit path-headed diffs via the API tools channel — never paste tool JSON in markdown.',
-      'CODE ONLY IN CONTENT via write_file or ```diff / // path — files must land in the working directory. Never in thought.',
+      'CODE ONLY IN CONTENT via write_file or ```diff / // path. Both land in the working directory this turn. Never in thought.',
     );
   }
   if (opts.thinking) {

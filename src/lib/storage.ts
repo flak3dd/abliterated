@@ -579,6 +579,10 @@ export function wipeAll(): void {
   localStorage.removeItem(KEYS.jobs);
   localStorage.removeItem(KEYS.workspace);
   localStorage.removeItem(KEYS.agentRuns);
+  localStorage.removeItem('ablit_apply_inbox');
+  void import('./applyInbox')
+    .then((m) => m.clearApplyInbox())
+    .catch(() => undefined);
   void wipeDurableStore();
 }
 

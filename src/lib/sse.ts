@@ -9,6 +9,7 @@ import {
   estimateTokensFromText,
   isBuiltinEndpoint,
   recordBuiltinUsage,
+  refreshBuiltinWallet,
 } from './builtinTokens';
 import {
   applyCompletionChunk,
@@ -725,6 +726,7 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
 
   const usingBuiltin = isBuiltinEndpoint(active);
   if (usingBuiltin) {
+    await refreshBuiltinWallet(settings);
     assertBuiltinQuota(settings);
   }
 

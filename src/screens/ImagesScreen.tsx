@@ -75,7 +75,6 @@ import {
   PONY_IMAGE_MODEL,
   QWEN_EDIT_IMAGE_MODEL,
   QWEN_IMAGE_MODEL,
-  SPARK_CHAT_MODEL,
   UNCENSORED_IMAGE_MODEL,
   resolveSparkImageModel,
   sparkChatSettingsPatch,
@@ -98,6 +97,66 @@ const BATCH_NS = [1, 2, 3, 4] as const;
 const PROMPT_HISTORY_KEY = 'ablit_image_prompt_history';
 const PROMPT_HISTORY_MAX = 20;
 const MODEL_CUSTOM = '__custom__';
+
+/** Job chips only select a mode. The primary button is what actually generates. */
+const IMAGE_JOBS = {
+  quality: {
+    chip: 'New still',
+    title: 'New still — quality',
+    intent: 'Creates a new photoreal image from the prompt. Does not edit a photo you drop in.',
+    action: 'Generate quality still',
+  },
+  fast: {
+    chip: 'Fast still',
+    title: 'New still — fast',
+    intent: 'Creates a new image quickly (Krea Turbo). Lower fidelity than quality.',
+    action: 'Generate fast still',
+  },
+  draft: {
+    chip: 'Draft sketch',
+    title: 'New still — draft',
+    intent: 'Creates a quick NSFW-capable sketch (Z-Image Turbo). For layout, not finals.',
+    action: 'Generate draft sketch',
+  },
+  instruction: {
+    chip: 'From text',
+    title: 'New still — instruction',
+    intent: 'Creates a new image from a written instruction (Qwen-Image). No reference photo.',
+    action: 'Generate from text',
+  },
+  edit: {
+    chip: 'Edit photo',
+    title: 'Edit an existing photo',
+    intent: 'Changes the dropped photo using your instruction. Requires a reference image.',
+    action: 'Apply edit to photo',
+  },
+  faceswap: {
+    chip: 'Face onto photo',
+    title: 'Put this face on a photo',
+    intent: 'Copies the identity face onto the target scene. Needs both images. Prompt is optional.',
+    action: 'Put face on photo',
+  },
+  id: {
+    chip: 'ID document',
+    title: 'ID document',
+    intent: 'Works on a real scan: clean or swap the portrait. Does not invent a new identity.',
+    action: 'Run ID pipeline',
+  },
+  klein: {
+    chip: 'Klein still',
+    title: 'New still — Klein 9B',
+    intent: 'Creates a new image with FLUX.2 Klein. Gated weights; no-op if missing.',
+    action: 'Generate Klein still',
+  },
+  anime: {
+    chip: 'Anime still',
+    title: 'New still — anime',
+    intent: 'Creates a new illustration (Illustrious / Pony zoo). Not the photoreal quality path.',
+    action: 'Generate anime still',
+  },
+} as const;
+
+type ImageJobId = keyof typeof IMAGE_JOBS;
 
 const PROMPT_SUGGESTIONS = [
   'Futuristic dark cybernetic terminal with neon blue accents',
@@ -1128,12 +1187,6 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
     window.setTimeout(() => void softHealthCheck({ ...settings, ...p }), 50);
   };
 
-  const applySparkQwen = () => {
-    const p = sparkChatSettingsPatch(settings);
-    patch(p);
-    toast.success('Chat → Spark Qwen', `${p.sparkBaseUrl} · ${SPARK_CHAT_MODEL}`);
-  };
-
   const copySparkInstall = async () => {
     const cmd = sparkPushCommand(settings.sparkSshAlias);
     try {
@@ -1342,6 +1395,24 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
   const isEditPath = resolvedImageModel === QWEN_EDIT_IMAGE_MODEL;
   const isFaceswapPath = isEditPath && editKind === 'faceswap';
   const isIdPath = isEditPath && editKind === 'id';
+  const imageJobId: ImageJobId = isIdPath
+    ? 'id'
+    : isFaceswapPath
+      ? 'faceswap'
+      : isEditPath
+        ? 'edit'
+        : resolvedImageModel === FAST_IMAGE_MODEL
+          ? 'fast'
+          : resolvedImageModel === DRAFT_IMAGE_MODEL
+            ? 'draft'
+            : resolvedImageModel === QWEN_IMAGE_MODEL
+              ? 'instruction'
+              : resolvedImageModel === KLEIN_IMAGE_MODEL
+                ? 'klein'
+                : resolvedImageModel === ANIME_IMAGE_MODEL || resolvedImageModel === PONY_IMAGE_MODEL
+                  ? 'anime'
+                  : 'quality';
+  const imageJob = IMAGE_JOBS[imageJobId];
   const isStubPath =
     resolvedImageModel === DRAFT_IMAGE_MODEL ||
     resolvedImageModel === FAST_IMAGE_MODEL ||
@@ -1405,7 +1476,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
           {healthPill}
         </div>
         <p className="page-header-sub">
-          Prompt to local endpoint · Cmd/Ctrl+Enter generate · Esc closes zoom · G focuses prompt
+          Pick a job, then run it with the green button. Cmd/Ctrl+Enter runs the same action · Esc closes zoom · G focuses prompt
         </p>
       </header>
 
@@ -1485,66 +1556,76 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         </p>
       ) : null}
 
-      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 font-mono text-[10px] uppercase text-muted">Models</span>
-        <button type="button" className={chipOn(resolvedImageModel === UNCENSORED_IMAGE_MODEL)} onClick={applyQuality} title={xaiOn ? (settings.xaiImageModel || XAI_IMAGE_MODEL) : UNCENSORED_IMAGE_MODEL}>
-          {xaiOn ? 'Generate' : 'Quality'}
+      <div className="mb-1.5">
+        <div className="mb-1 flex flex-wrap items-baseline gap-2">
+          <span className="font-mono text-[10px] uppercase text-muted">Job</span>
+          <span className="font-mono text-[10px] normal-case text-zinc-500">selects what the green button will do — does not generate</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+        <button type="button" className={chipOn(imageJobId === 'quality')} onClick={applyQuality} title={IMAGE_JOBS.quality.intent} aria-label={`${IMAGE_JOBS.quality.chip}. ${IMAGE_JOBS.quality.intent}`}>
+          {IMAGE_JOBS.quality.chip}
         </button>
         {!xaiOn ? (
           <>
-        <button type="button" className={chipOn(resolvedImageModel === FAST_IMAGE_MODEL, { muted: !modelAvailable(FAST_IMAGE_MODEL) })} onClick={applyFast} title={modelAvailable(FAST_IMAGE_MODEL) ? FAST_IMAGE_MODEL : `${FAST_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(FAST_IMAGE_MODEL)}>
-          Fast
+        <button type="button" className={chipOn(imageJobId === 'fast', { muted: !modelAvailable(FAST_IMAGE_MODEL) })} onClick={applyFast} title={modelAvailable(FAST_IMAGE_MODEL) ? IMAGE_JOBS.fast.intent : `${FAST_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(FAST_IMAGE_MODEL)} aria-label={IMAGE_JOBS.fast.intent}>
+          {IMAGE_JOBS.fast.chip}
         </button>
-        <button type="button" className={chipOn(resolvedImageModel === DRAFT_IMAGE_MODEL, { muted: !modelAvailable(DRAFT_IMAGE_MODEL) })} onClick={applyDraft} title={modelAvailable(DRAFT_IMAGE_MODEL) ? DRAFT_IMAGE_MODEL : `${DRAFT_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(DRAFT_IMAGE_MODEL)}>
-          Draft
+        <button type="button" className={chipOn(imageJobId === 'draft', { muted: !modelAvailable(DRAFT_IMAGE_MODEL) })} onClick={applyDraft} title={modelAvailable(DRAFT_IMAGE_MODEL) ? IMAGE_JOBS.draft.intent : `${DRAFT_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(DRAFT_IMAGE_MODEL)} aria-label={IMAGE_JOBS.draft.intent}>
+          {IMAGE_JOBS.draft.chip}
         </button>
-        <button type="button" className={chipOn(resolvedImageModel === QWEN_IMAGE_MODEL, { muted: !modelAvailable(QWEN_IMAGE_MODEL) })} onClick={applyInstruction} title={modelAvailable(QWEN_IMAGE_MODEL) ? QWEN_IMAGE_MODEL : `${QWEN_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(QWEN_IMAGE_MODEL)}>
-          Instruction
+        <button type="button" className={chipOn(imageJobId === 'instruction', { muted: !modelAvailable(QWEN_IMAGE_MODEL) })} onClick={applyInstruction} title={modelAvailable(QWEN_IMAGE_MODEL) ? IMAGE_JOBS.instruction.intent : `${QWEN_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(QWEN_IMAGE_MODEL)} aria-label={IMAGE_JOBS.instruction.intent}>
+          {IMAGE_JOBS.instruction.chip}
         </button>
           </>
         ) : null}
-        <button type="button" className={chipOn(isEditPath && !isFaceswapPath && !isIdPath, { muted: !modelAvailable(QWEN_EDIT_IMAGE_MODEL) })} onClick={applyEdit} title={xaiOn ? 'Edit via grok-imagine-image-2.0' : modelAvailable(QWEN_EDIT_IMAGE_MODEL) ? QWEN_EDIT_IMAGE_MODEL : `${QWEN_EDIT_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(QWEN_EDIT_IMAGE_MODEL)}>
-          Edit
+        <button type="button" className={chipOn(imageJobId === 'edit', { muted: !modelAvailable(QWEN_EDIT_IMAGE_MODEL) })} onClick={applyEdit} title={IMAGE_JOBS.edit.intent} aria-disabled={!modelAvailable(QWEN_EDIT_IMAGE_MODEL)} aria-label={IMAGE_JOBS.edit.intent}>
+          {IMAGE_JOBS.edit.chip}
         </button>
-        <button type="button" className={chipOn(isFaceswapPath, { muted: !modelAvailable(QWEN_EDIT_IMAGE_MODEL) })} onClick={applyFaceswap} title={xaiOn ? 'ID faceswap via xAI Imagine' : modelAvailable(QWEN_EDIT_IMAGE_MODEL) ? 'ID faceswap via Qwen-Edit multi-ref' : `${QWEN_EDIT_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(QWEN_EDIT_IMAGE_MODEL)}>
-          <UserRound size={10} /> ID swap
+        <button type="button" className={chipOn(imageJobId === 'faceswap', { muted: !modelAvailable(QWEN_EDIT_IMAGE_MODEL) })} onClick={applyFaceswap} title={IMAGE_JOBS.faceswap.intent} aria-disabled={!modelAvailable(QWEN_EDIT_IMAGE_MODEL)} aria-label={IMAGE_JOBS.faceswap.intent}>
+          <UserRound size={10} /> {IMAGE_JOBS.faceswap.chip}
         </button>
-        <button type="button" className={chipOn(isIdPath, { muted: !modelAvailable(QWEN_EDIT_IMAGE_MODEL) })} onClick={applyIdSection} title={xaiOn ? 'ID document via xAI Imagine' : modelAvailable(QWEN_EDIT_IMAGE_MODEL) ? 'ID document: clean + portrait swap' : `${QWEN_EDIT_IMAGE_MODEL} (weights missing)`} aria-disabled={!modelAvailable(QWEN_EDIT_IMAGE_MODEL)}>
-          <CreditCard size={10} /> ID
+        <button type="button" className={chipOn(imageJobId === 'id', { muted: !modelAvailable(QWEN_EDIT_IMAGE_MODEL) })} onClick={applyIdSection} title={IMAGE_JOBS.id.intent} aria-disabled={!modelAvailable(QWEN_EDIT_IMAGE_MODEL)} aria-label={IMAGE_JOBS.id.intent}>
+          <CreditCard size={10} /> {IMAGE_JOBS.id.chip}
         </button>
         {!xaiOn ? (
           <>
-        <button type="button" className={chipOn(resolvedImageModel === KLEIN_IMAGE_MODEL, { muted: !modelAvailable(KLEIN_IMAGE_MODEL) })} onClick={applyKlein} title={modelAvailable(KLEIN_IMAGE_MODEL) ? KLEIN_IMAGE_MODEL : `${KLEIN_IMAGE_MODEL} (gated / weights missing)`} aria-disabled={!modelAvailable(KLEIN_IMAGE_MODEL)}>
-          Klein
+        <button type="button" className={chipOn(imageJobId === 'klein', { muted: !modelAvailable(KLEIN_IMAGE_MODEL) })} onClick={applyKlein} title={modelAvailable(KLEIN_IMAGE_MODEL) ? IMAGE_JOBS.klein.intent : `${KLEIN_IMAGE_MODEL} (gated / weights missing)`} aria-disabled={!modelAvailable(KLEIN_IMAGE_MODEL)} aria-label={IMAGE_JOBS.klein.intent}>
+          {IMAGE_JOBS.klein.chip}
         </button>
         <button
           type="button"
-          className={chipOn(resolvedImageModel === ANIME_IMAGE_MODEL || resolvedImageModel === PONY_IMAGE_MODEL, { muted: !(modelAvailable(ANIME_IMAGE_MODEL) || modelAvailable(PONY_IMAGE_MODEL)) })}
+          className={chipOn(imageJobId === 'anime', { muted: !(modelAvailable(ANIME_IMAGE_MODEL) || modelAvailable(PONY_IMAGE_MODEL)) })}
           onClick={applyAnime}
-          title={(modelAvailable(ANIME_IMAGE_MODEL) || modelAvailable(PONY_IMAGE_MODEL)) ? `${ANIME_IMAGE_MODEL} / ${PONY_IMAGE_MODEL}` : 'Anime zoo weights missing'}
+          title={(modelAvailable(ANIME_IMAGE_MODEL) || modelAvailable(PONY_IMAGE_MODEL)) ? IMAGE_JOBS.anime.intent : 'Anime zoo weights missing'}
           aria-disabled={!(modelAvailable(ANIME_IMAGE_MODEL) || modelAvailable(PONY_IMAGE_MODEL))}
+          aria-label={IMAGE_JOBS.anime.intent}
         >
-          Anime
+          {IMAGE_JOBS.anime.chip}
         </button>
           </>
         ) : null}
+        </div>
       </div>
 
-      <div className="mb-3 flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 font-mono text-[10px] uppercase text-muted">Connection</span>
-        <button type="button" className={chipOn(!xaiOn)} onClick={() => patch({ imageBackend: 'spark', imageGenEnabled: true })}>
-          Spark
+      <div className="mb-3">
+        <div className="mb-1 flex flex-wrap items-baseline gap-2">
+          <span className="font-mono text-[10px] uppercase text-muted">Where it runs</span>
+          <span className="font-mono text-[10px] normal-case text-zinc-500">backend only — not a generate action</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+        <button type="button" className={chipOn(!xaiOn)} onClick={() => patch({ imageBackend: 'spark', imageGenEnabled: true })} title="Run jobs on the local Spark GPU bridge">
+          Spark GPU
         </button>
-        <button type="button" className={chipOn(xaiOn)} onClick={() => patch(xaiImageSettingsPatch(settings))}>
-          xAI Imagine
+        <button type="button" className={chipOn(xaiOn)} onClick={() => patch(xaiImageSettingsPatch(settings))} title="Run jobs on xAI Grok Imagine (cloud)">
+          xAI cloud
         </button>
-        <button type="button" className="chip hover:border-sky-500/40 hover:text-sky-200" onClick={applySparkLan}>
-          Use Spark LAN
+        <button type="button" className="chip hover:border-sky-500/40 hover:text-sky-200" onClick={applySparkLan} title="Point the IDE at Spark on the LAN">
+          Point at Spark LAN
         </button>
         <button
           type="button"
           className="chip hover:border-sky-500/40 hover:text-sky-200"
-          title="ssh alias + spark_ctl.sh start"
+          title="SSH to Spark and start spark_ctl.sh (does not generate an image)"
           onClick={() => {
             const alias = (settings.sparkSshAlias || '').trim();
             if (!alias) {
@@ -1557,32 +1638,25 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
             });
           }}
         >
-          Start Spark image
+          Start Spark service
         </button>
-        <button
-          type="button"
-          className={chipOn(settings.inferenceProvider === 'dgx-spark' && settings.sparkModel === SPARK_CHAT_MODEL)}
-          onClick={applySparkQwen}
-          title={SPARK_CHAT_MODEL}
-        >
-          Qwen chat
+        <button type="button" className="chip hover:border-sky-500/40 hover:text-sky-200" onClick={openBridge} title="Open Endpoint settings for URL and token">
+          Endpoint settings
         </button>
-        <button type="button" className="chip hover:border-sky-500/40 hover:text-sky-200" onClick={openBridge}>
-          Open bridge
-        </button>
-        <button type="button" disabled={busy} className="chip hover:border-sky-500/40 hover:text-sky-200" onClick={() => void testEndpoint()}>
-          Test
+        <button type="button" disabled={busy} className="chip hover:border-sky-500/40 hover:text-sky-200" onClick={() => void testEndpoint()} title="Ping the image API. Does not create an image.">
+          Ping endpoint
         </button>
         {bridgeOffline ? (
           <>
-            <button type="button" className="chip hover:border-amber-500/40 hover:text-amber-200" onClick={() => void startTunnelAction()}>
-              Start tunnel
+            <button type="button" className="chip hover:border-amber-500/40 hover:text-amber-200" onClick={() => void startTunnelAction()} title="Open NVIDIA Sync / SSH tunnel to :7860">
+              Start :7860 tunnel
             </button>
-            <button type="button" className="chip hover:border-amber-500/40 hover:text-amber-200" onClick={() => void copyStartCommand()}>
-              Copy start
+            <button type="button" className="chip hover:border-amber-500/40 hover:text-amber-200" onClick={() => void copyStartCommand()} title="Copy the Spark start command">
+              Copy Spark start cmd
             </button>
           </>
         ) : null}
+        </div>
       </div>
 
       <div className="section-card mb-3 max-w-3xl">
@@ -1726,34 +1800,55 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                 type="button"
                 className="btn-primary"
                 disabled={busy || !refImageB64}
+                title="Edit the front scan while keeping printed text and graphics"
                 onClick={() => void runIdAlteration()}
               >
-                Run alteration
+                Alter front (keep text)
               </button>
               <button
                 type="button"
                 className="btn-primary"
                 disabled={busy || !refImageB64}
+                title="Build a licence + selfie pair from the front scan"
                 onClick={() => void runIdLicenceSelfie()}
               >
-                Run licence selfie
+                Build licence selfie pair
               </button>
-              <button type="button" className="btn-ghost" disabled={busy || !refImageB64} onClick={() => void runIdKind('clean')}>
-                Clean front
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={busy || !refImageB64}
+                title="Clean the front scan only"
+                onClick={() => void runIdKind('clean')}
+              >
+                Clean front scan
               </button>
               <button
                 type="button"
                 className="btn-primary"
                 disabled={busy || !refImageB64 || !idImageB64}
+                title="Replace the photo window with the headshot. Printed text stays."
                 onClick={() => void runIdKind('portrait')}
               >
-                Swap portrait
+                Replace ID portrait
               </button>
-              <button type="button" className="btn-ghost" disabled={busy || !backImageB64} onClick={() => void runIdKind('back')}>
-                Clean back
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={busy || !backImageB64}
+                title="Clean the back scan only"
+                onClick={() => void runIdKind('back')}
+              >
+                Clean back scan
               </button>
-              <button type="button" className="btn-ghost" disabled={busy || !refImageB64} onClick={() => void runIdPipeline()}>
-                Run pipeline
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={busy || !refImageB64}
+                title="Run clean front, portrait swap if a headshot is set, then clean back if present"
+                onClick={() => void runIdPipeline()}
+              >
+                Run all ID steps
               </button>
             </div>
           </div>
@@ -1763,7 +1858,8 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
       <div className="grid gap-4 xl:grid-cols-2">
         <div className="space-y-3">
           <div className="section-card" ref={generateCardRef}>
-            <div className="section-card-title">Generate</div>
+            <div className="section-card-title">{imageJob.title}</div>
+            <p className="section-card-hint">{imageJob.intent}</p>
             <div className="section-card-body">
               {isEditPath && !isIdPath ? (
                 isFaceswapPath ? (
@@ -1998,6 +2094,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                     else void generate();
                   }}
                   className="btn-primary"
+                  aria-label={imageJob.action}
                   title={
                     isIdPath && !refImageB64
                       ? 'Add a front scan first'
@@ -2005,34 +2102,30 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                         ? 'Add identity + target images first'
                         : isEditPath && !refImageB64
                           ? 'Add a reference image first'
-                          : undefined
+                          : imageJob.intent
                   }
                 >
                   {busy ? (
                     <span className="inline-flex items-center gap-1.5">
-                      <Loader2 size={12} className="spin-slow" /> Generating…
+                      <Loader2 size={12} className="spin-slow" /> Running {imageJob.chip.toLowerCase()}…
                       {progressLabel ? ` ${progressLabel}` : ''}
                     </span>
-                  ) : isIdPath ? (
-                    'Run pipeline'
-                  ) : isFaceswapPath ? (
-                    'Swap ID'
-                  ) : isEditPath ? (
-                    'Edit'
                   ) : (
-                    'Generate'
+                    imageJob.action
                   )}
                 </button>
                 {busy ? (
-                  <button type="button" onClick={cancelGenerate} className="btn-danger">Stop</button>
+                  <button type="button" onClick={cancelGenerate} className="btn-danger" title="Cancel this job">Stop this job</button>
                 ) : (
                   <>
-                  <button type="button" disabled={busy} onClick={() => void testEndpoint()} className="btn-ghost">Test</button>
+                  <button type="button" disabled={busy} onClick={() => void testEndpoint()} className="btn-ghost" title="Ping the image API. Does not create an image.">
+                    Ping endpoint
+                  </button>
                   <button
                     type="button"
                     disabled={busy}
                     className="btn-ghost"
-                    title="Run a tiny generate against the active backend (Spark, or xAI if Spark is down and a key is set)"
+                    title="Create one tiny image to prove the backend works. Not the quality job."
                     onClick={() => {
                       void (async () => {
                         setBusy(true);
@@ -2041,18 +2134,18 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                           const r = await generateTestImage(settings);
                           setB64(r.b64 || null);
                           setRemoteUrl(r.url || null);
-                          toast.success('Test generate ok');
+                          toast.success('Smoke generate ok');
                         } catch (err) {
                           const { friendly, detail } = friendlyImageError(err);
                           setError(detail);
-                          toast.error(friendly.split('.')[0] || 'Test generate failed');
+                          toast.error(friendly.split('.')[0] || 'Smoke generate failed');
                         } finally {
                           setBusy(false);
                         }
                       })();
                     }}
                   >
-                    Test generate
+                    Smoke generate
                   </button>
                   </>
                 )}

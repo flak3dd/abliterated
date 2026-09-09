@@ -7,12 +7,12 @@ const base = (process.env.ABLITERATED_IMAGE_BASE || 'http://127.0.0.1:7860/v1').
 const healthBase = base.replace(/\/v1$/, '');
 
 const chips = {
-  Quality: 'krea2-raw-fp8',
-  Fast: 'krea2-turbo',
-  Draft: 'z-image-turbo-nsfw-nvfp4',
-  Instruction: 'qwen-image-2512-fp8',
-  Edit: 'qwen-edit-2511-fp8',
-  Klein: 'flux2-klein-9b',
+  'New still': 'krea2-raw-fp8',
+  'Fast still': 'krea2-turbo',
+  'Draft sketch': 'z-image-turbo-nsfw-nvfp4',
+  'From text': 'qwen-image-2512-fp8',
+  'Edit photo': 'qwen-edit-2511-fp8',
+  'Klein still': 'flux2-klein-9b',
 };
 
 async function main() {
@@ -26,8 +26,8 @@ async function main() {
     available = hb.availableModels || [];
   }
   console.log('available', available);
-  const expectOn = ['Quality', 'Draft', 'Instruction', 'Edit'];
-  const expectOff = ['Fast', 'Klein'];
+  const expectOn = ['New still', 'Draft sketch', 'From text', 'Edit photo'];
+  const expectOff = ['Fast still', 'Klein still'];
   for (const name of expectOn) {
     const id = chips[name];
     if (!available.includes(id)) throw new Error(`${name} (${id}) should be enabled`);

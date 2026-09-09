@@ -1,12 +1,16 @@
 /**
- * Monthly token pool for the IDE's built-in unrestricted model
- * (Abliteration / api.abliteration.ai). Featherless.ai catalog models do not count.
+ * Token pool for the IDE's built-in unrestricted model
+ * (Abliteration / api.abliteration.ai). Authoritative remaining comes from
+ * POST /api/billing/wallet; localStorage is a display cache only.
  */
 import type { ClientSettings } from '../types';
 import { resolveActiveSettings, type ActiveEndpoint } from './activeEndpoint';
+import { fetchBillingWallet, getOrCreateDeviceId, type BillingWallet } from './billingApi';
 import { getLicenseState, type LicenseState } from './license';
 
 export const BUILTIN_USAGE_KEY = 'ablit_builtin_tokens';
+export const WALLET_CACHE_KEY = 'ablit_wallet';
+const WALLET_STALE_MS = 72 * 60 * 60 * 1000;
 
 export type BuiltinTokenUsage = {
   /** Calendar month key YYYY-MM */
@@ -64,9 +68,62 @@ export function estimateTokensFromText(text: string): number {
   return Math.max(1, Math.ceil(n / 4));
 }
 
+export function loadWalletCache(): BillingWallet | null {
+  try {
+    const raw = localStorage.getItem(WALLET_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as BillingWallet;
+    if (!parsed || typeof parsed.remaining !== 'number') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function saveWalletCache(wallet: BillingWallet): void {
+  try {
+    localStorage.setItem(WALLET_CACHE_KEY, JSON.stringify(wallet));
+  } catch {
+    /* quota */
+  }
+}
+
+export function walletCacheFresh(wallet: BillingWallet | null, maxAge = WALLET_STALE_MS): boolean {
+  if (!wallet || !wallet.fetchedAt) return false;
+  return Date.now() - wallet.fetchedAt < maxAge;
+}
+
+export async function refreshBuiltinWallet(settings: ClientSettings): Promise<BillingWallet | null> {
+  const license = getLicenseState(settings);
+  if (license.isFree || license.tier === 'admin') return loadWalletCache();
+  const key = (settings.licenseKey || '').trim();
+  const loginId = (settings.loginId || '').trim();
+  if (!key && !loginId) return loadWalletCache();
+  try {
+    const wallet = await fetchBillingWallet(settings, {
+      deviceId: getOrCreateDeviceId(settings.deviceId),
+      licenseKey: key || undefined,
+      loginId: loginId || undefined,
+    });
+    saveWalletCache(wallet);
+    return wallet;
+  } catch {
+    return loadWalletCache();
+  }
+}
+
 export function remainingBuiltinTokens(license: LicenseState, usage = loadBuiltinUsage()): number {
+  if (license.tier === 'admin') return Number.POSITIVE_INFINITY;
+  const wallet = loadWalletCache();
+  if (wallet && walletCacheFresh(wallet)) {
+    return Math.max(0, wallet.remaining);
+  }
   const cap = license.features.maxIncludedTokens;
   if (!Number.isFinite(cap)) return Number.POSITIVE_INFINITY;
+  if (cap === 0) return 0;
+  if (wallet && !walletCacheFresh(wallet) && Date.now() - wallet.fetchedAt < WALLET_STALE_MS) {
+    return Math.max(0, wallet.remaining);
+  }
   return Math.max(0, cap - usage.used);
 }
 
@@ -96,8 +153,12 @@ export function assertBuiltinQuota(settings: ClientSettings): void {
   }
   const left = remainingBuiltinTokens(license);
   if (left <= 0) {
+    const wallet = loadWalletCache();
+    const pool = wallet
+      ? `${formatTokenCount(wallet.remaining)} remaining on the server wallet`
+      : `${formatTokenCount(cap)} on ${license.label}`;
     throw new Error(
-      `Built-in unrestricted model monthly token limit reached (${formatTokenCount(cap)} on ${license.label}). Wait for next month, upgrade, or switch to Featherless.ai.`,
+      `Built-in unrestricted model token pool exhausted (${pool}). Wait for the next billing period, buy credits, or switch to Featherless.ai.`,
     );
   }
 }

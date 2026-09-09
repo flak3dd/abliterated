@@ -70,6 +70,7 @@ function looksBuildIntent(userText) {
   const t = (userText || '').trim().toLowerCase();
   if (!t) return false;
   if (/\bfile structure\b|\bfolder structure\b|\bproject skeleton\b|\bscaffold\b/.test(t)) return true;
+  if (/^\s*(?:please\s+|now\s+|can\s+you\s+|could\s+you\s+|pls\s+)?build\b/.test(t)) return true;
   if (/\b(build|implement|bootstrap|wire\s+up|set\s+up|setup)\b/.test(t) && t.length >= 12) return true;
   return /\b(create|add|new)\b.{0,48}\b(file|folder|dir(?:ectory)?|module|app|feature|project|structure|layout|tree|skeleton)\b/.test(
     t,
@@ -245,6 +246,19 @@ assert.equal(looksReadOnlyOrControlPrompt('run app'), true);
 // Real build asks still trip the gate.
 assert.equal(shouldApplyBuildProcess('build a web crawler', { buildMode: true }), true);
 assert.equal(shouldApplyBuildProcess('Build a web crawler that scrapes product pages'), true);
+
+// Explicit "build" as the leading imperative enters the build scope at any length,
+// with Build mode OFF and no length gate.
+assert.equal(looksBuildIntent('build'), true);
+assert.equal(looksBuildIntent('build the app'), true);
+assert.equal(looksBuildIntent('please build a REST API'), true);
+assert.equal(shouldApplyBuildProcess('build'), true);
+assert.equal(shouldApplyBuildProcess('build the app'), true);
+assert.equal(shouldApplyBuildProcess('build a CLI todo tool'), true);
+// Plan mode still overrides — no build process while planning.
+assert.equal(shouldApplyBuildProcess('build the app', { planMode: true }), false);
+// "build" not as the leading imperative must not force a build scope on inspect/prompt asks.
+assert.equal(shouldApplyBuildProcess('write a prompt that will build hype', { buildMode: true }), false);
 
 
 function canonicalizeToolName(name) {

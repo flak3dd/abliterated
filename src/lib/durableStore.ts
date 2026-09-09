@@ -4,7 +4,13 @@ const DB_NAME = 'ablit_durable';
 const DB_VERSION = 1;
 const STORE = 'kv';
 
-export const DURABLE_KEYS = ['ablit_threads', 'ablit_messages', 'ablit_jobs', 'ablit_agent_runs'] as const;
+export const DURABLE_KEYS = [
+  'ablit_threads',
+  'ablit_messages',
+  'ablit_jobs',
+  'ablit_agent_runs',
+  'ablit_apply_inbox',
+] as const;
 
 const BULKY: readonly string[] = DURABLE_KEYS;
 

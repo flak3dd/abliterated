@@ -53,7 +53,9 @@ import {
 import {
   formatTokenCount,
   loadBuiltinUsage,
+  loadWalletCache,
   remainingBuiltinTokens,
+  refreshBuiltinWallet,
 } from '../lib/builtinTokens';
 import { generatePairingCode, getWorkspace, setSettings, uid, wipeAll } from '../lib/storage';
 import { MEMPALACE_CATALOG_ENTRY, withMempalaceMcpServer } from '../lib/mempalace';
@@ -66,18 +68,35 @@ interface Props {
   onWiped: () => void;
 }
 
-function BuiltinTokenMeter({ license }: { license: LicenseState }) {
+function BuiltinTokenMeter({
+  license,
+  settings,
+}: {
+  license: LicenseState;
+  settings: ClientSettings;
+}) {
   const usage = loadBuiltinUsage();
-  const cap = license.features.maxIncludedTokens;
-  const used = usage.used;
+  const [walletTick, setWalletTick] = useState(0);
+  useEffect(() => {
+    void refreshBuiltinWallet(settings).then(() => setWalletTick((n) => n + 1));
+  }, [settings.licenseKey, settings.loginId, settings.billingSiteUrl, settings.deviceId]);
+  const wallet = loadWalletCache();
+  void walletTick;
+  const cap = wallet
+    ? wallet.includedRemaining + wallet.prepaidRemaining + Math.max(0, usage.used)
+    : license.features.maxIncludedTokens;
+  const used = wallet ? Math.max(0, cap - wallet.remaining) : usage.used;
   const left = remainingBuiltinTokens(license, usage);
   const pct = !Number.isFinite(cap) || cap <= 0 ? 0 : Math.min(100, Math.round((used / cap) * 100));
 
   return (
     <div className="mt-2 rounded border border-border bg-background px-3 py-2">
-      <div className="font-mono text-[10px] uppercase text-muted">Built-in model tokens this month</div>
+      <div className="font-mono text-[10px] uppercase text-muted">Built-in model token wallet</div>
       <div className="mt-1 font-mono text-[12px] text-zinc-200">
-        {formatTokenCount(used)} used · {formatTokenCount(left)} left of {formatTokenCount(cap)}
+        {formatTokenCount(left)} left
+        {wallet
+          ? ` · ${formatTokenCount(wallet.includedRemaining)} included + ${formatTokenCount(wallet.prepaidRemaining)} prepaid`
+          : ` of ${formatTokenCount(cap)} (local estimate)`}
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded bg-zinc-800">
         <div
@@ -86,7 +105,8 @@ function BuiltinTokenMeter({ license }: { license: LicenseState }) {
         />
       </div>
       <p className="mt-1 font-mono text-[10px] text-muted">
-        Abliteration built-in unrestricted model only. Featherless.ai catalog models do not count.
+        Server wallet from /api/billing/wallet. Featherless BYOK does not count.
+        {wallet?.periodEndsAt ? ` Period ends ${wallet.periodEndsAt.slice(0, 10)}.` : ''}
       </p>
     </div>
   );
@@ -218,7 +238,18 @@ function ProjectRulesPanel({
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const pinned = settings.projectRulesPinned !== false;
-  const ws = getWorkspace().rootPath;
+  const [ws, setWs] = useState(() => getWorkspace().rootPath);
+
+  useEffect(() => {
+    const syncWs = () => setWs(getWorkspace().rootPath || bridge.validWorkspaceRoot);
+    syncWs();
+    const offRoot = bridge.onRootChange(() => syncWs());
+    const offStatus = bridge.onStatusChange(() => syncWs());
+    return () => {
+      offRoot();
+      offStatus();
+    };
+  }, []);
 
   useEffect(() => {
     const load = () => {
@@ -935,6 +966,8 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
         maxConcurrentJobs: nextLicense.tier === 'admin' ? 16 : nextLicense.tier === 'free' ? 1 : 4,
         selfDeepenPasses: nextLicense.features.maxSelfDeepenPasses,
         deviceId: boundDevice || settings.deviceId,
+        ...(result.inferenceKey ? { token: result.inferenceKey } : {}),
+        ...(result.inferenceBaseUrl ? { baseUrl: result.inferenceBaseUrl } : {}),
         ...(result.loginId
           ? {
               loginId: result.loginId,
@@ -958,7 +991,9 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
       setRedeemCode('');
       setRedeemBusy(false);
       setLicenseMsg(
-        `Redeemed — activated ${nextLicense.label}${result.loginId ? ` (loginId ${result.loginId})` : ''}.`,
+        result.inferenceKey
+          ? `Redeemed — activated ${nextLicense.label}. Platform / LiteLLM key saved on API.`
+          : `Redeemed — activated ${nextLicense.label}${result.loginId ? ` (loginId ${result.loginId})` : ''}.`,
       );
     } catch (err) {
       setRedeemBusy(false);
@@ -1504,11 +1539,33 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
                       className={on ? 'btn-primary h-6 px-2 text-[10px]' : 'btn-ghost h-6 px-2 text-[10px]'}
                       onClick={() => {
                         if (hit) {
-                          updateMcp(hit.id, { enabled: !hit.enabled });
-                          setMcpHint(hit.enabled ? `Disabled ${entry.title}` : `Enabled ${entry.title} — Connect / refresh`);
+                          if (hit.enabled) {
+                            updateMcp(hit.id, { enabled: false });
+                            void disconnectOne(hit.id);
+                            setMcpHint(`Disabled ${entry.title}`);
+                          } else {
+                            void connectOne({ ...hit, enabled: true });
+                          }
                         } else {
-                          patch({ mcpServers: [...servers, catalogToConfig(entry, uid('mcp'))] });
-                          setMcpHint(`Added ${entry.title} — Connect / refresh`);
+                          const cfg = catalogToConfig(entry, uid('mcp'));
+                          const list = [...servers, cfg];
+                          patch({ mcpServers: list });
+                          setMcpBusyId(cfg.id);
+                          setMcpHint(`Connecting ${entry.title}…`);
+                          void syncMcpServers(list)
+                            .then(() => {
+                              setMcpTick((n) => n + 1);
+                              const stNow = getMcpServerState(cfg.id);
+                              setMcpHint(
+                                stNow?.connected
+                                  ? `Connected ${entry.title}: ${stNow.tools.length} tool(s)`
+                                  : stNow?.error || `Added ${entry.title}`,
+                              );
+                            })
+                            .catch((e) =>
+                              setMcpHint(e instanceof Error ? e.message : String(e)),
+                            )
+                            .finally(() => setMcpBusyId(null));
                         }
                       }}
                     >
@@ -1850,7 +1907,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
             </li>
           </ul>
           {license.features.maxIncludedTokens > 0 ? (
-            <BuiltinTokenMeter license={license} />
+            <BuiltinTokenMeter license={license} settings={settings} />
           ) : null}
 
           <FieldLabel
@@ -2164,7 +2221,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
           title="License"
           hint="Paste an ABLIT-* key or redeem a one-time access code (device-bound)."
         >
-          <FieldLabel label="Redeem access code" hint="One-time code from waitlist / promo — bound to this device.">
+          <FieldLabel label="Redeem access code" hint="One-time promo or gift code — bound to this device.">
             <input
               value={redeemCode}
               onChange={(e) => setRedeemCode(e.target.value)}

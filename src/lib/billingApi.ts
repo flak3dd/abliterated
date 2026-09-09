@@ -190,6 +190,8 @@ export type RedeemResponse = {
   deviceId?: string;
   deviceBound?: boolean;
   note?: string;
+  inferenceKey?: string | null;
+  inferenceBaseUrl?: string | null;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -400,6 +402,9 @@ export async function redeemAccessCode(
     deviceId: typeof json.deviceId === 'string' ? json.deviceId : undefined,
     deviceBound: json.deviceBound === true,
     note: typeof json.note === 'string' ? json.note : undefined,
+    inferenceKey: typeof json.inferenceKey === 'string' ? json.inferenceKey : null,
+    inferenceBaseUrl:
+      typeof json.inferenceBaseUrl === 'string' ? json.inferenceBaseUrl : null,
   };
 }
 
@@ -715,6 +720,54 @@ export async function confirmCryptoInvoice(
     licenseWindowDays:
       typeof json.licenseWindowDays === 'number' ? json.licenseWindowDays : undefined,
     note: typeof json.note === 'string' ? json.note : undefined,
+  };
+}
+
+export type BillingWallet = {
+  includedRemaining: number;
+  prepaidRemaining: number;
+  remaining: number;
+  plan: string | null;
+  seats: number;
+  periodEndsAt: string | null;
+  periodId: string | null;
+  licenseKey: string | null;
+  budgetUsd: number;
+  status: string;
+  fetchedAt: number;
+};
+
+export async function fetchBillingWallet(
+  settingsOrUrl: BillingSiteSettings | string | null | undefined,
+  body: {
+    deviceId: string;
+    licenseKey?: string;
+    loginId?: string;
+    email?: string;
+    password?: string;
+  },
+): Promise<BillingWallet> {
+  const url = billingApiUrl(settingsOrUrl, '/api/billing/wallet');
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await readJson(res);
+  if (!res.ok) throw errorFromBody(json, 'Wallet lookup failed', res.status);
+  const remaining = Number(json.remaining);
+  return {
+    includedRemaining: Number(json.includedRemaining) || 0,
+    prepaidRemaining: Number(json.prepaidRemaining) || 0,
+    remaining: Number.isFinite(remaining) ? remaining : 0,
+    plan: typeof json.plan === 'string' ? json.plan : null,
+    seats: typeof json.seats === 'number' ? json.seats : 1,
+    periodEndsAt: typeof json.periodEndsAt === 'string' ? json.periodEndsAt : null,
+    periodId: typeof json.periodId === 'string' ? json.periodId : null,
+    licenseKey: typeof json.licenseKey === 'string' ? json.licenseKey : null,
+    budgetUsd: typeof json.budgetUsd === 'number' ? json.budgetUsd : 0,
+    status: typeof json.status === 'string' ? json.status : 'empty',
+    fetchedAt: Date.now(),
   };
 }
 

@@ -40,6 +40,12 @@ assert.equal(looksLikeTokenCollapse('4'), false);
 assert.equal(looksLikeTokenCollapse('What is 2+2?'), false);
 assert.equal(looksLikeTokenCollapse('Wow!!!'), false);
 assert.equal(looksLikeTokenCollapse('if (ready && !done) return;'), false);
+assert.equal(
+  looksLikeTokenCollapse('Title\n============\nBody text here is a real markdown heading rule.'),
+  false,
+);
+assert.equal(looksLikeTokenCollapse('****'.repeat(8) + '\ncode sample'), false);
+assert.equal(looksLikeTokenCollapse('='.repeat(48)), true);
 
 const bangs = '!'.repeat(48);
 assert.equal(looksLikeTokenCollapse(bangs), true);

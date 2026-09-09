@@ -34,6 +34,7 @@ import { getLicenseState } from './lib/license';
 import { workspaceGate } from './lib/workspaceGuard';
 import { SetupWizard } from './components/setup/SetupWizard';
 import { hydrateDurableStore } from './lib/durableStore';
+import { acceptAllInbox, hydrateApplyInbox } from './lib/applyInbox';
 import { ApiScreen } from './screens/ApiScreen';
 import { ChatScreen, type ChatScreenHandle } from './screens/ChatScreen';
 import { HomeScreen } from './screens/HomeScreen';
@@ -731,6 +732,7 @@ export default function App() {
 
   useEffect(() => {
     void hydrateDurableStore().then(() => {
+      hydrateApplyInbox();
       setThreads(getThreads());
       setJobs(getJobs());
     });
@@ -741,6 +743,13 @@ export default function App() {
       void syncMcpServers(settings.mcpServers || []);
     }
   }, [bridgeStatus, settings.mcpServers]);
+
+  const prevAutoAccept = useRef(false);
+  useEffect(() => {
+    const rising = !prevAutoAccept.current && settings.autoAcceptEdits;
+    prevAutoAccept.current = settings.autoAcceptEdits;
+    if (rising) void acceptAllInbox(workspace.rootPath);
+  }, [settings.autoAcceptEdits, workspace.rootPath]);
 
   return (
     <div className="flex h-full bg-background text-zinc-100">
@@ -766,7 +775,7 @@ export default function App() {
               type="button"
               className="btn-ghost h-6 px-2 text-[10px]"
               onClick={() => {
-                void window.ablitDesktop?.ensureBridge?.().finally(() => bridge.connect());
+                void window.ablitDesktop?.ensureBridge?.().finally(() => bridge.reconnect());
               }}
             >
               Restart now

@@ -151,6 +151,65 @@ async function resolveInsideAsync(relOrAbs) {
   return abs;
 }
 
+/**
+ * Resolve a file under an EXPLICIT base root (per-write pinning), independent of
+ * the mutable global ROOT. Strips a leading base prefix, forbids "..", and keeps
+ * the result inside base. Used when a client sends its own workspace root so a
+ * write cannot be misrouted by concurrent set_root drift.
+ */
+function resolveInsideRoot(relOrAbs, base) {
+  const root = String(base || ROOT);
+  const raw = String(relOrAbs || '').trim();
+  const norm = raw.replace(/\\/g, '/');
+  const rootNorm = root.replace(/\\/g, '/').replace(/\/+$/, '');
+  let stripped = raw;
+  if (rootNorm) {
+    if (norm === rootNorm) stripped = '.';
+    else if (norm.toLowerCase().startsWith(rootNorm.toLowerCase() + '/')) {
+      stripped = norm.slice(rootNorm.length + 1) || '.';
+    }
+  }
+  if (String(stripped).split(/[\\/]/).includes('..')) {
+    throw new Error(
+      'path escapes workspace root (".." not allowed). Use a path relative to the working directory.',
+    );
+  }
+  const abs = path.resolve(root, stripped);
+  if (!isInsideRootPath(root, abs)) {
+    throw new Error(
+      `path escapes workspace root: ${String(relOrAbs)}. Stay under ${root} with a relative path.`,
+    );
+  }
+  return abs;
+}
+
+/**
+ * Pick and validate the base root for a write. When the client sends msg.root
+ * (the thread's workspace), verify it exists, is a directory, and is not the
+ * install dir — then resolve against it. Falls back to the global ROOT.
+ */
+async function resolveWriteRoot(msg) {
+  const raw = String(msg.root || '').trim();
+  if (!raw) return ROOT;
+  const resolved = path.resolve(raw);
+  assertNotAppInstall(resolved, 'write');
+  let st;
+  try {
+    st = await stat(resolved);
+  } catch {
+    throw new Error('workspace root not found: ' + raw);
+  }
+  if (!st.isDirectory()) throw new Error('workspace root is not a directory: ' + raw);
+  let real = resolved;
+  try {
+    real = await realpath(resolved);
+  } catch {
+    real = resolved;
+  }
+  assertNotAppInstall(real, 'write');
+  return real;
+}
+
 function handleExec(ws, msg) {
   const runId = msg.runId;
   const command = String(msg.command || '');
@@ -321,8 +380,9 @@ async function handlePatch(ws, msg) {
   const patch = String(msg.patch || '');
   try {
     if (!file) throw new Error('missing file');
-    assertWorkspaceNotInstall('patch');
-    const abs = resolveInside(file);
+    const writeRoot = await resolveWriteRoot(msg);
+    if (!msg.root) assertWorkspaceNotInstall('patch');
+    const abs = resolveInsideRoot(file, writeRoot);
     assertNotAppInstall(abs, 'patch');
     await mkdir(path.dirname(abs), { recursive: true });
     let original = '';
@@ -358,8 +418,9 @@ async function handleWrite(ws, msg) {
   const content = String(msg.content ?? '');
   try {
     if (!file) throw new Error('missing file');
-    assertWorkspaceNotInstall('write');
-    const abs = resolveInside(file);
+    const writeRoot = await resolveWriteRoot(msg);
+    if (!msg.root) assertWorkspaceNotInstall('write');
+    const abs = resolveInsideRoot(file, writeRoot);
     assertNotAppInstall(abs, 'write');
     await mkdir(path.dirname(abs), { recursive: true });
     const prev = fileMeta.get(abs);
@@ -430,20 +491,21 @@ async function handleCreateDir(ws, msg) {
   try {
     const raw = String(msg.path || '').trim();
     if (!raw) throw new Error('missing path');
-    const resolved = path.resolve(raw);
-    assertNotAppInstall(resolved, 'workspace');
+    assertWorkspaceNotInstall('create_dir');
+    const abs = resolveInside(raw);
+    assertNotAppInstall(abs, 'create_dir');
     let st;
     try {
-      st = await stat(resolved);
+      st = await stat(abs);
     } catch {
       st = null;
     }
     if (st) {
       if (!st.isDirectory()) throw new Error('path exists and is a file');
     } else {
-      await mkdir(resolved, { recursive: true });
+      await mkdir(abs, { recursive: true });
     }
-    send(ws, { runId, status: 'ok', path: resolved });
+    send(ws, { runId, status: 'ok', path: abs });
   } catch (err) {
     send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
   }
@@ -1159,16 +1221,12 @@ wss.on('connection', (ws, req) => {
       void handleSetRoot(ws, msg);
       return;
     }
-    if (type === 'create_dir') {
-      void handleCreateDir(ws, msg);
-      return;
-    }
     const needsWorkspace = type === 'ls' || type === 'read_file' || type === 'grep' || type === 'glob'
       || type === 'file_outline' || type === 'semantic_search' || type === 'git_status' || type === 'git_commit'
       || type === 'git_diff' || type === 'create_pr' || type === 'checkpoint_save' || type === 'checkpoint_restore'
       || type === 'checkpoint_list' || type === 'mcp_connect' || type === 'exec' || type === 'apply_patch'
       || type === 'project_memory' || type === 'mempalace_init'
-      || type === 'write_file' || type === 'delete_file';
+      || type === 'write_file' || type === 'delete_file' || type === 'create_dir';
     if (needsWorkspace) {
       try {
         assertWorkspaceNotInstall(type);
@@ -1306,6 +1364,10 @@ wss.on('connection', (ws, req) => {
     }
     if (type === 'write_file') {
       void handleWrite(ws, msg);
+      return;
+    }
+    if (type === 'create_dir') {
+      void handleCreateDir(ws, msg);
       return;
     }
     if (type === 'delete_file') {

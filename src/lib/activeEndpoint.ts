@@ -9,6 +9,12 @@ const ABLITERATION_DEFAULT_BASE_URL =
 const ABLITERATION_DEFAULT_MODEL =
   (import.meta.env.VITE_ABLITERATED_MODEL as string | undefined)?.trim() || 'abliterated-model';
 
+/** DEV-only `.env.local` token. Production builds must not bake this into the SPA. */
+function abliterationEnvToken(): string {
+  if (!import.meta.env.DEV) return '';
+  return String(import.meta.env.VITE_ABLITERATED_TOKEN || '').trim();
+}
+
 export type ActiveEndpoint = {
   baseUrl: string;
   token: string;
@@ -107,9 +113,12 @@ export function resolveActiveSettings(settings: ClientSettings): ActiveEndpoint 
   }
 
   // Abliteration: empty form fields still resolve to cloud defaults (Custom keeps raw empties).
+  // DEV: `.env.local` VITE_ABLITERATED_TOKEN wins so rotating the cloud key takes effect
+  // without relying on a stale localStorage paste. Production: UI token only.
+  const envTok = abliterationEnvToken();
   return {
     baseUrl: settings.baseUrl?.trim() || ABLITERATION_DEFAULT_BASE_URL,
-    token: settings.token ?? '',
+    token: envTok || (settings.token ?? '').trim(),
     defaultModel: settings.defaultModel?.trim() || ABLITERATION_DEFAULT_MODEL,
     label: 'ablit',
     provider: 'abliteration',

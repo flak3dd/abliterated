@@ -7,10 +7,10 @@
 const COLLAPSE_NOTE =
   '(Model degenerated into repeated tokens. Retry the prompt, switch model, or turn Reasoning off.)';
 
-/** Consecutive run of the same punctuation long enough to be junk, not "Wow!!!". */
-const REPEAT_RUN = /([!?.*~#=|！？．＊～])\1{11,}/u;
+/** Bang/question runs only. Markdown rules (`====`, `****`) are not collapse. */
+const REPEAT_RUN = /([!?！？])\1{11,}/u;
 
-const PUNCT_CLASS = /[!?.*~#=|！？．＊～]/u;
+const PUNCT_CLASS = /[!?！？]/u;
 
 export const TOKEN_COLLAPSE_REPLY_NOTE = COLLAPSE_NOTE;
 

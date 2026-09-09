@@ -409,8 +409,8 @@ export function parseFakeToolCalls(content: string): ParsedFakeTool[] {
 /** Short system/user nudge for retry when theater is present but nothing safe to parse. */
 export function buildFakeToolNudge(): string {
   return (
-    'Tool recovery (one retry): Your last reply showed tools as markdown/JSON theater or described a write_file retry. ' +
-    'Those do not execute. For large/new files emit a // relative/path fence with the full file in CONTENT. ' +
-    'For small writes, call the real function tools (API tools channel). Do not paste tool JSON and do not narrate syntax.'
+    'Tool recovery (one retry): Markdown/JSON theater does not execute. ' +
+    'Call write_file on the API tools channel now, OR put the full file in CONTENT as a // relative/path fence. ' +
+    'Both land in the workspace on this turn — do not narrate syntax, do not wait for a click, do not retry as prose.'
   );
 }

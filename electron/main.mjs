@@ -4,7 +4,8 @@
  * Spawns daemon/bridge.js on 17322 if the port is free; kills only the child we spawned on quit.
  */
 import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
-import { autoUpdater } from 'electron-updater';
+import electronUpdater from 'electron-updater';
+const { autoUpdater } = electronUpdater;
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import fs from 'node:fs';
@@ -28,6 +29,8 @@ let bridgeChild = null;
 let bridgeSpawnedPid = null;
 let bridgeQuitting = false;
 let bridgeRespawnTimer = null;
+/** In-flight ensureBridge so Restart now cannot double-spawn. */
+let bridgeEnsureLock = null;
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
 
@@ -158,13 +161,24 @@ function portFree(port) {
 }
 
 async function ensureBridge() {
+  if (bridgeEnsureLock) return bridgeEnsureLock;
+  bridgeEnsureLock = ensureBridgeUnlocked().finally(() => {
+    bridgeEnsureLock = null;
+  });
+  return bridgeEnsureLock;
+}
+
+async function ensureBridgeUnlocked() {
   const free = await portFree(BRIDGE_PORT);
   if (!free) {
+    if (bridgeChild) {
+      console.log(`[ablit] bridge port ${BRIDGE_PORT} already ours pid=${bridgeSpawnedPid}`);
+      return;
+    }
     console.log(`[ablit] bridge port ${BRIDGE_PORT} already in use — reusing (no spawn)`);
-    bridgeChild = null;
-    bridgeSpawnedPid = null;
     return;
   }
+  if (bridgeChild) return;
   // asarUnpack puts daemon under app.asar.unpacked — spawn needs a real path.
   let bridgeJs = path.join(APP_ROOT, 'daemon', 'bridge.js');
   if (bridgeJs.includes('app.asar' + path.sep) && !bridgeJs.includes('app.asar.unpacked')) {

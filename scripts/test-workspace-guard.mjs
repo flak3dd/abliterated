@@ -31,6 +31,7 @@ execFileSync(
 const mod = await import(pathToFileURL(path.join(outDir, 'workspaceGuard.js')).href);
 const {
   APP_ROOT_REFUSED,
+  BRIDGE_RESTARTING,
   WORKSPACE_REQUIRED,
   collapseDots,
   isInsideAppRoot,
@@ -60,6 +61,7 @@ assert.equal(
   true,
 );
 
+assert.match(BRIDGE_RESTARTING, /hello/i);
 assert.equal(workspaceGate('', '/Users/me/abliterated').ok, false);
 assert.equal(workspaceGate('', '/Users/me/abliterated').message, WORKSPACE_REQUIRED);
 assert.equal(workspaceGate('/Users/me/abliterated', '/Users/me/abliterated').ok, false);
