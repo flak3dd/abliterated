@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CommandPalette, type CommandAction } from './components/CommandPalette';
 import { BottomNav, DesktopRail } from './components/layout/Navigation';
 import { StatusBar } from './components/layout/StatusBar';
+import { ApplyInboxDrawer } from './components/layout/ApplyInboxDrawer';
 import { resumeJobQueue } from './lib/jobRunner';
 import { syncMcpServers } from './lib/mcpClient';
 import { bridge, type BridgeStatus } from './lib/bridgeClient';
@@ -754,6 +755,24 @@ export default function App() {
         userSub={resolveActiveSettings(settings).label}
       />
       <div className="flex min-w-0 flex-1 flex-col">
+        {bridgeStatus !== 'connected' ? (
+          <div className="flex items-center justify-between gap-2 border-b border-amber-800/50 bg-amber-950/40 px-3 py-1.5 font-mono text-[11px] text-amber-200">
+            <span>
+              {bridgeStatus === 'restarting' || bridgeStatus === 'connecting'
+                ? 'Bridge restarting — writes blocked until hello.'
+                : 'Bridge down — writes blocked. The desktop app will respawn ws://127.0.0.1:17322.'}
+            </span>
+            <button
+              type="button"
+              className="btn-ghost h-6 px-2 text-[10px]"
+              onClick={() => {
+                void window.ablitDesktop?.ensureBridge?.().finally(() => bridge.connect());
+              }}
+            >
+              Restart now
+            </button>
+          </div>
+        ) : null}
         <main className="relative min-h-0 flex-1">
           <div className="h-full">
             {visitedTabs.has('home') ? (
@@ -895,6 +914,15 @@ export default function App() {
             ) : null}
           </div>
         </main>
+        <ApplyInboxDrawer
+          workspaceRoot={workspace.rootPath}
+          onOpenFile={(rel) => {
+            const next = { ...workspace, selectedFiles: [rel] };
+            setWorkspace(next);
+            setWorkspaceState(next);
+            setTab('workspace');
+          }}
+        />
         <StatusBar
           bridgeStatus={bridgeStatus}
           workspaceRoot={workspace.rootPath}

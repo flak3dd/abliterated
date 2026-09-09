@@ -4,7 +4,10 @@ import {
   workspaceGate,
 } from './workspaceGuard';
 
-export type BridgeStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type BridgeStatus = 'disconnected' | 'connecting' | 'connected' | 'error' | 'restarting';
+
+export const BRIDGE_RESTARTING =
+  'Bridge restarting — writes are blocked until the localhost daemon says hello (ws://127.0.0.1:17322).';
 
 export type BridgeDirEntry = {
   name: string;
@@ -39,13 +42,15 @@ export class BridgeClient {
   private daemonRoot = '';
   private daemonAppRoot = '';
   private daemonPort = 17322;
+  private helloOk = false;
+  private reconnectAttempt = 0;
 
   constructor(url = 'ws://127.0.0.1:17322') {
     this.url = url;
   }
 
   get connected(): boolean {
-    return this.status === 'connected' && this.ws?.readyState === WebSocket.OPEN;
+    return this.helloOk && this.ws?.readyState === WebSocket.OPEN;
   }
 
   waitUntilConnected(timeoutMs = 4000): Promise<boolean> {
@@ -144,7 +149,12 @@ export class BridgeClient {
     return workspaceGate(root, this.daemonAppRoot);
   }
 
+  private assertBridgeReady(): void {
+    if (!this.connected) throw new Error(BRIDGE_RESTARTING);
+  }
+
   private assertWritableWorkspace(file?: string): void {
+    this.assertBridgeReady();
     const gate = this.workspaceGateFor();
     if (!gate.ok) throw new Error(gate.message);
     if (file && isPathInsideAppRoot(file, this.daemonRoot, this.daemonAppRoot)) {
@@ -164,7 +174,8 @@ export class BridgeClient {
       ws.onopen = () => {
         // Ignore stale sockets (React StrictMode remount / reconnect race).
         if (this.ws !== ws) return;
-        this.setStatus('connected');
+        this.helloOk = false;
+        this.setStatus('connecting');
         try {
           this.sendRaw({ type: 'ping' });
           this.sendRaw({ type: 'hello' });
@@ -188,10 +199,11 @@ export class BridgeClient {
       ws.onclose = () => {
         // Do not clear a newer socket that already replaced this one.
         if (this.ws !== ws) return;
+        this.helloOk = false;
         this.failAll(new Error('Bridge disconnected'));
         this.ws = null;
         if (!this.closedByUser) {
-          this.setStatus('disconnected');
+          this.setStatus('restarting');
           this.scheduleReconnect();
         }
       };
@@ -202,6 +214,7 @@ export class BridgeClient {
   }
 
   cleanup(): void {
+    this.helloOk = false;
     this.closedByUser = true;
     if (this.reconnectTimer != null) {
       window.clearTimeout(this.reconnectTimer);
@@ -215,10 +228,23 @@ export class BridgeClient {
 
   private scheduleReconnect() {
     if (this.closedByUser || this.reconnectTimer != null) return;
+    const delay = Math.min(8000, Math.round(400 * Math.pow(1.6, this.reconnectAttempt)));
+    this.reconnectAttempt += 1;
+    this.setStatus('restarting');
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
-      if (!this.closedByUser) this.connect();
-    }, 2500);
+      void (async () => {
+        try {
+          const desktop = (typeof window !== 'undefined'
+            ? (window as Window & { ablitDesktop?: { ensureBridge?: () => Promise<unknown> } }).ablitDesktop
+            : undefined);
+          await desktop?.ensureBridge?.();
+        } catch {
+          /* browser DEV has no Electron spawn */
+        }
+        if (!this.closedByUser) this.connect();
+      })();
+    }, delay);
   }
 
   private failAll(err: Error) {
@@ -237,6 +263,9 @@ export class BridgeClient {
     if ('type' in msg && msg.type === 'pong') return;
 
     if ('type' in msg && msg.type === 'hello') {
+      this.helloOk = true;
+      this.reconnectAttempt = 0;
+      this.setStatus('connected');
       const root = typeof msg.root === 'string' ? msg.root : '';
       const port = typeof msg.port === 'number' ? msg.port : undefined;
       const appRoot = typeof msg.appRoot === 'string' ? msg.appRoot : '';
@@ -313,7 +342,6 @@ export class BridgeClient {
   }
 
   applyPatch(file: string, patch: string): Promise<boolean> {
-    if (!this.connected) return Promise.resolve(false);
     try {
       this.assertWritableWorkspace(file);
     } catch (err) {
@@ -323,7 +351,6 @@ export class BridgeClient {
   }
 
   writeFile(file: string, content: string, opts?: { encoding?: string; eol?: string }): Promise<boolean> {
-    if (!this.connected) return Promise.resolve(false);
     try {
       this.assertWritableWorkspace(file);
     } catch (err) {

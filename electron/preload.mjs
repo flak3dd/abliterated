@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('ablitDesktop', {
   downloadUpdate: () => ipcRenderer.invoke('ablit:downloadUpdate'),
   quitAndInstall: () => ipcRenderer.invoke('ablit:quitAndInstall'),
   startSparkImage: (alias) => ipcRenderer.invoke('ablit:startSparkImage', alias),
+  ensureBridge: () => ipcRenderer.invoke('ablit:ensureBridge'),
   onUpdateStatus: (cb) => {
     if (typeof cb !== 'function') return () => {};
     const handler = (_event, payload) => {

@@ -114,6 +114,7 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   deviceId: '',
   accountLoggedIn: false,
   setupComplete: false,
+  projectRulesPinned: true,
   webSearchBraveKey: '',
   webSearchSearxUrl: '',
   jobWorktreesEnabled: false,
@@ -396,6 +397,7 @@ export function getSettings(): ClientSettings {
       Boolean((stored.featherlessToken || '').trim()) ||
       Boolean((stored.token || '').trim()) ||
       stored.accountLoggedIn === true,
+    projectRulesPinned: stored.projectRulesPinned !== false,
     webSearchBraveKey:
       typeof stored.webSearchBraveKey === 'string' ? stored.webSearchBraveKey.trim() : '',
     webSearchSearxUrl:

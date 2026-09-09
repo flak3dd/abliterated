@@ -26,6 +26,8 @@ const DEV = process.env.ABLITERATED_ELECTRON_DEV === '1';
 let bridgeChild = null;
 /** Pid of the bridge we spawned (null if we reused an existing listener). */
 let bridgeSpawnedPid = null;
+let bridgeQuitting = false;
+let bridgeRespawnTimer = null;
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
 
@@ -192,6 +194,13 @@ async function ensureBridge() {
     console.log(`[ablit] bridge exited code=${code} signal=${signal}`);
     bridgeChild = null;
     bridgeSpawnedPid = null;
+    if (!bridgeQuitting) {
+      if (bridgeRespawnTimer) clearTimeout(bridgeRespawnTimer);
+      bridgeRespawnTimer = setTimeout(() => {
+        bridgeRespawnTimer = null;
+        if (!bridgeQuitting) void ensureBridge();
+      }, 400);
+    }
   });
   console.log(`[ablit] spawned bridge pid=${bridgeSpawnedPid} on ${BRIDGE_PORT}`);
 }
@@ -353,6 +362,10 @@ function registerIpc() {
     await shell.openPath(dir);
     return { ok: true, path: dir };
   });
+  ipcMain.handle('ablit:ensureBridge', async () => {
+    await ensureBridge();
+    return { ok: true, pid: bridgeSpawnedPid };
+  });
   ipcMain.handle('ablit:startSparkImage', async (_e, alias) => {
     const host = String(alias || '').trim();
     if (!/^[A-Za-z0-9._-]+$/.test(host)) return { ok: false, error: 'invalid ssh alias' };
@@ -457,6 +470,7 @@ if (gotLock) {
   });
 
   app.on('before-quit', () => {
+    bridgeQuitting = true;
     stopBridge();
   });
 

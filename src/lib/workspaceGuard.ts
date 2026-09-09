@@ -9,6 +9,9 @@ export const APP_ROOT_REFUSED =
 export const WORKSPACE_REQUIRED =
   'Choose a working directory before chatting. Abliterated will not write into its own install folder.';
 
+export const BRIDGE_RESTARTING =
+  'Bridge restarting — writes are blocked until the localhost daemon says hello (ws://127.0.0.1:17322).';
+
 export type WorkspaceGateReason = 'ok' | 'empty' | 'placeholder' | 'app_root';
 
 export type WorkspaceGate = {

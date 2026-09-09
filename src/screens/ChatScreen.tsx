@@ -128,6 +128,8 @@ import { getMessages, recordAgentRun, replaceThreadMessages, saveMessage, setSet
 import { enqueueChatAsJob } from '../lib/jobRunner';
 import { formatSkillsCatalogPrompt, formatVerifyStrictSkillPrompt, shouldAutoInjectVerifyStrict, toCatalogEntries, type SkillCatalogEntry, type SkillRecord } from '../lib/skills';
 import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from '../lib/projectMemory';
+import { filterPinnedProjectMemory } from '../lib/projectRules';
+import { enqueuePendingEdits } from '../lib/applyInbox';
 import { formatSessionMemory, mempalaceOpts } from '../lib/mempalace';
 import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
 import { buildModelAgentProfile } from '../lib/modelAgentProfile';
@@ -802,7 +804,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       }
       try {
         const files = await bridge.readProjectMemory();
-        if (!cancelled) setProjectMemoryBlock(formatProjectMemoryPrompt(files));
+        const pinned = settings.projectRulesPinned !== false;
+        if (!cancelled) setProjectMemoryBlock(formatProjectMemoryPrompt(filterPinnedProjectMemory(files, pinned)));
       } catch {
         if (!cancelled) setProjectMemoryBlock('');
       }
@@ -856,6 +859,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     };
   }, [
     settings.skillsEnabled,
+    settings.projectRulesPinned,
     settings.mempalaceEnabled,
     settings.mempalaceAutoRecall,
     settings.mempalacePalacePath,
@@ -1006,6 +1010,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       writeToWorkspace,
       root: workspaceRoot,
     });
+    const pending = edits.filter((_, i) => results[i]?.status === 'pending');
+    if (pending.length) enqueuePendingEdits(pending, msg.id);
     setGrokById((prev) => ({ ...prev, [msg.id]: results }));
     setLatestGrok(results);
     setGrokEmptyHint(

@@ -35,6 +35,7 @@ interface AblitDesktopApi {
   downloadUpdate?: () => Promise<{ ok: boolean; error?: string; reason?: string }>;
   quitAndInstall?: () => Promise<boolean>;
   startSparkImage?: (alias: string) => Promise<{ ok: boolean; log?: string; error?: string }>;
+  ensureBridge?: () => Promise<{ ok: boolean; pid?: number | null }>;
   onUpdateStatus?: (cb: (payload: { state: string; version?: string; percent?: number; error?: string }) => void) => () => void;
 }
 

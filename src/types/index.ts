@@ -396,6 +396,8 @@ export interface ClientSettings {
   accountLoggedIn?: boolean;
   /** First-run wizard finished (or skipped). */
   setupComplete?: boolean;
+  /** When false, `.ablit/rules.md` is not injected into the agent prompt. Default true. */
+  projectRulesPinned?: boolean;
   /** Discover/follow SKILL.md recipes (default true). */
   skillsEnabled: boolean;
   /** Optional Brave Search API key (X-Subscription-Token). Empty = keyless HTML search. */

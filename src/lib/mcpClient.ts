@@ -1,7 +1,14 @@
 import { bridge } from './bridgeClient';
 import type { McpServerConfig } from '../types';
 
-export { EXAMPLE_FILESYSTEM_MCP, MCP_ONE_CLICK_CATALOG, catalogToConfig } from './mcpCatalog';
+export {
+  EXAMPLE_FILESYSTEM_MCP,
+  MCP_ONE_CLICK_CATALOG,
+  MCP_FEATURED_IDS,
+  catalogToConfig,
+  catalogMatch,
+  featuredMcpCatalog,
+} from './mcpCatalog';
 
 export type McpToolDef = {
   serverName: string;

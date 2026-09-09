@@ -2,11 +2,15 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { bridge } from '../lib/bridgeClient';
 import {
   EXAMPLE_FILESYSTEM_MCP,
+  catalogMatch,
+  catalogToConfig,
   disconnectMcpServer,
+  featuredMcpCatalog,
   getMcpServerState,
   getMcpServerStatuses,
   syncMcpServers,
 } from '../lib/mcpClient';
+import { loadProjectRules, saveProjectRules } from '../lib/projectRules';
 import {
   LICENSE_TEST_KEYS,
   PRICING_HINT,
@@ -51,7 +55,7 @@ import {
   loadBuiltinUsage,
   remainingBuiltinTokens,
 } from '../lib/builtinTokens';
-import { generatePairingCode, setSettings, uid, wipeAll } from '../lib/storage';
+import { generatePairingCode, getWorkspace, setSettings, uid, wipeAll } from '../lib/storage';
 import { MEMPALACE_CATALOG_ENTRY, withMempalaceMcpServer } from '../lib/mempalace';
 import { skillRootHints, toCatalogEntries, type SkillCatalogEntry } from '../lib/skills';
 import type { ClientSettings, McpServerConfig } from '../types';
@@ -199,6 +203,78 @@ function DesktopUpdatePanel() {
         </button>
       </div>
       {note ? <p className="font-mono text-[11px] text-zinc-300">{note}</p> : null}
+    </Section>
+  );
+}
+
+function ProjectRulesPanel({
+  settings,
+  onPatch,
+}: {
+  settings: ClientSettings;
+  onPatch: (partial: Partial<ClientSettings>) => void;
+}) {
+  const [text, setText] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const pinned = settings.projectRulesPinned !== false;
+  const ws = getWorkspace().rootPath;
+
+  useEffect(() => {
+    const load = () => {
+      if (!bridge.connected || !ws) {
+        setText('');
+        return;
+      }
+      void loadProjectRules().then(setText);
+    };
+    load();
+    return bridge.onStatusChange(() => load());
+  }, [ws]);
+
+  return (
+    <Section
+      title="Project rules"
+      hint="Short always-do list for this repo (.ablit/rules.md). Pinned rules auto-load into chat. Unpin to keep the file without injecting it."
+    >
+      {!ws ? (
+        <p className="font-mono text-[11px] text-muted">Connect a workspace first.</p>
+      ) : (
+        <>
+          <textarea
+            className="field min-h-[120px] font-mono text-[12px]"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={'Always use relative paths.\nNever write outside the workspace root.\n'}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1.5 font-mono text-[10px] text-zinc-400">
+              <input
+                type="checkbox"
+                checked={pinned}
+                onChange={(e) => onPatch({ projectRulesPinned: e.target.checked })}
+              />
+              Pin into agent prompt
+            </label>
+            <button
+              type="button"
+              className="btn-primary h-7 px-2 text-[10px]"
+              disabled={busy || !bridge.connected}
+              onClick={() => {
+                setBusy(true);
+                setNote('');
+                void saveProjectRules(text)
+                  .then(() => setNote('Saved .ablit/rules.md'))
+                  .catch((e) => setNote(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setBusy(false));
+              }}
+            >
+              Save
+            </button>
+          </div>
+          {note ? <p className="font-mono text-[11px] text-zinc-300">{note}</p> : null}
+        </>
+      )}
     </Section>
   );
 }
@@ -1404,12 +1480,54 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
           </div>
         </Section>
 
+        <ProjectRulesPanel settings={settings} onPatch={patch} />
+
         <Section
           title="MCP servers"
           hint="Stdio MCP via the localhost bridge. Tools appear as mcp__server__tool in chat/jobs. Orphan MCP procs are cleaned on Refresh/bridge restart."
         >
+          <div className="mb-2 font-mono text-[10px] uppercase text-muted">Catalog</div>
+          <div className="mb-3 grid gap-2 sm:grid-cols-2">
+            {featuredMcpCatalog().map((entry) => {
+              const hit = catalogMatch(servers, entry);
+              const st = hit ? getMcpServerState(hit.id) : undefined;
+              const on = Boolean(hit?.enabled);
+              return (
+                <div key={entry.id} className="rounded border border-border bg-background px-2.5 py-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-[12px] font-medium text-zinc-200">{entry.title}</div>
+                      <p className="mt-0.5 font-mono text-[10px] leading-4 text-muted">{entry.blurb}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className={on ? 'btn-primary h-6 px-2 text-[10px]' : 'btn-ghost h-6 px-2 text-[10px]'}
+                      onClick={() => {
+                        if (hit) {
+                          updateMcp(hit.id, { enabled: !hit.enabled });
+                          setMcpHint(hit.enabled ? `Disabled ${entry.title}` : `Enabled ${entry.title} — Connect / refresh`);
+                        } else {
+                          patch({ mcpServers: [...servers, catalogToConfig(entry, uid('mcp'))] });
+                          setMcpHint(`Added ${entry.title} — Connect / refresh`);
+                        }
+                      }}
+                    >
+                      {on ? 'On' : 'Add'}
+                    </button>
+                  </div>
+                  {st?.connected && st.tools.length ? (
+                    <p className="mt-1 truncate font-mono text-[10px] text-emerald-300/90" title={st.tools.map((t) => t.name).join(', ')}>
+                      {st.tools.length} tools · {st.tools.map((t) => t.name).slice(0, 6).join(', ')}
+                    </p>
+                  ) : (
+                    <p className="mt-1 font-mono text-[10px] text-zinc-600">{entry.command} {entry.args.join(' ')}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
           <p className="font-mono text-[11px] text-muted">
-            Example: <code className="text-zinc-400">npx -y @modelcontextprotocol/server-filesystem .</code>
+            Custom row: <code className="text-zinc-400">npx -y @modelcontextprotocol/server-filesystem .</code>
           </p>
 
           {servers.length === 0 ? (

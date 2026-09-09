@@ -98,6 +98,21 @@ export const MCP_ONE_CLICK_CATALOG: readonly McpCatalogEntry[] = [
   },
 ];
 
+/** Operator-facing one-click set (browser = Playwright). */
+export const MCP_FEATURED_IDS = ['filesystem', 'playwright', 'git', 'mempalace'] as const;
+
+export function featuredMcpCatalog(): McpCatalogEntry[] {
+  const featured = MCP_FEATURED_IDS.map((id) => MCP_ONE_CLICK_CATALOG.find((e) => e.id === id)).filter(
+    (e): e is McpCatalogEntry => Boolean(e),
+  );
+  const rest = MCP_ONE_CLICK_CATALOG.filter((e) => !MCP_FEATURED_IDS.includes(e.id as (typeof MCP_FEATURED_IDS)[number]));
+  return [...featured, ...rest];
+}
+
+export function catalogMatch(servers: McpServerConfig[], entry: McpCatalogEntry): McpServerConfig | undefined {
+  return servers.find((s) => s.name.trim().toLowerCase() === entry.name.toLowerCase());
+}
+
 export function catalogToConfig(entry: McpCatalogEntry, id: string): McpServerConfig {
   return {
     id,

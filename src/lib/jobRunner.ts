@@ -2,6 +2,7 @@ import { resolveActiveSettings } from "./activeEndpoint";
 import { executeAgentTool } from "./agentTools";
 import { formatSkillsCatalogPrompt, formatVerifyStrictSkillPrompt, shouldAutoInjectVerifyStrict, toCatalogEntries } from "./skills";
 import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from "./projectMemory";
+import { filterPinnedProjectMemory } from "./projectRules";
 import { formatSessionMemory, mempalaceOpts } from "./mempalace";
 import { bridge } from "./bridgeClient";
 import { applyGrokEdits, parseGrokEdits } from "./grokLayer";
@@ -280,7 +281,9 @@ async function runJob(initial: Job, settings: ClientSettings) {
   if (bridge.connected) {
     try {
       const files = await bridge.readProjectMemory();
-      projectMemoryBlock = formatProjectMemoryPrompt(files);
+      projectMemoryBlock = formatProjectMemoryPrompt(
+        filterPinnedProjectMemory(files, settings.projectRulesPinned !== false),
+      );
     } catch {
       projectMemoryBlock = "";
     }
