@@ -102,6 +102,20 @@ try {
     assert.equal(refused.status, 'error', 'writing into the install dir must be refused');
   }
 
+  // A pinned root that does not exist yet is auto-created (user named a new project folder).
+  const newRoot = path.join(tmp, 'brand', 'new', 'project');
+  assert.ok(!fs.existsSync(newRoot), 'precondition: new root does not exist');
+  const created = await rpc(ws, { type: 'write_file', file: 'app.py', content: 'print(1)', root: newRoot });
+  assert.equal(created.status, 'ok', 'write into a not-yet-created pinned root should auto-create it: ' + JSON.stringify(created));
+  assert.ok(fs.existsSync(path.join(newRoot, 'app.py')), 'file must land in the auto-created pinned root');
+
+  // Auto-create must still refuse a not-yet-existing root inside the install dir.
+  if (appRoot) {
+    const ghost = await rpc(ws, { type: 'write_file', file: 'y.txt', content: 'x', root: path.join(appRoot, 'nope', 'deep') });
+    assert.equal(ghost.status, 'error', 'auto-create inside the install dir must be refused');
+    assert.ok(!fs.existsSync(path.join(appRoot, 'nope')), 'no ghost dir may be created inside the install dir');
+  }
+
   // Path escape under a pinned root is refused.
   const escape = await rpc(ws, { type: 'write_file', file: '../escape.txt', content: 'x', root: dirB });
   assert.equal(escape.status, 'error', 'path escape (..) must be refused');

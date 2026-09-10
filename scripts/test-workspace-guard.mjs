@@ -115,9 +115,20 @@ assert.equal(
   false,
 );
 
+// When the thread's chosen workspace and the daemon global root BOTH pass the gate
+// but DIFFER, the user's thread workspace wins (fixes drift-to-daemon-root).
 assert.equal(
   connectedBridgeWriteRoot({
-    workspaceRoot: '/Users/me/ui-stale',
+    workspaceRoot: '/Users/me/thread-choice',
+    appRoot: '/Users/me/abliterated',
+    bridgeRoot: '/Users/me/daemon-drift',
+  }),
+  '/Users/me/thread-choice',
+);
+// A workspaceRoot inside the install dir is rejected; fall back to a valid daemon root.
+assert.equal(
+  connectedBridgeWriteRoot({
+    workspaceRoot: '/Users/me/abliterated/sub',
     appRoot: '/Users/me/abliterated',
     bridgeRoot: '/Users/me/project',
   }),

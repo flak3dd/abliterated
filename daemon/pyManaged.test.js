@@ -33,6 +33,12 @@ assert.equal(looksLikePythonCommand("echo python is cool"), false);
 assert.equal(looksLikePythonCommand("npm install"), false);
 assert.equal(looksLikePythonCommand("sudo python3 app.py"), false);
 assert.equal(looksLikePythonCommand(""), false);
+// Pip-installed console scripts route through the workspace .venv too.
+assert.equal(looksLikePythonCommand("pytest -q"), true);
+assert.equal(looksLikePythonCommand("uvicorn main:app --reload"), true);
+assert.equal(looksLikePythonCommand("black ."), true);
+assert.equal(looksLikePythonCommand("ruff check ."), true);
+assert.equal(looksLikePythonCommand("npx create-react-app x"), false);
 
 assert.equal(alreadyIsolatedPython(".venv/bin/pip install foo"), true);
 assert.equal(alreadyIsolatedPython(".venv/bin/python app.py"), true);
