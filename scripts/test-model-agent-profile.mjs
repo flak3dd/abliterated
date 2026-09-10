@@ -49,6 +49,19 @@ assert.equal(qwen.compactPrompt, false);
 assert.equal(qwen.sendTools, true);
 assert.equal(qwen.useThoughtLock, true);
 assert.ok(qwen.toolNames.includes("shell") || qwen.toolNames.includes("read_file"));
+assert.ok(qwen.toolNames.includes("write_file"));
+const core = buildModelAgentProfile({
+  model: "Qwen/Qwen3-8B",
+  provider: "featherless",
+  toolUse: true,
+  contextLength: 8192,
+  buildMode: true,
+});
+assert.equal(core.toolTier, "core");
+assert.ok(core.toolNames.includes("verify"));
+assert.ok(core.toolNames.includes("shell"));
+assert.ok(core.toolNames.includes("read_skill"));
+assert.ok(core.toolNames.includes("suggest_skill"));
 assert.ok(qwen.systemAddendum.includes("Thinking model"));
 
 const base = buildModelAgentProfile({
@@ -56,9 +69,18 @@ const base = buildModelAgentProfile({
   provider: "featherless",
   toolUse: false,
   contextLength: 8192,
+  buildMode: true,
+  workspaceRoot: "/Users/me/project",
 });
 assert.equal(base.toolTier, "none");
 assert.equal(base.sendTools, false);
+assert.ok(base.systemAddendum.includes("Native function tools are OFF"));
+assert.ok(base.systemAddendum.includes("OVERRIDE"));
+assert.ok(base.systemAddendum.includes("markdown ToDo"));
+assert.ok(base.systemAddendum.includes("Build lock without tools"));
+assert.ok(base.systemAddendum.includes("/Users/me/project"));
+assert.ok(base.systemAddendum.includes("ws://127.0.0.1:17322"));
+assert.equal(base.systemAddendum.includes("call `todo` with 3"), false);
 
 fs.rmSync(outDir, { recursive: true, force: true });
 console.log("test-model-agent-profile: ok");

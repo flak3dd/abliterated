@@ -1,0 +1,18 @@
+services:
+  abliterated-image:
+    environment:
+      ABLITERATED_IMAGE_HOST: "0.0.0.0"
+      ABLITERATED_IMAGE_PORT: "7860"
+      SAMPLER_BACKEND: "diffusers"
+      FLUX_MODEL_ID: "krea2-raw-fp8"
+      IMAGE_MODEL_ID: "krea2-raw-fp8"
+      SAMPLER_STEPS: "24"
+      FLUX_STEPS: "24"
+      SAMPLER_GUIDANCE: "3.5"
+      SAMPLER_SAMPLER: "euler"
+      SAMPLER_SCHEDULER: "beta"
+      SAMPLER_LORA_STRENGTH: "0.75"
+      SAMPLER_MAX_EDGE: "1536"
+    ports: ["7860:7860"]
+    gpus: all
+    ipc: host

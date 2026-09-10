@@ -1,17 +1,22 @@
 import { bridge } from './bridgeClient';
-import { workspaceGate } from './workspaceGuard';
+import { isPathLocked, type WriteLockTable } from './writeLocks';
+import { connectedBridgeWriteRoot, workspaceGate } from './workspaceGuard';
 import { generateImage, imageResultToMarkdown } from './imageGen';
+import { isXaiImageBackend, resolveXaiImageModel, XAI_IMAGE_MODEL } from './xaiImage';
 import { saveGeneratedImage } from './imageLibrary';
 import { isDeadlyCommand } from './grokLayer';
-import { isMcpToolName } from './mcpClient';
+import { isMcpToolName, listConnectedMcpTools } from './mcpClient';
 import {
   applyTodoToolArgs,
   canonicalizeToolName,
   formatTodoBlock,
   type TodoItem,
 } from './agentHelpers';
+import { parseToolCallArguments } from './toolArgs';
 import { formatSkillFile, similarSkillExists, slugifySkillId, toCatalogEntries } from './skills';
 import { runWebSearch } from './webSearch';
+import { assertSafeFetchUrl } from './urlSafety';
+import { mempalaceOpts } from './mempalace';
 import {
   TASK_GRAPH_PATH,
   commitTaskUpdate,
@@ -21,14 +26,69 @@ import {
   parseTaskGraph,
   stringifyHierarchicalTaskGraph,
 } from './taskGraph';
-import type { ClientSettings, ToolCallPayload, ToolCallStatus, ToolType } from '../types';
+import type { ClientSettings, ToolCallPayload, ToolCallStatus, ToolType, DiagnosticItem, AgentMode } from '../types';
+import { ASK_MODE_TOOLS } from '../types';
 
 export function toolArgString(args: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
     const v = args[key];
     if (typeof v === 'string' && v.trim()) return v;
   }
+  if (typeof args.raw === 'string' && args.raw.trim()) {
+    const recovered = parseToolCallArguments(args.raw);
+    if (recovered !== args) {
+      for (const key of keys) {
+        const v = recovered[key];
+        if (typeof v === 'string' && v.trim()) return v;
+      }
+    }
+  }
   return '';
+}
+
+const GREP_FLAG_RE = /^-[a-zA-Z]+$/;
+
+/**
+ * Models often swap grep argv: pattern="-n" path="TODO". Swap or reject clearly.
+ * Also strip an absolute workspace-root prefix from path when present.
+ */
+export function normalizeGrepArgs(
+  pattern: string,
+  pathArg: string,
+  workspaceRoot = '',
+): { pattern: string; path: string; error?: string } {
+  let pat = (pattern || '').trim();
+  let pth = (pathArg || '').trim();
+  const root = (workspaceRoot || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+
+  if (root && pth) {
+    const norm = pth.replace(/\\/g, '/');
+    const rootCmp = root.toLowerCase();
+    const pathCmp = norm.toLowerCase();
+    if (pathCmp === rootCmp) pth = '.';
+    else if (pathCmp.startsWith(rootCmp + '/')) pth = norm.slice(root.length + 1) || '.';
+  }
+
+  if (pth.includes('..')) {
+    return {
+      pattern: pat,
+      path: pth,
+      error: 'grep path must stay inside the workspace (no ".." segments). Use a relative path under the working directory.',
+    };
+  }
+
+  if (GREP_FLAG_RE.test(pat) && pth && !GREP_FLAG_RE.test(pth)) {
+    // pattern looks like a flag; path looks like the real query — swap.
+    return { pattern: pth, path: '.' };
+  }
+  if (GREP_FLAG_RE.test(pat) && (!pth || GREP_FLAG_RE.test(pth))) {
+    return {
+      pattern: pat,
+      path: pth,
+      error: `grep pattern looks like a flag (${pat}). Pass the search string as pattern and an optional relative path.`,
+    };
+  }
+  return { pattern: pat, path: pth };
 }
 
 export function asStringList(v: unknown): string[] | undefined {
@@ -55,6 +115,12 @@ export type ExecuteAgentToolOpts = {
   todoItems?: TodoItem[];
   /** Persist ToDo checklist after a successful todo tool call. */
   onTodos?: (items: TodoItem[]) => void;
+  /** Path-level write locks (exact relative paths). */
+  writeLocks?: WriteLockTable;
+  /** Owner id for lock checks (job/node id). */
+  writeLockOwner?: string;
+  /** Active interaction mode (agent, ask, plan, debug). */
+  agentMode?: AgentMode;
 };
 
 export type ExecuteAgentToolResult = {
@@ -102,11 +168,28 @@ function disconnected(
   return gated(tool, fallback);
 }
 
-async function runShellCapture(command: string): Promise<{ out: string; code: number }> {
+/** The directory the daemon should write/exec in for this thread — pins to the user's workspace. */
+function bridgeWriteRoot(workspaceRoot?: string): string | undefined {
+  return (
+    connectedBridgeWriteRoot({
+      workspaceRoot,
+      appRoot: bridge.currentAppRoot,
+      bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
+    }) ||
+    (workspaceRoot || '').trim() ||
+    undefined
+  );
+}
+
+async function runShellCapture(command: string, root?: string): Promise<{ out: string; code: number }> {
   let out = '';
-  const code = await bridge.runCommand(command, (chunk) => {
-    out += chunk;
-  });
+  const code = await bridge.runCommand(
+    command,
+    (chunk) => {
+      out += chunk;
+    },
+    { root },
+  );
   return { out, code };
 }
 
@@ -120,12 +203,17 @@ export async function executeAgentTool(
 ): Promise<ExecuteAgentToolResult> {
   const { mode, autoAcceptEdits, autoRunShell, settings, enabledTools } = opts;
 
-  if (isMcpToolName(tool.name)) {
+  const matchingMcpTool = opts.executeMcpTool
+    ? listConnectedMcpTools().find((t) => t.name === tool.name || t.namespaced === tool.name)
+    : undefined;
+
+  if (isMcpToolName(tool.name) || matchingMcpTool) {
     if (!opts.executeMcpTool) {
       return err(tool, 'MCP not available');
     }
     try {
-      const content = await opts.executeMcpTool(tool.name, tool.arguments);
+      const targetName = matchingMcpTool?.namespaced || tool.name;
+      const content = await opts.executeMcpTool(targetName, tool.arguments);
       return ok(tool, content);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -138,7 +226,15 @@ export async function executeAgentTool(
   if (canonical !== tool.name) {
     tool = { ...tool, name: canonical };
   }
-  const allowed = enabledTools.includes(name) || name === 'todo' || name === 'task_read' || name === 'task_update';
+  const activeMode: AgentMode = opts.agentMode || settings.agentMode || 'agent';
+  if (activeMode === 'ask') {
+    const askAllow = new Set<string>(ASK_MODE_TOOLS);
+    if (!askAllow.has(name)) {
+      return denied(tool, `tool ${tool.name} is not allowed in Ask (read-only) mode`);
+    }
+  }
+
+  const allowed = enabledTools.includes(name) || (name === 'todo' || name === 'task_read' || (name === 'task_update' && activeMode !== 'ask'));
   if (!allowed) {
     return denied(tool, `tool ${tool.name} is not enabled`);
   }
@@ -167,7 +263,7 @@ export async function executeAgentTool(
   }
 
   if (name === 'read_file') {
-    const file = toolArgString(tool.arguments, ['path', 'file', 'target']);
+    const file = toolArgString(tool.arguments, ['path', 'file', 'target', 'file_path', 'filename']);
     if (!file) return err(tool, 'missing path');
     if (!bridge.connected) return disconnected(tool, file, autoAcceptEdits, mode);
     try {
@@ -178,20 +274,35 @@ export async function executeAgentTool(
   }
 
   if (name === 'write_file') {
-    const file = toolArgString(tool.arguments, ['path', 'file', 'target']);
-    const content = toolArgString(tool.arguments, ['content', 'text', 'body']);
+    const file = toolArgString(tool.arguments, ['path', 'file', 'target', 'file_path', 'filename']);
+    const content = toolArgString(tool.arguments, ['content', 'text', 'body', 'contents']);
     if (!file) return err(tool, 'missing path');
-    if (content === '' && tool.arguments.content == null && tool.arguments.text == null && tool.arguments.body == null) {
+    if (
+      content === '' &&
+      tool.arguments.content == null &&
+      tool.arguments.text == null &&
+      tool.arguments.body == null &&
+      tool.arguments.contents == null
+    ) {
       return err(tool, 'missing content');
     }
-    const preview = file + '\n---\n' + content.slice(0, 4000);
-    if (!autoAcceptEdits) {
-      if (mode === 'headless') return softSkip(tool, 'write_file needs Auto-accept edits (headless)');
-      return gated(tool, preview);
+    if (opts.writeLocks) {
+      const held = isPathLocked(opts.writeLocks, file, opts.writeLockOwner);
+      if (held) {
+        return err(tool, `path locked by ${held.owner} (node ${held.nodeId}) — path-level write lock`);
+      }
     }
+    const preview = file + '\n---\n' + content.slice(0, 4000);
     if (!bridge.connected) return disconnected(tool, preview, autoAcceptEdits, mode);
     try {
-      await bridge.writeFile(file, content);
+      await bridge.writeFile(file, content, {
+        root:
+          connectedBridgeWriteRoot({
+            workspaceRoot: opts.workspaceRoot,
+            appRoot: bridge.currentAppRoot,
+            bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
+          }) || opts.workspaceRoot || undefined,
+      });
       return ok(tool, 'wrote ' + file + ' (' + content.length + ' chars)');
     } catch (e) {
       return err(tool, e instanceof Error ? e.message : String(e));
@@ -199,11 +310,16 @@ export async function executeAgentTool(
   }
 
   if (name === 'grep') {
-    const pattern = toolArgString(tool.arguments, ['pattern']);
+    const rawPattern = toolArgString(tool.arguments, ['pattern']);
+    if (!rawPattern) return err(tool, 'missing pattern');
+    const rawPath = toolArgString(tool.arguments, ['path']);
+    const normalized = normalizeGrepArgs(rawPattern, rawPath, opts.workspaceRoot);
+    if (normalized.error) return err(tool, normalized.error);
+    const pattern = normalized.pattern;
     if (!pattern) return err(tool, 'missing pattern');
     if (!bridge.connected) return disconnected(tool, pattern, autoAcceptEdits, mode);
     try {
-      const pathArg = toolArgString(tool.arguments, ['path']);
+      const pathArg = normalized.path;
       const globArg = toolArgString(tool.arguments, ['glob']);
       return ok(
         tool,
@@ -358,7 +474,7 @@ export async function executeAgentTool(
     const payload = command || JSON.stringify(tool.arguments, null, 2);
     if (autoRunShell && bridge.connected && command && !isDeadlyCommand(command)) {
       try {
-        const { out, code } = await runShellCapture(command);
+        const { out, code } = await runShellCapture(command, bridgeWriteRoot(opts.workspaceRoot));
         const result = `${out}${out && !out.endsWith('\n') ? '\n' : ''}exit ${code}`;
         return ok(tool, result);
       } catch (e) {
@@ -381,7 +497,7 @@ export async function executeAgentTool(
     if (isDeadlyCommand(command)) return err(tool, 'refused: deadly command');
     if (autoRunShell && bridge.connected) {
       try {
-        const { out, code } = await runShellCapture(command);
+        const { out, code } = await runShellCapture(command, bridgeWriteRoot(opts.workspaceRoot));
         const result = `[verify] exit ${code}\n${out}${out && !out.endsWith('\n') ? '\n' : ''}`;
         return ok(tool, result);
       } catch (e) {
@@ -396,20 +512,51 @@ export async function executeAgentTool(
   }
 
   if (name === 'generate_image') {
-    const prompt = toolArgString(tool.arguments, ['prompt', 'text', 'description']);
+    const prompt = toolArgString(tool.arguments, ['prompt', 'text', 'description']) || '';
     const size = toolArgString(tool.arguments, ['size']) || '1024x1024';
-    if (!prompt) return err(tool, 'missing prompt');
+    const intent = toolArgString(tool.arguments, ['intent']) || '';
+    const imageB64 = toolArgString(tool.arguments, ['image', 'image_b64']);
+    const idImageB64 = toolArgString(tool.arguments, ['id_image', 'id_b64', 'identity']);
+    const idType = toolArgString(tool.arguments, ['id_type', 'document_type']);
+    const country = toolArgString(tool.arguments, ['country', 'country_code']);
+    const idJob = /^id[_-](clean|back|portrait|faceswap)$/i.test(intent);
+    const faceswap = !idJob && (/faceswap|face_swap|id.?swap/i.test(intent) || !!idImageB64);
+    if (!prompt && !faceswap && !idJob) return err(tool, 'missing prompt');
+    if (faceswap && (!imageB64 || !idImageB64)) {
+      return err(tool, 'faceswap needs image (target) and id_image (identity face)');
+    }
+    if (idJob && !imageB64) return err(tool, 'ID job needs image (document scan)');
+    if (/id[_-]portrait/i.test(intent) && !idImageB64) {
+      return err(tool, 'id_portrait needs id_image (headshot)');
+    }
     if (!settings.imageGenEnabled) {
-      return err(tool, 'Image generation disabled. Enable in Images tab (spark-image/).');
+      return err(tool, 'Image generation disabled. Enable in Images tab (Spark or xAI Imagine).');
     }
     try {
-      const result = await generateImage({ settings, prompt, size });
+      const xai = isXaiImageBackend(settings);
+      const result = await generateImage({
+        settings,
+        prompt: prompt || (faceswap ? 'ID faceswap' : ''),
+        size,
+        intent: faceswap ? 'faceswap' : intent || undefined,
+        imageB64: imageB64 || undefined,
+        idImageB64: idImageB64 || undefined,
+        idType: idType || undefined,
+        country: country || undefined,
+        model: xai
+          ? resolveXaiImageModel(settings.xaiImageModel)
+          : faceswap || idJob
+            ? 'qwen-edit-2511-fp8'
+            : undefined,
+      });
       if (result.b64 || result.url) {
         try {
           await saveGeneratedImage({
             prompt,
             size,
-            model: settings.imageModel || 'abliterated-flux-klein',
+            model: xai
+              ? resolveXaiImageModel(settings.xaiImageModel, XAI_IMAGE_MODEL)
+              : settings.imageModel || 'flux2-klein-9b',
             b64: result.b64,
             url: result.url,
           });
@@ -561,6 +708,48 @@ export async function executeAgentTool(
     }
   }
 
+  if (name === 'memory_search' || name === 'memory_save' || name === 'memory_status' || name === 'memory_wake') {
+    if (settings.mempalaceEnabled === false) return err(tool, 'MemPalace is disabled in Settings');
+    if (!bridge.connected) return disconnected(tool, name, autoAcceptEdits, mode);
+    const base = mempalaceOpts(settings, opts.workspaceRoot || bridge.currentRoot);
+    try {
+      if (name === 'memory_search') {
+        const query = toolArgString(tool.arguments, ['query', 'q', 'search']);
+        if (!query) return err(tool, 'missing query');
+        const wing = toolArgString(tool.arguments, ['wing']) || base.wing;
+        const room = toolArgString(tool.arguments, ['room']);
+        const nRaw = tool.arguments.results ?? tool.arguments.limit ?? tool.arguments.n;
+        const results = typeof nRaw === 'number' || typeof nRaw === 'string' ? Number(nRaw) : undefined;
+        return ok(
+          tool,
+          await bridge.mempalaceSearch(query, {
+            palacePath: base.palacePath,
+            wing,
+            room,
+            results: Number.isFinite(results) ? results : undefined,
+          }),
+        );
+      }
+      if (name === 'memory_save') {
+        const content = toolArgString(tool.arguments, ['content', 'text', 'body', 'entry']);
+        if (!content) return err(tool, 'missing content');
+        const wing = toolArgString(tool.arguments, ['wing']) || base.wing;
+        const room = toolArgString(tool.arguments, ['room']);
+        return ok(
+          tool,
+          await bridge.mempalaceSave(content, { palacePath: base.palacePath, wing, room }),
+        );
+      }
+      if (name === 'memory_status') {
+        return ok(tool, await bridge.mempalaceStatus({ palacePath: base.palacePath, wing: base.wing }));
+      }
+      const wing = toolArgString(tool.arguments, ['wing']) || base.wing;
+      return ok(tool, await bridge.mempalaceWake({ palacePath: base.palacePath, wing }));
+    } catch (e) {
+      return err(tool, e instanceof Error ? e.message : String(e));
+    }
+  }
+
   if (name === 'web_search') {
     const query = toolArgString(tool.arguments, ['query', 'q', 'search']);
     if (!query) return err(tool, 'missing query');
@@ -583,22 +772,27 @@ export async function executeAgentTool(
     const url = toolArgString(tool.arguments, ['url']);
     if (!url) return err(tool, 'missing url');
     try {
-      let parsed: URL;
-      try {
-        parsed = new URL(url);
-      } catch {
-        throw new Error('invalid url');
+      const MAX_REDIRECTS = 5;
+      let current = url;
+      let res: Response | null = null;
+      for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+        const safe = assertSafeFetchUrl(current);
+        if (!safe.ok) throw new Error(safe.reason);
+        res = await fetch(safe.url.toString(), { redirect: 'manual' });
+        if (res.status >= 300 && res.status < 400) {
+          const loc = res.headers.get('location');
+          if (!loc) throw new Error('redirect without location');
+          current = new URL(loc, safe.url).toString();
+          continue;
+        }
+        break;
       }
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        throw new Error('only http(s) urls are allowed');
+      if (!res) throw new Error('fetch failed');
+      if (res.status >= 300 && res.status < 400) {
+        throw new Error('too many redirects');
       }
-      const host = parsed.hostname.toLowerCase();
-      if (host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '0.0.0.0' || host === '[::1]') {
-        throw new Error('refused: local address');
-      }
-      const res = await fetch(parsed.toString(), { redirect: 'follow' });
-      const text = await res.text();
-      const clipped = text.length > 48_000 ? `${text.slice(0, 48_000)}\n/* truncated */` : text;
+      const body = await res.text();
+      const clipped = body.length > 48_000 ? `${body.slice(0, 48_000)}\n/* truncated */` : body;
       return ok(tool, `HTTP ${res.status}\n${clipped}`);
     } catch (e) {
       return err(tool, e instanceof Error ? e.message : String(e));
@@ -609,4 +803,54 @@ export async function executeAgentTool(
     return softSkip(tool, `unsupported or gated tool ${tool.name}`);
   }
   return gated(tool, JSON.stringify(tool.arguments, null, 2));
+}
+
+/**
+ * Post-edit workspace diagnostics runner.
+ * Runs `tsc --noEmit --pretty false` via bridge and parses output into DiagnosticItem array.
+ */
+export async function runWorkspaceDiagnostics(root?: string): Promise<DiagnosticItem[]> {
+  if (!bridge.connected) return [];
+  let stdout = '';
+  let stderr = '';
+  try {
+    await bridge.runCommand(
+      'npx tsc --noEmit --pretty false',
+      (chunk, stream) => {
+        if (stream === 'stderr') stderr += chunk;
+        else stdout += chunk;
+      },
+      { root: bridgeWriteRoot(root) },
+    );
+  } catch {
+    return [];
+  }
+  const combined = stdout + '\n' + stderr;
+  const diagnostics: DiagnosticItem[] = [];
+  const lines = combined.split('\n');
+  for (const line of lines) {
+    const m1 = line.match(/^([^(]+)\((\d+),(\d+)\):\s*(error|warning)\s*(TS\d+:\s*.*)$/);
+    if (m1) {
+      diagnostics.push({
+        file: m1[1].trim(),
+        line: parseInt(m1[2], 10),
+        col: parseInt(m1[3], 10),
+        severity: m1[4] as 'error' | 'warning',
+        message: m1[5].trim(),
+      });
+      continue;
+    }
+    const m2 = line.match(/^([^:]+):(\d+):(\d+)\s*-\s*(error|warning)\s*(TS\d+:\s*.*)$/);
+    if (m2) {
+      diagnostics.push({
+        file: m2[1].trim(),
+        line: parseInt(m2[2], 10),
+        col: parseInt(m2[3], 10),
+        severity: m2[4] as 'error' | 'warning',
+        message: m2[5].trim(),
+      });
+      continue;
+    }
+  }
+  return diagnostics.slice(0, 20);
 }

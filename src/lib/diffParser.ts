@@ -2,7 +2,7 @@ import type { DiffHunk } from '../types';
 
 const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
-export function parseUnifiedDiff(rawDiff: string, defaultFile = 'workspace/patch.ts'): DiffHunk[] {
+export function parseUnifiedDiff(rawDiff: string, defaultFile = ''): DiffHunk[] {
   const lines = rawDiff.replace(/\r\n/g, '\n').split('\n');
   const hunks: DiffHunk[] = [];
   let file = defaultFile;
@@ -54,7 +54,7 @@ export function parseUnifiedDiff(rawDiff: string, defaultFile = 'workspace/patch
   }
   flush();
 
-  if (hunks.length === 0 && rawDiff.trim()) {
+  if (hunks.length === 0 && rawDiff.trim() && defaultFile) {
     hunks.push({
       file: defaultFile,
       oldStart: 1,

@@ -13,13 +13,14 @@ interface ShortcutItem {
 }
 
 const SHORTCUTS: ShortcutItem[] = [
-  { category: 'Navigation', keys: ['⌘', '1'], description: 'Go to Sessions (Home)' },
+  { category: 'Navigation', keys: ['⌘', '1'], description: 'Go to Chat' },
   { category: 'Navigation', keys: ['⌘', '2'], description: 'Go to Workspace' },
   { category: 'Navigation', keys: ['⌘', '3'], description: 'Go to Models' },
   { category: 'Navigation', keys: ['⌘', '4'], description: 'Go to Jobs' },
   { category: 'Navigation', keys: ['⌘', '5'], description: 'Go to API' },
-  { category: 'Navigation', keys: ['⌘', '6'], description: 'Go to Images' },
-  { category: 'Navigation', keys: ['⌘', '7'], description: 'Go to Settings' },
+  { category: 'Navigation', keys: ['⌘', '6'], description: 'Go to vLLM' },
+  { category: 'Navigation', keys: ['⌘', '7'], description: 'Go to Images' },
+  { category: 'Navigation', keys: ['⌘', '8'], description: 'Go to Settings' },
   { category: 'Navigation', keys: ['⌘', 'K'], description: 'Open Command Palette' },
   { category: 'Navigation', keys: ['?'], description: 'Open Keyboard Shortcuts' },
   { category: 'General', keys: ['⌘', 'N'], description: 'New Chat Session' },

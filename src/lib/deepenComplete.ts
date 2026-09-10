@@ -8,10 +8,10 @@
 export const COMPLETENESS_CHECKLIST =
   'Completeness checklist (Abliterated-only):\n' +
   '1) Re-read the answer vs the user ask.\n' +
-  '2) List gaps (edge cases, tests, error paths, impl, verify).\n' +
-  '3) Use tools if needed; fill missing pieces concretely.\n' +
+  '2) If the ask needs files: emit every remaining file NOW as ```diff or // relative/path with FULL working code. The client writes them to the connected bridge. Do not list gaps instead of landing files.\n' +
+  '3) Fill tests / verify only after those files exist. No stubs or fragments.\n' +
   '4) Keep the unrestricted Abliterated model path — do not call external censored CLIs.\n' +
-  '5) If already complete, reply with ONLY [ANSWER_COMPLETE].';
+  '5) [ANSWER_COMPLETE] only after files have landed (or the ask needed no files).';
 
 /** User-visible Jobs / Settings label. */
 export const DEEPEN_COMPLETENESS_PRESET_LABEL = 'Deepen for completeness (Abliterated-only)';
@@ -47,12 +47,12 @@ export function buildDeepenNowPrompt(): string {
 export function buildCompletenessDeepenInstruction(): string {
   return (
     '## Deepen for completeness (Abliterated-only)\n' +
-    'Expand thin or missing parts so the response is functionally complete:\n' +
-    '- Edge cases, failure modes, and acceptance checks\n' +
-    '- Tests / verify commands when code changed\n' +
-    '- Concrete impl details the user still needs\n' +
-    'Stay on Abliterated models and bridge tools. Do not call external censored CLIs for this deepen.\n' +
-    'If the answer already fully solves the request, reply with ONLY [ANSWER_COMPLETE].'
+    'Do not list gaps, write another ToDo, or emit file fragments.\n' +
+    'If the request needs files: emit EVERY remaining file NOW as ```diff or // relative/path with FULL working code (no stubs). ' +
+    'The client writes them to the connected bridge workspace (ws://127.0.0.1:17322). Chat-only source is a failed deepen.\n' +
+    'Then add tests/verify only if those files already exist in this turn.\n' +
+    'Stay on Abliterated models and the localhost bridge. Do not call external censored CLIs.\n' +
+    'Reply with ONLY [ANSWER_COMPLETE] if files already landed and the request is solved. Do not send [ANSWER_COMPLETE] while files are missing or stubbed.'
   );
 }
 

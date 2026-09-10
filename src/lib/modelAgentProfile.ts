@@ -3,19 +3,27 @@ import { classifyModel } from './modelSettingsGuide.js';
 
 export const CORE_AGENT_TOOLS = [
   'read_file',
+  'write_file',
   'grep',
   'glob',
   'list_dir',
   'file_outline',
   'todo',
+  'verify',
+  'shell',
   'git_status',
   'git_diff',
+  'memory_search',
+  'list_skills',
+  'read_skill',
+  'suggest_skill',
 ] as const;
 
 const FULL_TOOL_NAMES = [
   'web_fetch',
   'web_search',
   'read_file',
+  'write_file',
   'shell',
   'grep',
   'glob',
@@ -33,6 +41,10 @@ const FULL_TOOL_NAMES = [
   'read_skill',
   'suggest_skill',
   'write_skill',
+  'memory_search',
+  'memory_save',
+  'memory_status',
+  'memory_wake',
 ] as const;
 
 const PLAN_TOOL_NAMES = [
@@ -50,6 +62,9 @@ const PLAN_TOOL_NAMES = [
   'list_skills',
   'read_skill',
   'suggest_skill',
+  'memory_search',
+  'memory_status',
+  'memory_wake',
 ] as const;
 
 type ToolName = string;
@@ -79,6 +94,8 @@ export type ModelAgentProfileInput = {
   toolUse?: boolean;
   contextLength?: number;
   enabledTools?: readonly string[];
+  /** Connected localhost-bridge workspace; fences/writes land here. */
+  workspaceRoot?: string;
 };
 
 function likelySmallContext(model: string, contextLength?: number): boolean {
@@ -126,25 +143,31 @@ function addendum(opts: {
   planMode: boolean;
   buildMode: boolean;
   contextLength?: number;
+  workspaceRoot?: string;
 }): string {
   const ctx = opts.contextLength ? `${opts.contextLength} tok` : opts.small ? 'small window' : 'wide window';
+  const dest = (opts.workspaceRoot || '').trim();
+  const land = dest
+    ? `the connected bridge workspace ${dest} (ws://127.0.0.1:17322)`
+    : 'the connected bridge workspace (ws://127.0.0.1:17322)';
   const lines = [`## Model profile — ${opts.model}`, `Family: ${opts.family}. Context: ${ctx}.`];
   if (opts.tier === 'none') {
     lines.push(
-      'Native function tools are OFF for this checkpoint. Do not emit tool-call JSON or fake tool results.',
-      'Write every file change as ```diff or a // relative/path fence in CONTENT. Thought is prose only.',
-      'If you need a file you do not have, name the path instead of inventing its contents.',
+      'Native function tools are OFF for this checkpoint. Do not emit tool-call JSON, ```json tool_calls fences, or fake tool results.',
+      'OVERRIDE: ignore any instruction to call `todo`, write_file, list_dir, grep, glob, verify, or other function tools — they are unavailable.',
+      `Put a markdown ToDo (3–12 items) in CONTENT, then write every file this turn as \`\`\`diff or a // relative/path fence. The client writes them to ${land}. Relative paths only. Thought is prose only.`,
+      'If you need a file you do not have, name the path instead of inventing its contents. Chat-only source is a failed build.',
     );
   } else if (opts.tier === 'core') {
     lines.push(
       'Compact tool set only: ' + CORE_AGENT_TOOLS.join(', ') + '.',
-      'One tool at a time. Keep reasoning to a few lines. No skill-catalog essays.',
-      'CODE ONLY IN CONTENT (```diff / // path). Never in thought.',
+      'One tool at a time via the API tools channel. Never paste tool JSON in markdown fences.',
+      `CODE ONLY IN CONTENT via write_file or \`\`\`diff / // path. Both land on ${land} this turn. Never in thought.`,
     );
   } else {
     lines.push(
-      'Full native tools are available. Call them instead of inventing listings or file bodies.',
-      'CODE ONLY IN CONTENT (```diff / // path). Never in thought.',
+      'Full native tools are available. Call write_file or emit path-headed diffs via the API tools channel — never paste tool JSON in markdown.',
+      `CODE ONLY IN CONTENT via write_file or \`\`\`diff / // path. Both land on ${land} this turn. Never in thought.`,
     );
   }
   if (opts.thinking) {
@@ -153,9 +176,11 @@ function addendum(opts: {
   if (opts.planMode) {
     lines.push('Plan lock: checklist then stop. No diffs.');
   } else if (opts.buildMode && opts.tier !== 'none') {
-    lines.push('Build lock: todo → tools → diffs in content this turn.');
+    lines.push('Build lock (Abliterated Loop): classify → gather → act → verify → ship → stop; todo → tools → diffs in content this turn.');
   } else if (opts.buildMode && opts.tier === 'none') {
-    lines.push('Build lock without tools: emit real diffs in content this turn; do not paste a directory sketch twice.');
+    lines.push(
+      'Build lock without tools: markdown ToDo in content → every scaffold file as // path or ```diff this turn → ```bash verify. Do not call todo/write_file.',
+    );
   }
   return lines.join('\n');
 }
@@ -168,12 +193,18 @@ export function buildModelAgentProfile(opts: ModelAgentProfileInput): ModelAgent
       ? false
       : likelySmallContext(model, opts.contextLength);
   const thinking = klass.family === 'thinking';
-  const tier = resolveTier(opts, klass.toolsLikely, small);
-  const toolNames = namesForTier(tier, !!opts.planMode, opts.enabledTools);
+  let tier = resolveTier(opts, klass.toolsLikely, small);
   const eligibleLarge =
     opts.provider === 'featherless' && isLargeQwenAgentModel(model);
+  // Featherless Qwen3 (non-large): keep a short core tool list to cut theater/death spirals.
+  const featherlessQwen =
+    opts.provider === 'featherless' && /qwen/i.test(model);
+  if (featherlessQwen && !eligibleLarge && tier === 'full') {
+    tier = 'core';
+  }
+  const toolNames = namesForTier(tier, !!opts.planMode, opts.enabledTools);
   // compactPrompt NEVER solely because featherless; eligible large Qwen keeps full prompt/tools/skills.
-  const compactPrompt = eligibleLarge ? false : small;
+  const compactPrompt = eligibleLarge ? false : small || (featherlessQwen && !eligibleLarge);
   const useThoughtLock = (opts.reasoning || 'off') !== 'off' && (thinking || !small);
   const label =
     tier === 'none' ? `${klass.chip} · no-tools` : tier === 'core' ? `${klass.chip} · core-tools` : `${klass.chip} · tools`;
@@ -196,6 +227,7 @@ export function buildModelAgentProfile(opts: ModelAgentProfileInput): ModelAgent
       planMode: !!opts.planMode,
       buildMode: !!opts.buildMode && !opts.planMode,
       contextLength: opts.contextLength,
+      workspaceRoot: opts.workspaceRoot,
     }),
   };
 }

@@ -24,6 +24,7 @@ execFileSync(
     '--moduleResolution',
     'bundler',
     '--strict',
+    '--skipLibCheck',
   ],
   { cwd: root, stdio: 'inherit' },
 );

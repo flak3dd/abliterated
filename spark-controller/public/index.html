@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spark Controller — NVIDIA DGX Spark Utilities</title>
+  <meta name="description" content="Unified web control center for NVIDIA DGX Spark utilities: Text vLLM, Image Bridge, GPU hardware telemetry, and stack lifecycle.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- TOP HEADER -->
+    <header class="top-header">
+      <div class="header-brand">
+        <div class="brand-spark">
+          <span class="spark-icon">⚡</span>
+          <span class="brand-title">SPARK CONTROLLER</span>
+        </div>
+        <span class="badge-dgx">DGX SPARK B200</span>
+      </div>
+
+      <div class="header-controls">
+        <div class="host-selector">
+          <label for="hostAlias">SSH Alias:</label>
+          <input type="text" id="hostAlias" value="flak3dd" placeholder="flak3dd" autocomplete="off" spellcheck="false">
+        </div>
+
+        <div class="connection-status" id="connectionBadge">
+          <span class="status-dot"></span>
+          <span class="status-text">Connecting…</span>
+        </div>
+
+        <div class="poll-switch-container" title="Toggle 3-second live telemetry polling">
+          <label class="switch">
+            <input type="checkbox" id="autoPollToggle" checked>
+            <span class="slider round"></span>
+          </label>
+          <span class="poll-label">Live Poll</span>
+        </div>
+
+        <button type="button" class="btn btn-secondary btn-icon" id="refreshBtn" title="Refresh state now">
+          <span class="icon">↻</span>
+          <span>Refresh</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- NAVIGATION TABS -->
+    <nav class="nav-tabs" role="tablist">
+      <button type="button" class="nav-tab active" data-tab="overview" id="tabOverview">
+        <span class="tab-icon">📊</span>
+        <span>Overview & Telemetry</span>
+      </button>
+      <button type="button" class="nav-tab" data-tab="vllm" id="tabVllm">
+        <span class="tab-icon">🧠</span>
+        <span>Text vLLM (:8000)</span>
+      </button>
+      <button type="button" class="nav-tab" data-tab="image" id="tabImage">
+        <span class="tab-icon">🎨</span>
+        <span>Image Bridge (:7860)</span>
+      </button>
+      <button type="button" class="nav-tab" data-tab="weights" id="tabWeights">
+        <span class="tab-icon">💾</span>
+        <span>Storage & Weights</span>
+      </button>
+      <button type="button" class="nav-tab" data-tab="logs" id="tabLogs">
+        <span class="tab-icon">📟</span>
+        <span>Live Console</span>
+      </button>
+    </nav>
+
+    <!-- NOTIFICATION TOAST -->
+    <div id="toastNotification" class="toast hidden">
+      <span id="toastIcon">ℹ️</span>
+      <span id="toastMessage">Action completed</span>
+      <button type="button" class="toast-close" id="toastClose">&times;</button>
+    </div>
+
+    <!-- MAIN VIEWS CONTAINER -->
+    <main class="main-content">
+      
+      <!-- ================= 1. OVERVIEW & TELEMETRY ================= -->
+      <section class="tab-content active" id="viewOverview">
+        <!-- GPU HARDWARE DASHBOARD -->
+        <div class="card hardware-card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">NVIDIA Hardware Telemetry</h2>
+              <p class="card-subtitle" id="gpuDeviceName">Reading nvidia-smi telemetry from host…</p>
+            </div>
+            <div class="driver-badge" id="gpuDriverVersion">Driver: —</div>
+          </div>
+
+          <!-- VRAM Meter -->
+          <div class="vram-section">
+            <div class="vram-header">
+              <span class="metric-label">VRAM Allocation & Unified Memory</span>
+              <span class="metric-value font-mono" id="vramUsageText">0.0 GB / 0.0 GB (0%)</span>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" id="vramBar" style="width: 0%;"></div>
+            </div>
+          </div>
+
+          <!-- Metric Gauges Grid -->
+          <div class="telemetry-grid">
+            <div class="metric-box">
+              <span class="metric-box-label">GPU Core Utilization</span>
+              <div class="metric-box-val font-mono" id="gpuUtilVal">0%</div>
+              <div class="mini-bar-bg"><div class="mini-bar-fill" id="gpuUtilBar" style="width: 0%;"></div></div>
+            </div>
+            <div class="metric-box">
+              <span class="metric-box-label">Memory Bus Utilization</span>
+              <div class="metric-box-val font-mono" id="memUtilVal">0%</div>
+              <div class="mini-bar-bg"><div class="mini-bar-fill" id="memUtilBar" style="width: 0%;"></div></div>
+            </div>
+            <div class="metric-box">
+              <span class="metric-box-label">Operating Temp</span>
+              <div class="metric-box-val font-mono" id="tempVal">— °C</div>
+              <span class="metric-box-sub" id="tempSub">Nominal</span>
+            </div>
+            <div class="metric-box">
+              <span class="metric-box-label">Power Consumption</span>
+              <div class="metric-box-val font-mono" id="powerVal">0 W</div>
+              <span class="metric-box-sub" id="powerLimitSub">Limit: 0 W</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- SERVICE HEALTH GRID -->
+        <div class="grid-2col">
+          <!-- Text vLLM Pill Card -->
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3 class="card-title">Text vLLM Service (:8000)</h3>
+                <p class="card-subtitle">Inference engine for chat, reasoning, and tool use</p>
+              </div>
+              <span class="badge" id="vllmStatusBadge">Probing…</span>
+            </div>
+            <div class="service-details">
+              <div class="detail-row">
+                <span class="detail-key">Active Model:</span>
+                <span class="detail-val font-mono text-emerald" id="vllmActiveModel">—</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-key">vLLM Engine:</span>
+                <span class="detail-val font-mono" id="vllmVersion">—</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-key">Local Tunnel:</span>
+                <span class="detail-val font-mono">http://127.0.0.1:8000/v1</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Image Bridge Pill Card -->
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3 class="card-title">OpenAI Image Bridge (:7860)</h3>
+                <p class="card-subtitle">Diffusion & image generation pipeline via spark_ctl.sh</p>
+              </div>
+              <span class="badge" id="imageStatusBadge">Probing…</span>
+            </div>
+            <div class="service-details">
+              <div class="detail-row">
+                <span class="detail-key">Process PID:</span>
+                <span class="detail-val font-mono" id="imagePid">—</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-key">Models Ready:</span>
+                <span class="detail-val font-mono text-emerald" id="imageModelsCount">0 models</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-key">Local Tunnel:</span>
+                <span class="detail-val font-mono">http://127.0.0.1:7860/v1</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- MASTER STACK ACTIONS -->
+        <div class="card stack-card">
+          <div class="card-header">
+            <div>
+              <h3 class="card-title">Master Stack Controls</h3>
+              <p class="card-subtitle">One-click operations running spark-install orchestration scripts on remote host</p>
+            </div>
+          </div>
+          <div class="action-buttons-row">
+            <button type="button" class="btn btn-primary" id="btnStartStack" data-action="start-all">
+              <span class="icon">▶</span> Start Full Stack
+            </button>
+            <button type="button" class="btn btn-danger" id="btnStopStack" data-action="stop-all">
+              <span class="icon">⏹</span> Stop All Services
+            </button>
+            <button type="button" class="btn btn-warning" id="btnFreePorts" data-action="free-ports">
+              <span class="icon">⚡</span> Free Ports 8000 & 7860
+            </button>
+            <button type="button" class="btn btn-secondary" id="btnProbeStack" data-action="probe">
+              <span class="icon">🔍</span> Probe Infrastructure
+            </button>
+          </div>
+          <div id="stackActionOutput" class="console-box hidden"></div>
+        </div>
+      </section>
+
+
+      <!-- ================= 2. TEXT vLLM ENGINE ================= -->
+      <section class="tab-content" id="viewVllm">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">vLLM Inference Recipes</h2>
+              <p class="card-subtitle">Choose an optimized recipe for the DGX Spark or fine-tune parameters</p>
+            </div>
+          </div>
+
+          <!-- Recipe Selector Cards -->
+          <div class="recipe-grid">
+            <div class="recipe-card active" data-recipe="qwen" id="recipeQwen">
+              <div class="recipe-badge">PRIMARY INSTRUCT</div>
+              <div class="recipe-title">Qwen 3.6 35B-A3B NVFP4+MTP</div>
+              <div class="recipe-served font-mono">qwen-abliterated</div>
+              <p class="recipe-desc">High-speed inference with native FP4 quantization and Multi-Token Prediction.</p>
+              <div class="recipe-meta font-mono">Quant: nvfp4 · Context: 65,536 · GPU: 60%</div>
+            </div>
+
+            <div class="recipe-card" data-recipe="gpt-oss" id="recipeGptOss">
+              <div class="recipe-badge">120B DEEP REASONING</div>
+              <div class="recipe-title">GPT-OSS 120B MXFP4 Abliterated</div>
+              <div class="recipe-served font-mono">gpt-oss-120b-abliterated</div>
+              <p class="recipe-desc">Large 120B reasoning model with native built-in Harmony channel parsing (no filters).</p>
+              <div class="recipe-meta font-mono">Quant: mxfp4 · Context: 131,072 · Native Harmony · GPU: 70%</div>
+            </div>
+          </div>
+
+          <!-- Configuration Form -->
+          <div class="form-section">
+            <h4 class="form-section-title">Serving Configuration</h4>
+            <div class="form-grid">
+              <div class="form-group">
+                <label for="vllmServedName">Served Model Name (OpenAI Model ID)</label>
+                <input type="text" id="vllmServedName" class="input-field" value="qwen-abliterated">
+              </div>
+
+              <div class="form-group">
+                <label for="vllmGpuMem">GPU Memory Utilization (0.20 – 0.95)</label>
+                <input type="number" id="vllmGpuMem" class="input-field" min="0.2" max="0.95" step="0.05" value="0.6">
+              </div>
+
+              <div class="form-group">
+                <label for="vllmMaxLen">Max Model Context Length (Tokens)</label>
+                <input type="number" id="vllmMaxLen" class="input-field" step="1024" value="65536">
+              </div>
+
+              <div class="form-group">
+                <label for="vllmKvCache">KV Cache Precision</label>
+                <select id="vllmKvCache" class="input-field">
+                  <option value="fp8" selected>fp8 (High Throughput)</option>
+                  <option value="auto">auto</option>
+                  <option value="fp16">fp16 (Full Precision)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="vllmQuant">Quantization Method</label>
+                <input type="text" id="vllmQuant" class="input-field" value="nvfp4">
+              </div>
+
+              <div class="form-group">
+                <label for="vllmReasoning">Reasoning Parser</label>
+                <input type="text" id="vllmReasoning" class="input-field" value="qwen3">
+              </div>
+            </div>
+
+            <div class="action-bar">
+              <button type="button" class="btn btn-primary" id="btnServeVllm">
+                <span class="icon">🚀</span> Serve Recipe Now
+              </button>
+              <button type="button" class="btn btn-danger" id="btnStopVllm">
+                <span class="icon">⏹</span> Stop vLLM Container
+              </button>
+              <button type="button" class="btn btn-secondary" id="btnPullWeights">
+                <span class="icon">📥</span> Pull HF Weights
+              </button>
+              <button type="button" class="btn btn-ghost" id="btnSaveVllm">
+                <span class="icon">💾</span> Save Config Only
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- ================= 3. IMAGE BRIDGE ================= -->
+      <section class="tab-content" id="viewImage">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">OpenAI Image Bridge & Pipeline</h2>
+              <p class="card-subtitle">Manages serve-openai-bridge.py on port 7860 via spark_ctl.sh</p>
+            </div>
+            <span class="badge" id="imageHeaderBadge">Probing…</span>
+          </div>
+
+          <div class="action-buttons-row">
+            <button type="button" class="btn btn-primary" id="btnStartImage" data-action="start">
+              <span class="icon">▶</span> Start Bridge
+            </button>
+            <button type="button" class="btn btn-danger" id="btnKillImage" data-action="kill">
+              <span class="icon">⏹</span> Kill Bridge
+            </button>
+            <button type="button" class="btn btn-accent" id="btnSmokeImage" data-action="post">
+              <span class="icon">🧪</span> Run Smoke Test (POST)
+            </button>
+            <button type="button" class="btn btn-secondary" id="btnStatusImage" data-action="status">
+              <span class="icon">🔍</span> Query Bridge Status
+            </button>
+          </div>
+
+          <!-- Image Bridge Model Catalog -->
+          <div class="model-catalog-section">
+            <h4 class="form-section-title">Available Diffusion & Generation Pipelines</h4>
+            <div class="model-cards-grid" id="imageModelsList">
+              <div class="model-pill-card">
+                <div class="model-pill-title">Photoreal Quality (RAW)</div>
+                <div class="model-pill-sub font-mono">krea2-raw-fp8 + LoRA 0.75</div>
+              </div>
+              <div class="model-pill-card">
+                <div class="model-pill-title">Fast Generation (Turbo)</div>
+                <div class="model-pill-sub font-mono">krea2-turbo</div>
+              </div>
+              <div class="model-pill-card">
+                <div class="model-pill-title">Draft Preview (Sketch)</div>
+                <div class="model-pill-sub font-mono">z-image-turbo</div>
+              </div>
+              <div class="model-pill-card">
+                <div class="model-pill-title">Photo Edit & Face Swap</div>
+                <div class="model-pill-sub font-mono">qwen-edit-2511-fp8</div>
+              </div>
+              <div class="model-pill-card">
+                <div class="model-pill-title">FLUX.2 Klein 9B</div>
+                <div class="model-pill-sub font-mono">flux-2-klein-9b</div>
+              </div>
+              <div class="model-pill-card">
+                <div class="model-pill-title">Anime Illustration</div>
+                <div class="model-pill-sub font-mono">illustrious-pony-fp8</div>
+              </div>
+            </div>
+          </div>
+
+          <div id="imageActionOutput" class="console-box hidden"></div>
+        </div>
+      </section>
+
+
+      <!-- ================= 4. WEIGHTS & STORAGE ================= -->
+      <section class="tab-content" id="viewWeights">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Model Storage on DGX Spark</h2>
+              <p class="card-subtitle">Safetensors weights stored on the Spark NVMe storage under models/</p>
+            </div>
+          </div>
+
+          <!-- Pull Progress (If active) -->
+          <div id="pullActiveCard" class="active-download-card hidden">
+            <div class="download-info">
+              <span class="pulse-icon">⏳</span>
+              <span>Model download in progress: <strong id="pullBytesCounter" class="font-mono">0 GB</strong></span>
+            </div>
+            <p id="pullLogSnippet" class="font-mono text-zinc-400 truncate">Downloading shards…</p>
+          </div>
+
+          <!-- Directory List -->
+          <div class="weights-list" id="weightsListContainer">
+            <div class="empty-msg">Scanning remote models/ directory…</div>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- ================= 5. LIVE CONSOLE ================= -->
+      <section class="tab-content" id="viewLogs">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Live Diagnostics Console</h2>
+              <p class="card-subtitle">Real-time output stream from remote containers and background processes</p>
+            </div>
+            <div class="console-controls">
+              <button type="button" class="btn btn-ghost btn-sm" id="btnCopyLogs">📋 Copy</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btnRefreshLogs">↻ Refresh</button>
+            </div>
+          </div>
+
+          <!-- Target Filter Buttons -->
+          <div class="log-targets-bar">
+            <button type="button" class="target-btn active" data-target="vllm">vLLM Docker Logs</button>
+            <button type="button" class="target-btn" data-target="image">Image Bridge (bridge.log)</button>
+            <button type="button" class="target-btn" data-target="smoketest">Smoke Test Output</button>
+            <button type="button" class="target-btn" data-target="pull">Model Pull Logs</button>
+          </div>
+
+          <!-- Terminal Output Pre -->
+          <pre class="terminal-screen font-mono" id="terminalOutput">Awaiting output stream…</pre>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="app-footer">
+      <span>Spark Controller v1.0.0</span>
+      <span>•</span>
+      <span>NVIDIA DGX Spark Management Interface</span>
+      <span>•</span>
+      <span id="footerTimestamp">Updated: Just now</span>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,9 +1,12 @@
 import { resolveActiveSettings } from "./activeEndpoint";
 import { executeAgentTool } from "./agentTools";
-import { formatSkillsCatalogPrompt, toCatalogEntries } from "./skills";
+import { formatSkillsCatalogPrompt, formatVerifyStrictSkillPrompt, shouldAutoInjectVerifyStrict, toCatalogEntries } from "./skills";
 import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from "./projectMemory";
+import { filterPinnedProjectMemory } from "./projectRules";
+import { formatSessionMemory, mempalaceOpts } from "./mempalace";
 import { bridge } from "./bridgeClient";
 import { applyGrokEdits, parseGrokEdits } from "./grokLayer";
+import { enqueuePendingEdits } from "./applyInbox";
 import { buildJobCompletenessSystemBlock } from "./deepenComplete";
 import {
   buildLargeJobNudge,
@@ -14,6 +17,7 @@ import {
   buildBuildModeImplementNudge,
   buildVerifyBeforeDoneNudge,
   looksLikeVerifyEvidence,
+  looksTrivialFileEdit,
   clampMaxAgentTurns,
   EMPTY_CONTENT_REPLY_NOTE,
   isMissingContentAnswer,
@@ -22,16 +26,33 @@ import {
   liftTodoListToContent,
   parseTodoBullets,
   shouldApplyBuildProcess,
+  filterPlanModeTools,
 } from "./agentHelpers";
-import { finalizeReasoningChannel } from "./agentPhase";
+import { buildProveImproveNudge, shouldProveImproveNudge } from './proveImprove';
+import {
+  needsInspectBeforeWrite,
+  buildInspectBeforeWriteNudge,
+  lockedGoalSystemBlock,
+} from "./harnessGates";
+import { finalizeReasoningChannel, splitThinkFromContent } from "./agentPhase";
+import { looksLikeTokenCollapse, stripCollapsedText, TOKEN_COLLAPSE_REPLY_NOTE } from "./tokenCollapse";
 import { enforceThoughtNoCode } from "./reasoningWork";
-import { executeMcpToolCall } from "./mcpClient";
+import { executeMcpToolCall, listConnectedMcpTools, mcpToolsToOpenAi } from "./mcpClient";
+import {
+  planCapabilities,
+  needsMcpFollowNudge,
+  needsSkillCreateNudge,
+  needsSkillReadNudge,
+  buildMcpFollowNudge,
+  buildSkillCreateNudge,
+  buildSkillReadNudge,
+} from "./capabilityRouter";
 import { streamChatCompletion } from "./sse";
 import { buildModelAgentProfile } from "./modelAgentProfile";
 import { peekFeatherlessModel } from "./featherlessLimits";
 import { getJobs, getSettings, getWorkspace, setJobs, uid, upsertJob } from "./storage";
-import { workspaceGate } from "./workspaceGuard";
-import { TASK_GRAPH_PATH, formatTaskGraphPrompt, parseTaskGraph } from "./taskGraph";
+import { connectedBridgeWriteRoot, workspaceGate } from "./workspaceGuard";
+import { TASK_GRAPH_PATH, formatTaskGraphPrompt, parseTaskGraph, shouldUseTaskGraph } from "./taskGraph";
 import { prepareJobWorktree } from "./jobWorktree";
 import { runMultiAgentFleet, shouldRunMultiAgent } from "./multiAgentRunner";
 import type { ChatOpenAiMessage, ClientSettings, Job, ToolType } from "../types";
@@ -120,8 +141,41 @@ export function cancelJob(id: string): void {
       logs: [...job.logs, `[${new Date().toISOString()}] cancelled`],
     });
   } else if (job.status === "running") {
-    appendLog(job, "cancel requested");
+    persist({
+      ...job,
+      status: "error",
+      error: "cancelled",
+      stopReason: "abort",
+      endedAt: Date.now(),
+      logs: [...job.logs, `[${new Date().toISOString()}] cancelled`],
+    });
   }
+}
+
+/** Re-queue a finished/failed job in place. */
+export function retryJob(id: string): Job | null {
+  const job = getJobs().find((j) => j.id === id);
+  if (!job) return null;
+  if (job.status === "queued" || job.status === "running") return job;
+  persist({
+    ...job,
+    status: "queued",
+    error: undefined,
+    stopReason: undefined,
+    endedAt: undefined,
+    logs: [...job.logs, `[${new Date().toISOString()}] retry queued`],
+  });
+  void pumpQueue();
+  return job;
+}
+
+/** Promote a chat prompt onto the Jobs queue. */
+export function enqueueChatAsJob(opts: { prompt: string; threadId?: string; title?: string }): Job {
+  return enqueueJob({
+    prompt: opts.prompt,
+    threadId: opts.threadId,
+    title: opts.title || opts.prompt.slice(0, 72),
+  });
 }
 
 export function deleteJob(id: string): void {
@@ -183,6 +237,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
     abortById.delete(job.id);
     return;
   }
+  let effectiveRoot = workspaceRoot;
   if (settings.jobWorktreesEnabled === true && bridge.connected) {
     try {
       const prep = await prepareJobWorktree({
@@ -191,18 +246,25 @@ async function runJob(initial: Job, settings: ClientSettings) {
         workspaceRoot,
         run: async (command) => {
           let out = "";
-          const code = await bridge.runCommand(command, (c) => { out += c; });
+          const code = await bridge.runCommand(command, (c) => { out += c; }, { root: workspaceRoot });
           return { out, code };
         },
       });
       job = appendLog(job, `worktree: ${prep.note} (${prep.path})`);
+      if (prep.shouldSetRoot && prep.absPath) {
+        effectiveRoot = prep.absPath;
+        job = appendLog(job, `workspace root set to worktree: ${effectiveRoot}`);
+      }
     } catch (e) {
-      job = appendLog(job, `worktree stub error: ${e instanceof Error ? e.message : String(e)}`);
+      job = appendLog(job, `worktree error: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
   const turnCap = clampMaxAgentTurns(settings.maxAgentTurns);
-  const enabledTools: ToolType[] = [...DEFAULT_ENABLED_TOOLS];
+  const enabledTools: ToolType[] =
+    settings.planModeEnabled === true
+      ? filterPlanModeTools(DEFAULT_ENABLED_TOOLS)
+      : [...DEFAULT_ENABLED_TOOLS];
   const active = resolveActiveSettings(settings);
 
   const large = looksLargeJob(job.prompt);
@@ -212,37 +274,73 @@ async function runJob(initial: Job, settings: ClientSettings) {
   });
   let skillsCatalogBlock = "";
   let workspaceSkillsBlock = "";
+  let verifyStrictBlock = "";
   let projectMemoryBlock = "";
+  let mempalaceBlock = "";
+  let listedSkills: Awaited<ReturnType<typeof bridge.listSkills>> = [];
   if (bridge.connected) {
     try {
       const files = await bridge.readProjectMemory();
-      projectMemoryBlock = formatProjectMemoryPrompt(files);
+      projectMemoryBlock = formatProjectMemoryPrompt(
+        filterPinnedProjectMemory(files, settings.projectRulesPinned !== false),
+      );
     } catch {
       projectMemoryBlock = "";
+    }
+    if (settings.mempalaceEnabled !== false && settings.mempalaceAutoRecall !== false) {
+      try {
+        mempalaceBlock = await bridge.mempalaceWake(mempalaceOpts(settings, workspaceRoot));
+      } catch {
+        mempalaceBlock = "";
+      }
     }
   }
   if (settings.skillsEnabled !== false && bridge.connected) {
     try {
-      const skills = await bridge.listSkills();
-      skillsCatalogBlock = formatSkillsCatalogPrompt(toCatalogEntries(skills));
-      workspaceSkillsBlock = formatAutoLoadedSkillsPrompt(skills);
+      listedSkills = await bridge.listSkills();
+      skillsCatalogBlock = formatSkillsCatalogPrompt(toCatalogEntries(listedSkills));
+      workspaceSkillsBlock = formatAutoLoadedSkillsPrompt(listedSkills);
     } catch {
       skillsCatalogBlock = "";
       workspaceSkillsBlock = "";
+      listedSkills = [];
     }
   }
 
   const deepenCompletenessBlock = buildJobCompletenessSystemBlock({
     deepenCompleteness: settings.deepenCompleteness !== false,
   });
+
+  if (
+    shouldAutoInjectVerifyStrict({
+      buildProcess,
+      largeJob: large,
+      verifyStrictProfile: settings.verifyStrictProfile === true,
+    })
+  ) {
+    verifyStrictBlock = formatVerifyStrictSkillPrompt(listedSkills as never, { force: true });
+    if (verifyStrictBlock) job = appendLog(job, "auto-injected verify-strict skill");
+  }
+
   let taskGraphBlock = "";
+  let existingGraph = null as ReturnType<typeof parseTaskGraph>;
   if (bridge.connected) {
     try {
-      const raw = await bridge.readFile(TASK_GRAPH_PATH);
-      taskGraphBlock = formatTaskGraphPrompt(parseTaskGraph(raw));
+      existingGraph = parseTaskGraph(await bridge.readFile(TASK_GRAPH_PATH));
     } catch {
-      taskGraphBlock = "";
+      existingGraph = null;
     }
+  }
+  const useGraph = shouldUseTaskGraph({
+    largeJob: large,
+    buildProcess,
+    multiAgent: shouldRunMultiAgent(job, settings, existingGraph),
+    hasExistingGraph: !!(existingGraph && (existingGraph.goal.trim() || existingGraph.subtasks.length)),
+  });
+  if (useGraph && existingGraph) {
+    taskGraphBlock = formatTaskGraphPrompt(existingGraph);
+  } else if (!useGraph) {
+    job = appendLog(job, "one-shot: skipping task graph inject");
   }
   const jobPeek = peekFeatherlessModel(active.defaultModel);
   const jobProfile = buildModelAgentProfile({
@@ -254,16 +352,38 @@ async function runJob(initial: Job, settings: ClientSettings) {
     toolUse: jobPeek?.toolUse,
     contextLength: jobPeek?.contextLength,
     enabledTools,
+    workspaceRoot: effectiveRoot || workspaceRoot,
   });
+  const capPlan = planCapabilities({
+    queryText: job.prompt,
+    skills: listedSkills as never,
+    mcpTools: listConnectedMcpTools(),
+    skillsEnabled: settings.skillsEnabled !== false,
+    allowAllMcp: jobProfile.allowMcp && settings.planModeEnabled !== true,
+    canWriteSkill:
+      settings.planModeEnabled !== true &&
+      settings.autoAcceptEdits === true &&
+      jobProfile.toolTier === "full",
+    excludeSkillIds: verifyStrictBlock ? ["verify-strict"] : [],
+  });
+  const extraMcpTools = capPlan.extraMcp.length
+    ? mcpToolsToOpenAi(capPlan.extraMcp)
+    : jobProfile.allowMcp
+      ? mcpToolsToOpenAi(listConnectedMcpTools())
+      : [];
   const systemParts = [
     settings.systemPrompt || "",
     projectMemoryBlock,
+    mempalaceBlock,
+    lockedGoalSystemBlock(job.prompt),
     !jobProfile.compactPrompt ? skillsCatalogBlock : "",
     !jobProfile.compactPrompt ? workspaceSkillsBlock : "",
+    verifyStrictBlock,
+    capPlan.systemBlock,
     taskGraphBlock,
 
-    workspaceRoot
-      ? `Workspace root: ${workspaceRoot}. Prefer relative paths. You are running as a headless background job.`
+    effectiveRoot
+      ? `Workspace root: ${effectiveRoot}. Prefer relative paths. You are running as a headless background job.`
       : "No workspace root set. Connect the bridge Workspace before relying on file tools.",
     settings.autoAcceptEdits
       ? "Auto-accept edits is ON for this job."
@@ -276,9 +396,9 @@ async function runJob(initial: Job, settings: ClientSettings) {
     settings.planModeEnabled === true
       ? ''
       : buildProcess
-        ? buildReasoningThenBuildNudge()
+        ? buildReasoningThenBuildNudge({ toolsOff: !jobProfile.sendTools })
         : settings.buildModeEnabled !== false
-          ? buildBuildModeAlwaysNudge()
+          ? buildBuildModeAlwaysNudge({ toolsOff: !jobProfile.sendTools })
           : large
             ? buildLargeJobNudge()
             : '',
@@ -294,8 +414,18 @@ async function runJob(initial: Job, settings: ClientSettings) {
   } else if (large) {
     job = appendLog(job, "large job protocol: ToDo → explore codebase → implement");
   }
+  if (capPlan.matchedSkills.length) {
+    job = appendLog(
+      job,
+      `matched skills: ${capPlan.matchedSkills.map((s) => s.id).join(", ")}`,
+    );
+  }
+  if (capPlan.extraMcp.length) {
+    job = appendLog(job, `matched MCP: ${capPlan.extraMcp.slice(0, 6).map((t) => t.namespaced).join(", ")}`);
+  }
+  if (capPlan.suggestNewSkill) job = appendLog(job, "skill create: no matching recipe — will nudge");
 
-  if (shouldRunMultiAgent(job, settings)) {
+  if (shouldRunMultiAgent(job, settings, existingGraph)) {
     try {
       job = await runMultiAgentFleet({
         job,
@@ -303,7 +433,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
         persist,
         appendLog,
         abortSignal: ac.signal,
-        workspaceRoot,
+        workspaceRoot: effectiveRoot,
       });
     } catch (e) {
       const aborted = e instanceof DOMException && e.name === "AbortError";
@@ -325,7 +455,12 @@ async function runJob(initial: Job, settings: ClientSettings) {
   const history: ChatOpenAiMessage[] = [{ role: "user", content: job.prompt }];
   let turns = 0;
   let buildImplementNudgeUsed = false;
+  let proveImproveNudgeUsed = false;
   let buildVerifyNudgeUsed = false;
+  let inspectBeforeWriteUsed = false;
+  let mcpFollowNudgeUsed = false;
+  let skillCreateNudgeUsed = false;
+  let skillReadNudgeUsed = false;
   let hitCap = false;
   const toolsUsed: string[] = [];
 
@@ -343,6 +478,10 @@ async function runJob(initial: Job, settings: ClientSettings) {
         messages: [{ role: "system", content: systemParts.join("\n\n") }, ...history],
         abortSignal: ac.signal,
         enabledTools,
+        extraTools: extraMcpTools.length
+          ? (extraMcpTools as Parameters<typeof streamChatCompletion>[0]['extraTools'])
+          : undefined,
+        toolChoice: turn === 1 && capPlan.forceTools ? "required" : "auto",
         flightKey: `job:${job.id}`,
         onDelta: (t) => {
           assistantText += t;
@@ -350,11 +489,27 @@ async function runJob(initial: Job, settings: ClientSettings) {
         onReasoningDelta: (t) => {
           assistantReasoning += t;
         },
+        onReset: () => {
+          assistantText = "";
+          assistantReasoning = "";
+        },
       });
 
       if (assistantText.trim()) {
         const clip = assistantText.trim().slice(0, 400);
         job = appendLog(job, `assistant: ${clip}${assistantText.length > 400 ? "…" : ""}`);
+      }
+
+      const splitThink = splitThinkFromContent(assistantText);
+      if (splitThink.thinking) {
+        assistantReasoning = [assistantReasoning, splitThink.thinking].filter(Boolean).join('\n\n');
+        assistantText = splitThink.content;
+      }
+      assistantText = stripCollapsedText(assistantText);
+      assistantReasoning = stripCollapsedText(assistantReasoning);
+      if (result.tokenCollapsed && isMissingContentAnswer(assistantText)) {
+        assistantText = TOKEN_COLLAPSE_REPLY_NOTE;
+        if (looksLikeTokenCollapse(assistantReasoning)) assistantReasoning = "";
       }
 
       // Finalize/coalesce BEFORE applyGrokEdits so diffs in reasoning are promoted first.
@@ -382,13 +537,34 @@ async function runJob(initial: Job, settings: ClientSettings) {
         }
       }
 
-      if (settings.autoAcceptEdits && bridge.connected) {
+      if (bridge.connected && settings.planModeEnabled !== true) {
         const source = assistantText || assistantReasoning;
-        const edits = parseGrokEdits(source, workspaceRoot);
+        // Fast path: skip heavy parsing if no code blocks or diffs exist
+        if (!source.includes('```') && !source.includes('@@')) {
+          // no edits to apply
+        } else {
+          const edits = parseGrokEdits(source, workspaceRoot);
         if (edits.length) {
-          const applied = await applyGrokEdits(edits, { autoAccept: true, root: workspaceRoot });
+          const applied = await applyGrokEdits(edits, {
+            writeToWorkspace: true,
+            autoAccept: settings.autoAcceptEdits === true,
+            root: connectedBridgeWriteRoot({
+              workspaceRoot: effectiveRoot,
+              appRoot: bridge.currentAppRoot,
+              bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
+            }) || effectiveRoot,
+          });
+          const pending = edits.filter((_, i) => applied[i]?.status === 'pending');
+          if (pending.length) enqueuePendingEdits(pending, `job:${job.id}`);
           const n = applied.filter((r) => r.status === 'ok').length;
-          job = appendLog(job, `applied ${n}/${applied.length} edit(s)`);
+          const p = applied.filter((r) => r.status === 'pending').length;
+          job = appendLog(
+            job,
+            p
+              ? `wrote ${n}/${applied.length} file(s); ${p} pending in Apply inbox (auto-accept off)`
+              : `wrote ${n}/${applied.length} file(s) to workspace`,
+          );
+        }
         }
       }
 
@@ -407,6 +583,10 @@ async function runJob(initial: Job, settings: ClientSettings) {
       });
 
       if (!toolCalls.length) {
+        if (result.tokenCollapsed || assistantText === TOKEN_COLLAPSE_REPLY_NOTE) {
+          job = appendLog(job, "token collapse — stopping");
+          break;
+        }
         if (isMissingContentAnswer(assistantText)) {
           const hasReasoning = !!(assistantReasoning || "").trim();
           if (!hasReasoning) {
@@ -424,38 +604,166 @@ async function runJob(initial: Job, settings: ClientSettings) {
           buildProcess &&
           !buildImplementNudgeUsed &&
           parseTodoBullets(assistantText).length > 0 &&
-          !looksLikeBuildOutput(assistantText)
+          !looksLikeBuildOutput(assistantText, toolsUsed)
         ) {
           buildImplementNudgeUsed = true;
-          history.push({ role: "user", content: buildBuildModeImplementNudge() });
+          history.push({
+            role: "user",
+            content: buildBuildModeImplementNudge({ toolsOff: !jobProfile.sendTools }),
+          });
           job = appendLog(job, "build process: ToDo without diffs — implement nudge");
           continue;
         }
+        const toolEvidence = history
+          .filter((m) => m.role === "tool")
+          .map((m) => m.content || "")
+          .join("\n");
         if (
           (buildProcess || large) &&
           !buildVerifyNudgeUsed &&
-          looksLikeBuildOutput(assistantText) &&
-          !looksLikeVerifyEvidence(assistantText, toolsUsed)
+          looksLikeBuildOutput(assistantText, toolsUsed) &&
+          !looksLikeVerifyEvidence(`${assistantText}\n${toolEvidence}`, toolsUsed)
         ) {
           buildVerifyNudgeUsed = true;
           history.push({ role: "user", content: buildVerifyBeforeDoneNudge() });
           job = appendLog(job, "verify-before-done: implement without verify — nudge");
           continue;
         }
+        if (
+          !settings.planModeEnabled &&
+          !proveImproveNudgeUsed &&
+          shouldProveImproveNudge({
+            userText: job.prompt,
+            content: assistantText,
+            toolsUsed,
+          })
+        ) {
+          proveImproveNudgeUsed = true;
+          history.push({ role: "user", content: buildProveImproveNudge() });
+          job = appendLog(job, "prove-improve: no evidence — nudge");
+          continue;
+        }
+        if (
+          settings.planModeEnabled !== true &&
+          !mcpFollowNudgeUsed &&
+          needsMcpFollowNudge(capPlan, toolsUsed)
+        ) {
+          mcpFollowNudgeUsed = true;
+          history.push({ role: "user", content: buildMcpFollowNudge(capPlan) });
+          job = appendLog(job, "mcp-follow: matching MCP unused — nudge");
+          continue;
+        }
+        if (
+          settings.planModeEnabled !== true &&
+          !skillReadNudgeUsed &&
+          needsSkillReadNudge(capPlan, toolsUsed)
+        ) {
+          skillReadNudgeUsed = true;
+          history.push({ role: "user", content: buildSkillReadNudge(capPlan) });
+          job = appendLog(job, "skill-follow: matching skill unused — nudge");
+          continue;
+        }
+        if (
+          settings.planModeEnabled !== true &&
+          !skillCreateNudgeUsed &&
+          needsSkillCreateNudge(capPlan, toolsUsed)
+        ) {
+          skillCreateNudgeUsed = true;
+          history.push({ role: "user", content: buildSkillCreateNudge(capPlan) });
+          job = appendLog(job, "skill-create: reusable process missing — nudge");
+          continue;
+        }
         job = appendLog(job, "no tool calls — done");
         break;
       }
 
+      if (
+        settings.planModeEnabled !== true &&
+        !inspectBeforeWriteUsed &&
+        needsInspectBeforeWrite({
+          userText: job.prompt,
+          toolsUsed,
+          pendingToolNames: toolCalls.map((t) => t.name),
+          trivialEdit: looksTrivialFileEdit(job.prompt),
+        })
+      ) {
+        inspectBeforeWriteUsed = true;
+        const last = history[history.length - 1];
+        if (last && last.role === "assistant") delete last.tool_calls;
+        history.push({ role: "user", content: buildInspectBeforeWriteNudge() });
+        job = appendLog(job, "inspect-before-write: first write without explore — nudge");
+        continue;
+      }
+
+      // Split tools into safe parallel tools and gated sequential tools
+      const gatedToolNames = new Set(['git_commit', 'create_pr', 'checkpoint_restore', 'shell', 'verify']);
+      const parallelTools: typeof toolCalls = [];
+      const sequentialTools: typeof toolCalls = [];
+
       for (const tc of toolCalls) {
-        if (ac.signal.aborted) throw new DOMException("Aborted", "AbortError");
         toolsUsed.push(tc.name);
+        if (gatedToolNames.has(tc.name)) {
+          sequentialTools.push(tc);
+        } else {
+          parallelTools.push(tc);
+        }
+      }
+
+      // Execute safe tools in parallel first
+      if (parallelTools.length > 0) {
+        job = appendLog(job, `executing ${parallelTools.length} tools in parallel`);
+
+        const results = await Promise.all(
+          parallelTools.map(async (tc) => {
+            if (ac.signal.aborted) throw new DOMException("Aborted", "AbortError");
+            job = appendLog(job, `tool ${tc.name} ${JSON.stringify(tc.arguments).slice(0, 200)}`);
+            const exec = await executeAgentTool(tc, {
+              enabledTools,
+              autoAcceptEdits: settings.autoAcceptEdits,
+              autoRunShell: settings.autoRunShell,
+              settings,
+              workspaceRoot: effectiveRoot,
+              mode: "headless",
+              checkpointNamespace: `job ${job.id}`,
+              executeMcpTool: executeMcpToolCall,
+              todoItems: (job.todos || []).map((text) => {
+                const m = text.match(/^\[([xX ])\]\s*(.*)$/);
+                if (m) return { text: (m[2] || '').trim() || text, done: m[1].toLowerCase() === 'x' };
+                return { text, done: false };
+              }),
+              onTodos: (items) => {
+                job = persist({
+                  ...job,
+                  todos: items.map((t) => (t.done ? `[x] ${t.text}` : t.text)),
+                });
+              },
+            });
+            return { tc, exec };
+          })
+        );
+
+        // Process results
+        for (const { tc, exec } of results) {
+          const clip = exec.content.slice(0, 500);
+          job = appendLog(job, `${tc.name} → ${exec.status}: ${clip}${exec.content.length > 500 ? "…" : ""}`);
+          history.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            content: exec.content.slice(0, 48_000),
+          });
+        }
+      }
+
+      // Execute gated tools sequentially
+      for (const tc of sequentialTools) {
+        if (ac.signal.aborted) throw new DOMException("Aborted", "AbortError");
         job = appendLog(job, `tool ${tc.name} ${JSON.stringify(tc.arguments).slice(0, 200)}`);
         const exec = await executeAgentTool(tc, {
           enabledTools,
           autoAcceptEdits: settings.autoAcceptEdits,
           autoRunShell: settings.autoRunShell,
           settings,
-          workspaceRoot,
+          workspaceRoot: effectiveRoot,
           mode: "headless",
           checkpointNamespace: `job ${job.id}`,
           executeMcpTool: executeMcpToolCall,
@@ -506,6 +814,27 @@ async function runJob(initial: Job, settings: ClientSettings) {
         endedAt: Date.now(),
         logs: [...job.logs, `[${new Date().toISOString()}] finished (${turns} turn(s))`],
       });
+      if (settings.mempalaceEnabled !== false && settings.mempalaceAutoSave !== false && bridge.connected) {
+        const lastAsst = [...history].reverse().find((m) => m.role === "assistant");
+        const payload = formatSessionMemory(job.prompt || "", lastAsst?.content || "", {
+          model: active.defaultModel,
+          thread: `job ${job.id}`,
+        });
+        if (payload.trim()) {
+          try {
+            await bridge.mempalaceSave(payload, {
+              ...mempalaceOpts(settings, workspaceRoot),
+              room: "abliterated-jobs",
+            });
+            job = appendLog(job, "filed session into MemPalace");
+          } catch (e) {
+            job = appendLog(
+              job,
+              `MemPalace save skipped: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+        }
+      }
     }
   } catch (e) {
     const aborted = e instanceof DOMException && e.name === "AbortError";

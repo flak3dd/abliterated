@@ -5,7 +5,10 @@ import { splitReasoningSections } from '../../lib/reasoningWork';
 
 type Props = {
   text: string;
+  /** Actively receiving reasoning with no answer yet (caller-controlled). */
   streaming?: boolean;
+  /** True once displayable answer content exists — collapses Thought. */
+  hasAnswer?: boolean;
   startedAt?: number;
 };
 
@@ -17,15 +20,17 @@ function formatElapsed(startedAt?: number, streaming?: boolean): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-export function ReasoningTrace({ text, streaming = false, startedAt }: Props) {
+export function ReasoningTrace({ text, streaming = false, hasAnswer = false, startedAt }: Props) {
   const sections = useMemo(() => splitReasoningSections(text), [text]);
-  const [open, setOpen] = useState(streaming);
+  const [open, setOpen] = useState(() => streaming || !hasAnswer);
   const [copied, setCopied] = useState(false);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    setOpen(streaming);
-  }, [streaming]);
+    if (streaming) setOpen(true);
+    else if (hasAnswer) setOpen(false);
+    else setOpen(true);
+  }, [streaming, hasAnswer]);
 
   useEffect(() => {
     if (!streaming || !startedAt) return;
@@ -56,7 +61,7 @@ export function ReasoningTrace({ text, streaming = false, startedAt }: Props) {
   };
 
   return (
-    <div className="reasoning-trace mb-2.5">
+    <div className={cn('reasoning-trace', hasAnswer ? 'mt-2.5' : 'mb-2.5')}>
       <div className="reasoning-trace-bar">
         <button
           type="button"
@@ -66,7 +71,7 @@ export function ReasoningTrace({ text, streaming = false, startedAt }: Props) {
         >
           {open ? <ChevronDown size={14} className="shrink-0 text-amber-400/90" /> : <ChevronRight size={14} className="shrink-0 text-amber-400/90" />}
           <Brain size={13} className={cn('shrink-0 text-amber-400', streaming && 'animate-pulse')} />
-          <span className="font-medium text-zinc-200">Thought</span>
+          <span className="font-medium text-zinc-200">{streaming ? 'Thinking…' : 'Thought'}</span>
           {meta ? <span className="text-zinc-500">{meta}</span> : null}
         </button>
         <button

@@ -1,0 +1,1162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Abliterated Benchmark Workbench — 4-Model Comparative Suite</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #070b14;
+      --bg-card: #0d1527;
+      --bg-card-hover: #121c33;
+      --bg-surface: #17223b;
+      --border: #1e293b;
+      --border-bright: #334155;
+      --cyan: #38bdf8;
+      --cyan-glow: rgba(56, 189, 248, 0.25);
+      --emerald: #4ade80;
+      --emerald-glow: rgba(74, 222, 128, 0.25);
+      --purple: #c084fc;
+      --amber: #fbbf24;
+      --rose: #f43f5e;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg-dark);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+    }
+
+    /* Ambient cyber grid background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: 
+        radial-gradient(circle at 50% 0%, rgba(56, 189, 248, 0.08) 0%, transparent 60%),
+        linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+      background-size: 100% 100%, 40px 40px, 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 24px;
+      width: 100%;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Header */
+    header {
+      background: rgba(13, 21, 39, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .header-inner {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      text-decoration: none;
+      color: inherit;
+    }
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-bright);
+      background: #0284c7;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 16px var(--cyan-glow);
+    }
+    .brand-logo img {
+      width: 24px;
+      height: 24px;
+      object-contain: contain;
+    }
+    .brand-title {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .brand-sub {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--cyan);
+      letter-spacing: 0.12em;
+      font-weight: 500;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Status Pills */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      background: rgba(15, 23, 42, 0.6);
+    }
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+    }
+    .dot.green { background: var(--emerald); box-shadow: 0 0 8px var(--emerald); }
+    .dot.cyan { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+    .dot.amber { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 9px 16px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text);
+      transition: all 0.18s ease;
+      text-decoration: none;
+    }
+    .btn:hover {
+      background: var(--bg-surface);
+      border-color: var(--border-bright);
+      transform: translateY(-1px);
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+      border-color: #38bdf8;
+      color: #ffffff;
+      box-shadow: 0 4px 16px var(--cyan-glow);
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #0369a1 0%, #0284c7 100%);
+      box-shadow: 0 6px 20px rgba(56, 189, 248, 0.4);
+      transform: translateY(-2px);
+    }
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none !important;
+      box-shadow: none;
+    }
+    .btn-sm {
+      padding: 5px 10px;
+      font-size: 12px;
+    }
+
+    /* Preset selector bar */
+    .preset-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 8px 0 16px 0;
+      scrollbar-width: thin;
+    }
+    .preset-chip {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .preset-chip:hover {
+      color: var(--text);
+      border-color: var(--border-bright);
+      background: var(--bg-surface);
+    }
+    .preset-chip.active {
+      background: rgba(56, 189, 248, 0.12);
+      border-color: var(--cyan);
+      color: var(--cyan);
+      font-weight: 600;
+    }
+
+    /* Layout Grids */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+    }
+    @media (max-width: 960px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    /* Cards */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      position: relative;
+      transition: border-color 0.2s ease;
+    }
+    .card:hover {
+      border-color: var(--border-bright);
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .card-title {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-badge {
+      background: rgba(56, 189, 248, 0.12);
+      color: var(--cyan);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      border: 1px solid rgba(56, 189, 248, 0.25);
+    }
+
+    /* Inputs */
+    .input-label {
+      display: block;
+      font-size: 11px;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      letter-spacing: 0.05em;
+    }
+    .form-input {
+      width: 100%;
+      background: #090f1d;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      transition: border-color 0.15s ease;
+      margin-bottom: 12px;
+    }
+    .form-input:focus {
+      outline: none;
+      border-color: var(--cyan);
+      box-shadow: 0 0 0 2px var(--cyan-glow);
+    }
+    textarea.form-input {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12.5px;
+      line-height: 1.55;
+      min-height: 140px;
+      resize: vertical;
+      white-space: pre-wrap;
+    }
+
+    /* Model Selector Grid */
+    .model-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 1100px) {
+      .model-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 600px) {
+      .model-grid { grid-template-columns: 1fr; }
+    }
+
+    .model-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      cursor: pointer;
+      position: relative;
+      transition: all 0.2s ease;
+      user-select: none;
+    }
+    .model-card:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--border-bright);
+    }
+    .model-card.selected {
+      border-color: var(--cyan);
+      background: rgba(14, 28, 54, 0.7);
+      box-shadow: 0 0 16px var(--cyan-glow);
+    }
+    .model-card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .model-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .model-tag.cloud { background: rgba(56, 189, 248, 0.15); color: var(--cyan); border: 1px solid rgba(56, 189, 248, 0.3); }
+    .model-tag.local { background: rgba(74, 222, 128, 0.15); color: var(--emerald); border: 1px solid rgba(74, 222, 128, 0.3); }
+    .model-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    .model-desc {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Terminal Console */
+    .terminal-box {
+      background: #040711;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-top: 24px;
+    }
+    .terminal-bar {
+      background: #090e1a;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+    }
+    .terminal-dots {
+      display: flex;
+      gap: 6px;
+    }
+    .t-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .t-red { background: #ef4444; }
+    .t-yellow { background: #f59e0b; }
+    .t-green { background: #10b981; }
+    .terminal-title {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+    .terminal-body {
+      padding: 16px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: #38bdf8;
+      height: 280px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      line-height: 1.6;
+    }
+
+    /* Results Table */
+    .table-container {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-card);
+      margin-top: 24px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13px;
+    }
+    th {
+      background: #090e1a;
+      padding: 12px 16px;
+      font-size: 11px;
+      text-transform: uppercase;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      letter-spacing: 0.06em;
+    }
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+
+    /* Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(6px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+    .modal-backdrop.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .modal {
+      background: var(--bg-card);
+      border: 1px solid var(--border-bright);
+      border-radius: var(--radius);
+      width: 90%;
+      max-width: 780px;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
+    }
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .modal-body {
+      padding: 20px;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .catalog-item {
+      padding: 12px;
+      background: #0a1120;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .catalog-item:hover {
+      border-color: var(--cyan);
+      background: var(--bg-surface);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Sticky Cyber Header -->
+  <header>
+    <div class="header-inner">
+      <a href="/" class="brand">
+        <div class="brand-logo">
+          <img src="/logo-skull-blue.png" alt="Abliterated" />
+        </div>
+        <div>
+          <div class="brand-title">Abliterated Benchmark Workbench</div>
+          <div class="brand-sub">4-MODEL COMPARATIVE SUITE // 2 INTERCHANGEABLE PROMPTS</div>
+        </div>
+      </a>
+
+      <div class="header-actions">
+        <div class="status-badge" id="sparkStatusBadge" title="NVIDIA GB10 Spark Node">
+          <span class="dot green"></span>
+          <span id="sparkStatusText">Spark GB10: Connecting...</span>
+        </div>
+        <a href="/" class="btn btn-sm">← Back to IDE</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Preset Selection Bar -->
+    <div style="margin-top: 16px;">
+      <span class="input-label">⚡ Quick Presets (Click to Load 2 Curated Questions):</span>
+      <div class="preset-bar" id="presetBar">
+        <button class="preset-chip active" data-preset="codegen">⚡ Code Generation</button>
+        <button class="preset-chip" data-preset="debugging">🐛 Debugging & Concurrency</button>
+        <button class="preset-chip" data-preset="refactoring">🔨 Monolith & TypeScript</button>
+        <button class="preset-chip" data-preset="testing">🧪 Vitest & fast-check</button>
+        <button class="preset-chip" data-preset="security">🛡️ Auth & SQL Injection</button>
+        <button class="preset-chip" data-preset="architecture">🏛️ SaaS & ESM Migration</button>
+        <button class="preset-chip" data-preset="concurrency">🔄 Concurrency & Review</button>
+        <button class="preset-chip" data-preset="custom">✏️ Custom Edit</button>
+      </div>
+    </div>
+
+    <!-- 2 Interchangeable Prompts Configuration Cards -->
+    <div class="grid-2" style="margin-top: 8px;">
+      <!-- Prompt 1 -->
+      <div class="card" id="cardPrompt1">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="card-badge">PROMPT 1 / 2</span>
+            <span id="p1TitleDisplay">Folder Watcher & Date Renamer</span>
+          </div>
+          <button class="btn btn-sm" onclick="openCatalogModal(1)">Browse 20-Catalog ▾</button>
+        </div>
+
+        <label class="input-label">Prompt Title & Category</label>
+        <input type="text" id="p1TitleInput" class="form-input" placeholder="Title..." />
+
+        <label class="input-label">Interchangeable Prompt Question (Editable Text)</label>
+        <textarea id="p1TextInput" class="form-input" placeholder="Enter custom prompt question..."></textarea>
+      </div>
+
+      <!-- Prompt 2 -->
+      <div class="card" id="cardPrompt2">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="card-badge">PROMPT 2 / 2</span>
+            <span id="p2TitleDisplay">Docker Compose Stack</span>
+          </div>
+          <button class="btn btn-sm" onclick="openCatalogModal(2)">Browse 20-Catalog ▾</button>
+        </div>
+
+        <label class="input-label">Prompt Title & Category</label>
+        <input type="text" id="p2TitleInput" class="form-input" placeholder="Title..." />
+
+        <label class="input-label">Interchangeable Prompt Question (Editable Text)</label>
+        <textarea id="p2TextInput" class="form-input" placeholder="Enter custom prompt question..."></textarea>
+      </div>
+    </div>
+
+    <!-- Prompt Actions Toolbar -->
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 14px; flex-wrap: wrap; gap: 10px;">
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-sm" id="btnSwapPrompts">⇄ Swap P1 and P2</button>
+        <button class="btn btn-sm" id="btnSaveConfig">💾 Save as Default in scripts/benchmark-prompts.json</button>
+      </div>
+      <div style="color: var(--text-dim); font-size: 12px; font-family: 'JetBrains Mono', monospace;" id="configStatusNote">
+        Loaded from scripts/benchmark-prompts.json
+      </div>
+    </div>
+
+    <!-- Target Models & Settings Section -->
+    <div style="margin-top: 32px;">
+      <div class="input-label" style="font-size: 12px; margin-bottom: 12px;">TARGET MODELS (SELECT 1 TO 4 TO BENCHMARK):</div>
+      
+      <div class="model-grid">
+        <!-- Model 1 -->
+        <div class="model-card selected" data-model-id="cloud" onclick="toggleModelCard(this)">
+          <div class="model-card-top">
+            <span class="model-tag cloud">REMOTE CLUSTER</span>
+            <input type="checkbox" checked onclick="event.stopPropagation();" />
+          </div>
+          <div class="model-name">Abliterated Cloud</div>
+          <div class="model-desc">abliterated-model @ api.abliteration.ai</div>
+        </div>
+
+        <!-- Model 2 -->
+        <div class="model-card selected" data-model-id="featherless" onclick="toggleModelCard(this)">
+          <div class="model-card-top">
+            <span class="model-tag cloud">SERVERLESS API</span>
+            <input type="checkbox" checked onclick="event.stopPropagation();" />
+          </div>
+          <div class="model-name">Featherless Qwen</div>
+          <div class="model-desc">Qwen3.8-27B-OBLITERATED @ 27B Dense</div>
+        </div>
+
+        <!-- Model 3 -->
+        <div class="model-card selected" data-model-id="spark-gpt" onclick="toggleModelCard(this)">
+          <div class="model-card-top">
+            <span class="model-tag local">SPARK LOCAL (GB10)</span>
+            <input type="checkbox" checked onclick="event.stopPropagation();" />
+          </div>
+          <div class="model-name">Spark GPT-OSS 120B</div>
+          <div class="model-desc">120B MoE + MXFP4 Quantized</div>
+        </div>
+
+        <!-- Model 4 -->
+        <div class="model-card selected" data-model-id="spark-qwen" onclick="toggleModelCard(this)">
+          <div class="model-card-top">
+            <span class="model-tag local">SPARK LOCAL (GB10)</span>
+            <input type="checkbox" checked onclick="event.stopPropagation();" />
+          </div>
+          <div class="model-name">Spark Qwen 35B</div>
+          <div class="model-desc">Qwen3.6-35B-A3B-NVFP4-MTP</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Execution Settings & Big Action Button -->
+    <div class="card" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
+      <div style="display: flex; align-items: center; gap: 24px; flex-wrap: wrap;">
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;">
+          <input type="checkbox" id="chkAutoSwitch" checked />
+          <span><b>Auto-switch Spark Container</b> (swaps 128GB VRAM via SSH)</span>
+        </label>
+
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="input-label" style="margin: 0;">Temperature:</span>
+          <input type="number" id="numTemp" value="0.3" step="0.05" min="0" max="1" style="width: 70px;" class="form-input" style="margin: 0;" />
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="btnRunBenchmark" style="font-size: 14px; padding: 12px 28px;">
+        ▶ RUN 4-MODEL BENCHMARK TEST
+      </button>
+    </div>
+
+    <!-- Real-time Terminal Box -->
+    <div class="terminal-box" id="terminalBox">
+      <div class="terminal-bar">
+        <div class="terminal-dots">
+          <span class="t-dot t-red"></span>
+          <span class="t-dot t-yellow"></span>
+          <span class="t-dot t-green"></span>
+        </div>
+        <div class="terminal-title">LIVE BENCHMARK EXECUTION LOGS</div>
+        <button class="btn btn-sm" onclick="document.getElementById('terminalOutput').textContent = 'Console cleared.'">Clear</button>
+      </div>
+      <div class="terminal-body" id="terminalOutput">Ready. Click "RUN 4-MODEL BENCHMARK TEST" to begin evaluating all 4 models.</div>
+    </div>
+
+    <!-- Performance Scorecard Matrix -->
+    <div id="resultsSection" style="margin-top: 32px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+        <h2 style="font-size: 18px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Cross-Model Performance Matrix</h2>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-sm" id="btnDownloadMd">📥 Download Review (.md)</button>
+          <button class="btn btn-sm" id="btnDownloadJson">📥 Export JSON</button>
+        </div>
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Environment</th>
+              <th>Prompt</th>
+              <th>TTFT</th>
+              <th>Elapsed</th>
+              <th>Content Tok</th>
+              <th>Reasoning Tok</th>
+              <th>Speed</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="scorecardBody">
+            <tr>
+              <td colspan="9" style="text-align: center; color: var(--text-dim); padding: 24px;">No benchmark run executed yet.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Side-by-Side Response Viewer -->
+    <div id="responsesViewer" style="margin-top: 32px; margin-bottom: 60px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+        <h2 style="font-size: 18px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Model Output Responses</h2>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-sm active" id="tabPrompt1Btn" onclick="switchResponseTab(1)">Prompt 1 Responses</button>
+          <button class="btn btn-sm" id="tabPrompt2Btn" onclick="switchResponseTab(2)">Prompt 2 Responses</button>
+        </div>
+      </div>
+
+      <div id="responsesContainer" class="grid-2">
+        <!-- Model response cards will be rendered here -->
+      </div>
+    </div>
+  </main>
+
+  <!-- 20-Prompt Catalog Modal -->
+  <div class="modal-backdrop" id="catalogModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 style="font-size: 15px; font-weight: 700;">Select from 20-Prompt Technical Catalog</h3>
+        <button class="btn btn-sm" onclick="closeCatalogModal()">✕ Close</button>
+      </div>
+      <div style="padding: 12px 20px; border-bottom: 1px solid var(--border);">
+        <input type="text" id="catalogSearch" class="form-input" placeholder="Search catalog (e.g. docker, typescript, lock, saas)..." style="margin: 0;" />
+      </div>
+      <div class="modal-body" id="catalogList">
+        <!-- 20 prompts rendered dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let activePrompts = [];
+    let catalog = [];
+    let presets = {};
+    let targetSlotForModal = 1;
+    let latestResults = null;
+    let latestReviewMd = "";
+    let activeResponseTab = 1;
+
+    // Elements
+    const p1Title = document.getElementById('p1TitleInput');
+    const p1Text = document.getElementById('p1TextInput');
+    const p2Title = document.getElementById('p2TitleInput');
+    const p2Text = document.getElementById('p2TextInput');
+    const p1TitleDisplay = document.getElementById('p1TitleDisplay');
+    const p2TitleDisplay = document.getElementById('p2TitleDisplay');
+    const terminalOutput = document.getElementById('terminalOutput');
+    const btnRun = document.getElementById('btnRunBenchmark');
+
+    // Load initial config from backend
+    async function loadConfig() {
+      try {
+        const res = await fetch('/api/benchmark/config');
+        const data = await res.json();
+        
+        if (data.prompts && data.prompts.length >= 2) {
+          activePrompts = data.prompts;
+          renderPrompts();
+        }
+
+        if (data.activeSparkModel) {
+          document.getElementById('sparkStatusText').textContent = `Spark GB10: ${data.activeSparkModel}`;
+        } else {
+          document.getElementById('sparkStatusText').textContent = 'Spark GB10: Container Offline';
+        }
+      } catch (e) {
+        console.warn('Could not load /api/benchmark/config:', e);
+      }
+    }
+
+    function renderPrompts() {
+      if (!activePrompts || activePrompts.length < 2) return;
+      p1Title.value = activePrompts[0].title || '';
+      p1Text.value = activePrompts[0].userPrompt || '';
+      p1TitleDisplay.textContent = activePrompts[0].title || 'Prompt 1';
+
+      p2Title.value = activePrompts[1].title || '';
+      p2Text.value = activePrompts[1].userPrompt || '';
+      p2TitleDisplay.textContent = activePrompts[1].title || 'Prompt 2';
+    }
+
+    // Preset selection
+    document.querySelectorAll('.preset-chip').forEach(chip => {
+      chip.addEventListener('click', async () => {
+        document.querySelectorAll('.preset-chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        const preset = chip.dataset.preset;
+        if (preset === 'custom') return;
+
+        // Load preset prompts
+        const presetMap = {
+          codegen: [
+            { num: 1, title: 'Folder Watcher & Date Renamer with Locked File Handling', userPrompt: 'Write a Python script that watches a folder and renames new files to YYYY-MM-DD_originalname.ext based on creation date. Include error handling for locked files.' },
+            { num: 2, title: 'Docker Compose for Node.js, Postgres & Redis', userPrompt: 'Write a docker-compose.yml for a Node.js app with Postgres and Redis, including health checks and persistent volumes. Explain each non-obvious line.' }
+          ],
+          debugging: [
+            { num: 1, title: 'Defensive Fix for NaN in Form Input Math', userPrompt: 'This function sometimes returns NaN when input comes from a form. Find the bug and fix it defensively:\n\n```javascript\nfunction calculateInvoiceTotal(subtotal, taxRate, discountAmount, shippingFee) {\n  const tax = subtotal * (taxRate / 100);\n  const total = subtotal + tax - discountAmount + shippingFee;\n  return Number(total.toFixed(2));\n}\n```' },
+            { num: 2, title: 'Refactor Async Loop for Max 5 Concurrent Requests', userPrompt: 'This async loop fires all requests at once and hits rate limits. Refactor for max 5 concurrent requests:\n\n```javascript\nasync function fetchUserProfiles(userIds) {\n  const profiles = await Promise.all(\n    userIds.map(async (id) => {\n      const res = await fetch(`https://api.example.com/users/${id}`);\n      if (!res.ok) throw new Error(`Failed ${id}: ${res.status}`);\n      return res.json();\n    })\n  );\n  return profiles;\n}\n```' }
+          ],
+          refactoring: [
+            { num: 1, title: 'Decompose Monolithic Order Pipeline', userPrompt: 'Refactor this processOrder function into smaller single-responsibility units without changing runtime behavior.' },
+            { num: 2, title: 'Replace Every `any` with Strict TypeScript Types', userPrompt: 'Add proper TypeScript types to this file, replacing every any and explaining the types you chose.' }
+          ],
+          testing: [
+            { num: 1, title: 'Vitest Unit Tests with Boundary & Large Array Coverage', userPrompt: 'Write vitest unit tests for topK(numbers, k), covering empty input, null, and very large arrays (100,000+ items).' },
+            { num: 2, title: 'Property-Based Test for Money Rounding with fast-check', userPrompt: 'Write a property-based test for a money-rounding function using fast-check, with cases that would catch precision/rounding bugs.' }
+          ],
+          security: [
+            { num: 1, title: 'Trace Full Auth Flow & Identify Security Weaknesses', userPrompt: 'Trace the full lifecycle of a session in this Node.js crypto module, identify at least 3 security weaknesses, and fix them.' },
+            { num: 2, title: 'SQL Injection Vulnerability Audit & Parameterized Fixes', userPrompt: 'Review this data-access layer for SQL injection risk. Which queries are vulnerable? Provide attack payloads and rewrite them securely.' }
+          ],
+          architecture: [
+            { num: 1, title: 'Simplest SaaS Architecture (~100 Users) & Scale-Up to 10k', userPrompt: 'Propose the simplest architecture for a small SaaS (~100 users) with auth, billing, and a REST API. Justify each choice and note what changes at 10,000 users.' },
+            { num: 2, title: 'CommonJS to ESM Migration Plan with Risky Dependencies', userPrompt: 'Give me a step-by-step migration plan from CommonJS to ESM for a Node.js TypeScript repo with 15 dependencies.' }
+          ],
+          concurrency: [
+            { num: 1, title: 'Refactor Async Loop for Max 5 Concurrent Requests', userPrompt: 'Refactor this rate-limited loop for max 5 concurrent requests while preserving ordering.' },
+            { num: 2, title: 'Senior Engineer Review: "Works But Feels Wrong"', userPrompt: 'This caching function works but feels wrong. Review it like a senior engineer — what would you change and why.' }
+          ]
+        };
+
+        if (presetMap[preset]) {
+          activePrompts = presetMap[preset];
+          renderPrompts();
+        }
+      });
+    });
+
+    // Swap P1 and P2
+    document.getElementById('btnSwapPrompts').addEventListener('click', () => {
+      const tempTitle = p1Title.value;
+      const tempText = p1Text.value;
+      p1Title.value = p2Title.value;
+      p1Text.value = p2Text.value;
+      p2Title.value = tempTitle;
+      p2Text.value = tempText;
+
+      activePrompts = [
+        { num: 1, title: p1Title.value, userPrompt: p1Text.value },
+        { num: 2, title: p2Title.value, userPrompt: p2Text.value }
+      ];
+      renderPrompts();
+    });
+
+    // Save configuration
+    document.getElementById('btnSaveConfig').addEventListener('click', async () => {
+      activePrompts = [
+        { num: 1, title: p1Title.value, userPrompt: p1Text.value },
+        { num: 2, title: p2Title.value, userPrompt: p2Text.value }
+      ];
+      try {
+        const res = await fetch('/api/benchmark/save-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompts: activePrompts })
+        });
+        const d = await res.json();
+        if (d.ok) {
+          const note = document.getElementById('configStatusNote');
+          note.textContent = '✓ Successfully saved to scripts/benchmark-prompts.json';
+          note.style.color = 'var(--emerald)';
+          setTimeout(() => { note.style.color = 'var(--text-dim)'; }, 3000);
+        }
+      } catch (e) {
+        alert('Error saving config: ' + e.message);
+      }
+    });
+
+    // Model Card Toggle
+    function toggleModelCard(card) {
+      card.classList.toggle('selected');
+      const chk = card.querySelector('input[type="checkbox"]');
+      if (chk) chk.checked = card.classList.contains('selected');
+    }
+
+    // Modal logic for 20-Prompt Catalog
+    function openCatalogModal(slotNum) {
+      targetSlotForModal = slotNum;
+      document.getElementById('catalogModal').classList.add('open');
+      renderCatalogList();
+    }
+    function closeCatalogModal() {
+      document.getElementById('catalogModal').classList.remove('open');
+    }
+
+    const CATALOG_20 = [
+      { num: 1, title: 'Folder Watcher & Date Renamer with Locked File Handling', cat: 'Code generation', text: 'Write a Python script that watches a folder and renames new files to YYYY-MM-DD_originalname.ext based on creation date. Include error handling for locked files.' },
+      { num: 2, title: 'Docker Compose for Node.js, Postgres & Redis', cat: 'Code generation', text: 'Write a docker-compose.yml for a Node.js app with Postgres and Redis, including health checks and persistent volumes. Explain each non-obvious line.' },
+      { num: 3, title: 'Searchable, Paginated, Sortable Data Table (Hooks Only)', cat: 'Code generation', text: 'Write a React component for a searchable, paginated, sortable data table using only hooks — no external UI library.' },
+      { num: 4, title: 'Defensive Fix for NaN in Form Input Math', cat: 'Debugging', text: 'This function sometimes returns NaN when input comes from a form. Find the bug and fix it defensively:\n\nfunction calculateInvoiceTotal(subtotal, taxRate, discountAmount, shippingFee) { ... }' },
+      { num: 5, title: 'ECONNREFUSED 127.0.0.1:5432 in CI Diagnosis', cat: 'Debugging', text: 'I get ECONNREFUSED 127.0.0.1:5432 in CI but not locally. List the likely causes in order of probability and how to confirm each.' },
+      { num: 6, title: 'Refactor Async Loop for Max 5 Concurrent Requests', cat: 'Debugging', text: 'This async loop fires all requests at once and hits rate limits. Refactor for max 5 concurrent requests.' },
+      { num: 7, title: 'Decompose Monolithic Order Pipeline', cat: 'Refactoring', text: 'Refactor this processOrder function into smaller units with clear responsibilities without changing behavior.' },
+      { num: 8, title: 'Refactor Mixed Responsibilities with Strategy Pattern', cat: 'Refactoring', text: 'This class mixes pricing tiers, payment processing, notification dispatch. Refactor it using the Strategy pattern.' },
+      { num: 9, title: 'Replace Every `any` with Strict TypeScript Types', cat: 'Refactoring', text: 'Add proper TypeScript types to this file, replacing every any and explaining the types you chose.' },
+      { num: 10, title: 'Vitest Unit Tests with Boundary & Large Array Coverage', cat: 'Testing', text: 'Write vitest unit tests for this function, covering empty input, null, and very large arrays (100,000+ items).' },
+      { num: 11, title: 'Property-Based Test for Money Rounding with fast-check', cat: 'Testing', text: 'Write a property-based test for a money-rounding function using fast-check.' },
+      { num: 12, title: 'API Endpoint Integration Test with Mocked Database', cat: 'Testing', text: 'Write an integration test for this API endpoint with a mocked database layer.' },
+      { num: 13, title: 'Trace Full Auth Flow & Identify Security Weaknesses', cat: 'Reasoning', text: 'Trace the full lifecycle of a session, identify at least 3 security weaknesses, and fix them.' },
+      { num: 14, title: 'SQL Injection Vulnerability Audit & Parameterized Fixes', cat: 'Reasoning', text: 'Review this data-access layer for SQL injection risk: which queries are vulnerable?' },
+      { num: 15, title: 'Function Signature Change Blast Radius & Caller Analysis', cat: 'Reasoning', text: 'Analyze the blast radius across a codebase with 40+ callers for this function signature change.' },
+      { num: 16, title: 'Pre-commit Hook (Lint + Typecheck) & GitHub Actions Workflow', cat: 'Agentic', text: 'Give me the exact commands and file contents to set up a pre-commit hook and matching GitHub Actions workflow.' },
+      { num: 17, title: 'Build Time Doubled: Diagnosis and Impact-Ranked Fixes', cat: 'Agentic', text: 'My TypeScript build time doubled from 25s to 55s over the last month. List probable root causes and fixes.' },
+      { num: 18, title: 'CommonJS to ESM Migration Plan with Risky Dependencies', cat: 'Agentic', text: 'Give me a step-by-step migration plan from CommonJS to ESM for a Node.js TypeScript repo.' },
+      { num: 19, title: 'Senior Engineer Review: "Works But Feels Wrong"', cat: 'Judgment', text: 'This code works but feels wrong. Review it like a senior engineer — what would you change and why.' },
+      { num: 20, title: 'Simplest SaaS Architecture (~100 Users) & Scale-Up to 10k Users', cat: 'Judgment', text: 'Propose the simplest architecture for a small SaaS (~100 users) with auth, billing, and a REST API.' },
+    ];
+
+    function renderCatalogList(filter = '') {
+      const list = document.getElementById('catalogList');
+      list.innerHTML = '';
+      const filtered = CATALOG_20.filter(c => 
+        c.title.toLowerCase().includes(filter.toLowerCase()) || 
+        c.cat.toLowerCase().includes(filter.toLowerCase())
+      );
+
+      filtered.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'catalog-item';
+        div.innerHTML = `
+          <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+            <b style="font-size:13px; color:var(--text);">${item.num}. ${item.title}</b>
+            <span class="card-badge">${item.cat}</span>
+          </div>
+          <div style="font-size:12px; color:var(--text-muted); line-height:1.4;">${item.text.slice(0, 140)}...</div>
+        `;
+        div.addEventListener('click', () => {
+          if (targetSlotForModal === 1) {
+            p1Title.value = item.title;
+            p1Text.value = item.text;
+            p1TitleDisplay.textContent = item.title;
+          } else {
+            p2Title.value = item.title;
+            p2Text.value = item.text;
+            p2TitleDisplay.textContent = item.title;
+          }
+          closeCatalogModal();
+        });
+        list.appendChild(div);
+      });
+    }
+
+    document.getElementById('catalogSearch').addEventListener('input', (e) => {
+      renderCatalogList(e.target.value);
+    });
+
+    // RUN BENCHMARK EXECUTION VIA SSE
+    btnRun.addEventListener('click', async () => {
+      const selectedCards = document.querySelectorAll('.model-card.selected');
+      const selectedModelIds = Array.from(selectedCards).map(c => c.dataset.modelId);
+
+      if (selectedModelIds.length === 0) {
+        alert('Please select at least one model to benchmark.');
+        return;
+      }
+
+      btnRun.disabled = true;
+      btnRun.innerHTML = '⏳ EXECUTING BENCHMARK...';
+      terminalOutput.textContent = 'Initiating benchmark execution...\n';
+
+      const payload = {
+        prompt1: p1Text.value,
+        prompt2: p2Text.value,
+        models: selectedModelIds.join(','),
+        autoSwitch: document.getElementById('chkAutoSwitch').checked,
+        noSwitch: !document.getElementById('chkAutoSwitch').checked,
+        temperature: parseFloat(document.getElementById('numTemp').value) || 0.3
+      };
+
+      try {
+        const response = await fetch('/api/benchmark/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
+
+          for (const ev of events) {
+            const lines = ev.split('\n');
+            let eventType = '';
+            let eventData = '';
+
+            for (const l of lines) {
+              if (l.startsWith('event: ')) eventType = l.slice(7).trim();
+              if (l.startsWith('data: ')) eventData = l.slice(6);
+            }
+
+            if (eventData) {
+              try {
+                const parsed = JSON.parse(eventData);
+                if (eventType === 'stdout') {
+                  terminalOutput.textContent += parsed;
+                  terminalOutput.scrollTop = terminalOutput.scrollHeight;
+                } else if (eventType === 'stderr') {
+                  terminalOutput.textContent += `[ERR] ${parsed}`;
+                  terminalOutput.scrollTop = terminalOutput.scrollHeight;
+                } else if (eventType === 'done') {
+                  terminalOutput.textContent += `\n>>> BENCHMARK FINISHED (exit code: ${parsed.code}) <<<\n`;
+                  latestResults = parsed.results;
+                  latestReviewMd = parsed.reviewMd;
+                  renderScorecard(parsed.results);
+                }
+              } catch (e) {
+                terminalOutput.textContent += eventData + '\n';
+              }
+            }
+          }
+        }
+      } catch (e) {
+        terminalOutput.textContent += `\nFatal execution error: ${e.message}\n`;
+      } finally {
+        btnRun.disabled = false;
+        btnRun.innerHTML = '▶ RUN 4-MODEL BENCHMARK TEST';
+      }
+    });
+
+    // Render Scorecard Table
+    function renderScorecard(data) {
+      if (!data || !data.results) return;
+      const tbody = document.getElementById('scorecardBody');
+      tbody.innerHTML = '';
+
+      for (const m of data.results) {
+        if (!m.promptRuns) continue;
+        for (const r of m.promptRuns) {
+          const tr = document.createElement('tr');
+          if (!r.success) {
+            tr.innerHTML = `
+              <td><b>${m.shortName || m.name}</b></td>
+              <td style="color:var(--text-dim);">${m.env || 'Local'}</td>
+              <td>Prompt #${r.promptNum}</td>
+              <td colspan="5" style="color:var(--rose);">Error: ${r.error || 'Failed'}</td>
+              <td><span class="card-badge" style="background:rgba(244,63,94,0.15); color:var(--rose); border-color:var(--rose);">FAILED</span></td>
+            `;
+          } else {
+            tr.innerHTML = `
+              <td><b>${m.shortName || m.name}</b></td>
+              <td style="color:var(--text-dim); font-size:11px;">${m.env || 'Local'}</td>
+              <td><b>#${r.promptNum}</b> ${r.promptTitle ? r.promptTitle.slice(0, 24) + '...' : ''}</td>
+              <td class="mono">${r.stats.ttftMs} ms</td>
+              <td class="mono">${(r.stats.elapsedMs / 1000).toFixed(1)} s</td>
+              <td class="mono">~${r.stats.contentTokens}</td>
+              <td class="mono">~${r.stats.reasoningTokens}</td>
+              <td class="mono" style="color:var(--cyan); font-weight:700;">${r.stats.tokPerSec} t/s</td>
+              <td><span class="card-badge" style="background:rgba(74,222,128,0.15); color:var(--emerald); border-color:var(--emerald);">PASS</span></td>
+            `;
+          }
+          tbody.appendChild(tr);
+        }
+      }
+
+      renderResponses(data, activeResponseTab);
+    }
+
+    // Render Side-by-Side Model Responses
+    function switchResponseTab(tabNum) {
+      activeResponseTab = tabNum;
+      document.getElementById('tabPrompt1Btn').classList.toggle('active', tabNum === 1);
+      document.getElementById('tabPrompt2Btn').classList.toggle('active', tabNum === 2);
+      if (latestResults) renderResponses(latestResults, tabNum);
+    }
+
+    function renderResponses(data, promptNum) {
+      const container = document.getElementById('responsesContainer');
+      container.innerHTML = '';
+
+      for (const m of data.results) {
+        const run = m.promptRuns?.find(r => r.promptNum === promptNum);
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        if (!run || !run.success) {
+          card.innerHTML = `
+            <div class="card-header">
+              <b style="color:var(--rose);">${m.shortName}</b>
+              <span class="card-badge" style="color:var(--rose);">ERROR</span>
+            </div>
+            <p style="color:var(--text-dim); font-size:12px;">${run?.error || 'Did not execute.'}</p>
+          `;
+        } else {
+          card.innerHTML = `
+            <div class="card-header">
+              <div>
+                <b style="font-size:14px;">${m.shortName}</b>
+                <div style="font-size:11px; color:var(--text-dim); font-family:'JetBrains Mono', monospace;">${m.model}</div>
+              </div>
+              <div style="text-align:right;">
+                <span class="card-badge" style="color:var(--emerald);">${run.stats.tokPerSec} t/s</span>
+                <div style="font-size:10px; color:var(--text-dim); margin-top:2px;">TTFT: ${run.stats.ttftMs}ms | ${(run.stats.elapsedMs/1000).toFixed(1)}s</div>
+              </div>
+            </div>
+
+            ${run.reasoning ? `
+              <details style="margin-bottom:12px; background:#040711; padding:8px 12px; border-radius:6px; border:1px solid var(--border);">
+                <summary style="cursor:pointer; font-size:11px; font-family:'JetBrains Mono', monospace; color:var(--purple); font-weight:600;">
+                  Reasoning Trace (~${run.stats.reasoningTokens} tokens)
+                </summary>
+                <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--text-muted); margin-top:8px; max-height:160px; overflow-y:auto; white-space:pre-wrap;">${escapeHtml(run.reasoning.slice(0, 1500))}</div>
+              </details>
+            ` : ''}
+
+            <pre style="background:#040711; border:1px solid var(--border); border-radius:6px; padding:12px; font-family:'JetBrains Mono', monospace; font-size:11.5px; color:#e2e8f0; max-height:300px; overflow-y:auto; white-space:pre-wrap;">${escapeHtml(run.content.slice(0, 2000))}${run.content.length > 2000 ? '\n...[truncated display]...' : ''}</pre>
+          `;
+        }
+        container.appendChild(card);
+      }
+    }
+
+    function escapeHtml(str) {
+      return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // Download handlers
+    document.getElementById('btnDownloadMd').addEventListener('click', () => {
+      if (!latestReviewMd) { alert('No markdown report available yet. Run a benchmark first.'); return; }
+      const blob = new Blob([latestReviewMd], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'benchmark-all-review.md';
+      a.click();
+    });
+
+    document.getElementById('btnDownloadJson').addEventListener('click', () => {
+      if (!latestResults) { alert('No JSON results available yet. Run a benchmark first.'); return; }
+      const blob = new Blob([JSON.stringify(latestResults, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'benchmark-all-raw-results.json';
+      a.click();
+    });
+
+    // Init
+    loadConfig();
+  </script>
+</body>
+</html>

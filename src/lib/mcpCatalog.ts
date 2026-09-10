@@ -11,7 +11,7 @@ export type McpCatalogEntry = {
   command: string;
   args: string[];
   /** How the process is launched. uvx needs `uv` on PATH. */
-  runner: 'npx' | 'uvx';
+  runner: 'npx' | 'uvx' | 'mempalace-mcp' | 'direct';
 };
 
 export const MCP_ONE_CLICK_CATALOG: readonly McpCatalogEntry[] = [
@@ -87,7 +87,31 @@ export const MCP_ONE_CLICK_CATALOG: readonly McpCatalogEntry[] = [
     args: ['mcp-server-time'],
     runner: 'uvx',
   },
+  {
+    id: 'mempalace',
+    name: 'mempalace',
+    title: 'MemPalace',
+    blurb: 'Local-first verbatim AI memory (wings / rooms / drawers). uv tool install mempalace.',
+    command: 'mempalace-mcp',
+    args: [],
+    runner: 'mempalace-mcp',
+  },
 ];
+
+/** Operator-facing one-click set (browser = Playwright). */
+export const MCP_FEATURED_IDS = ['filesystem', 'playwright', 'git', 'mempalace'] as const;
+
+export function featuredMcpCatalog(): McpCatalogEntry[] {
+  const featured = MCP_FEATURED_IDS.map((id) => MCP_ONE_CLICK_CATALOG.find((e) => e.id === id)).filter(
+    (e): e is McpCatalogEntry => Boolean(e),
+  );
+  const rest = MCP_ONE_CLICK_CATALOG.filter((e) => !MCP_FEATURED_IDS.includes(e.id as (typeof MCP_FEATURED_IDS)[number]));
+  return [...featured, ...rest];
+}
+
+export function catalogMatch(servers: McpServerConfig[], entry: McpCatalogEntry): McpServerConfig | undefined {
+  return servers.find((s) => s.name.trim().toLowerCase() === entry.name.toLowerCase());
+}
 
 export function catalogToConfig(entry: McpCatalogEntry, id: string): McpServerConfig {
   return {

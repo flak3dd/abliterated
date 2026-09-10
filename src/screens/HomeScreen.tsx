@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Pin, Plus, Search, Trash2 } from 'lucide-react';
+import { Download, Pin, Plus, Search, Trash2, Upload } from 'lucide-react';
 import { resolveActiveSettings } from '../lib/activeEndpoint';
 import { cn } from '../lib/cn';
-import { deleteThread, getMessages, uid, upsertThread } from '../lib/storage';
+import { deleteThread, getMessages, getThreads, uid, upsertThread } from '../lib/storage';
+import { downloadThread, importThreadPayload, searchThreads } from '../lib/threadIo';
 import { workspaceGate } from '../lib/workspaceGuard';
 import { bridge } from '../lib/bridgeClient';
 import { DEFAULT_ENABLED_TOOLS, type ClientSettings, type Thread } from '../types';
@@ -15,6 +16,8 @@ interface Props {
   onNewSession?: () => void;
   /** Used only by the local createSession fallback when onNewSession is absent. */
   workspaceRoot?: string;
+  activeThreadId?: string | null;
+  compact?: boolean;
 }
 
 function pathBasename(path: string): string {
@@ -31,19 +34,15 @@ export function HomeScreen({
   onOpenThread,
   onNewSession,
   workspaceRoot,
+  activeThreadId,
+  compact,
 }: Props) {
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = q
-      ? threads.filter(
-          (t) =>
-            t.title.toLowerCase().includes(q) ||
-            t.model.toLowerCase().includes(q) ||
-            (t.workspaceRoot || '').toLowerCase().includes(q),
-        )
-      : threads;
+    const ids = q ? new Set(searchThreads(query)) : null;
+    const list = ids ? threads.filter((t) => ids.has(t.id)) : threads;
     return [...list].sort((a, b) => {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
       return b.updatedAt - a.updatedAt;
@@ -83,40 +82,79 @@ export function HomeScreen({
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center gap-2 border-b border-border px-4 py-2">
-        <div className="font-mono text-xs font-semibold tracking-wide text-zinc-200">SESSIONS</div>
-        <div className="relative ml-2 flex-1">
-          <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search threads"
-            className="field w-full py-1 pl-7 pr-2 text-[11px]"
-          />
-        </div>
-        <button
-          type="button"
-          onClick={createSession}
-          className="btn-primary"
-        >
-          <Plus size={12} /> New Session
-        </button>
+    <div className="flex h-full flex-col bg-background">
+      <header className={cn('flex items-center gap-2 border-b border-border', compact ? 'px-3 py-3' : 'px-4 py-3')}>
+        {compact ? (
+          <>
+            <div className="min-w-0 flex-1 text-[13px] font-semibold tracking-tight text-foreground">Chats</div>
+            <button
+              type="button"
+              className="btn-icon"
+              title="Import chat"
+              aria-label="Import chat"
+              onClick={() => {
+                const raw = window.prompt('Paste exported JSON or markdown');
+                if (!raw?.trim()) return;
+                try {
+                  const t = importThreadPayload(raw);
+                  onThreadsChange(getThreads());
+                  onOpenThread(t.id);
+                } catch (err) {
+                  window.alert(err instanceof Error ? err.message : 'Import failed');
+                }
+              }}
+            >
+              <Upload size={14} />
+            </button>
+            <button type="button" onClick={createSession} className="btn-icon" title="New chat" aria-label="New chat">
+              <Plus size={14} />
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="text-[13px] font-semibold tracking-tight text-foreground">Chats</div>
+            <div className="relative ml-2 flex-1">
+              <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search threads"
+                className="field w-full py-1 pl-7 pr-2 text-[12px]"
+              />
+            </div>
+            <button type="button" onClick={createSession} className="btn-primary">
+              <Plus size={12} /> New Chat
+            </button>
+          </>
+        )}
       </header>
+      {compact ? (
+        <div className="border-b border-border px-3 py-2">
+          <div className="relative">
+            <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search"
+              className="field w-full py-1 pl-7 pr-2 text-[12px]"
+            />
+          </div>
+        </div>
+      ) : null}
       <div className="flex-1 overflow-auto">
         {filtered.length === 0 ? (
           <div className="mx-auto max-w-sm px-4 py-12 text-center">
-            <div className="font-mono text-xs text-zinc-300">
-              {query.trim() ? 'No matching sessions' : 'No sessions yet'}
+            <div className="text-sm text-foreground">
+              {query.trim() ? 'No matching chats' : 'No chats yet'}
             </div>
-            <p className="mt-2 font-mono text-[11px] leading-5 text-muted">
+            <p className="mt-2 text-[13px] leading-5 text-muted-foreground">
               {query.trim()
                 ? 'Try a different search, or clear the filter.'
-                : 'Create a session to chat with the agent. Pin files with @path and use Continue chips after a turn.'}
+                : 'Create a chat to work with the agent. Pin files with @path.'}
             </p>
             {!query.trim() ? (
               <button type="button" onClick={createSession} className="btn-primary mt-4">
-                <Plus size={12} /> New Session
+                <Plus size={12} /> New Chat
               </button>
             ) : null}
           </div>
@@ -127,12 +165,18 @@ export function HomeScreen({
               const fullRoot = (t.workspaceRoot || '').trim();
               const dirLabel = fullRoot ? pathBasename(fullRoot) || fullRoot : 'No workspace';
               return (
-                <li key={t.id} className="flex items-center gap-2 border-b border-border px-4 py-2 hover:bg-zinc-900/70">
-                  <button type="button" onClick={() => togglePin(t)} className={cn('text-muted hover:text-zinc-200', t.pinned && 'text-amber-400')}>
+                <li
+                  key={t.id}
+                  className={cn(
+                    'flex items-center gap-2 border-b border-border px-3 py-2 hover:bg-accent/80',
+                    t.id === activeThreadId && 'bg-accent',
+                  )}
+                >
+                  <button type="button" onClick={() => togglePin(t)} className={cn('text-muted-foreground hover:text-foreground', t.pinned && 'text-warn')}>
                     <Pin size={13} fill={t.pinned ? 'currentColor' : 'none'} />
                   </button>
                   <button type="button" onClick={() => onOpenThread(t.id)} className="min-w-0 flex-1 text-left">
-                    <div className="truncate font-mono text-xs text-zinc-200">{t.title}</div>
+                    <div className="truncate text-[13px] text-foreground">{t.title}</div>
                     <div
                       className="truncate font-mono text-[10px] text-muted"
                       title={fullRoot || undefined}
@@ -146,6 +190,14 @@ export function HomeScreen({
                         {fullRoot}
                       </div>
                     ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    title="Export markdown"
+                    className="text-muted hover:text-sky-300"
+                    onClick={() => downloadThread(t.id, 'md')}
+                  >
+                    <Download size={13} />
                   </button>
                   <button type="button" onClick={() => remove(t.id)} className="text-muted hover:text-red-400">
                     <Trash2 size={13} />

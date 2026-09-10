@@ -25,20 +25,44 @@ execFileSync(
     '--moduleResolution',
     'bundler',
     '--strict',
+    '--skipLibCheck',
   ],
   { cwd: root, stdio: 'inherit' },
 );
 const mod = await import(pathToFileURL(path.join(outDir, 'workspaceGuard.js')).href);
 const {
   APP_ROOT_REFUSED,
+  BRIDGE_RESTARTING,
   WORKSPACE_REQUIRED,
+  canonicalizePath,
   collapseDots,
   isInsideAppRoot,
   isPathInsideAppRoot,
+  isSamePath,
+  isTemporaryPath,
   isUnsetWorkspace,
   joinRoot,
   workspaceGate,
+  shouldWriteWorkspaceFiles,
+  connectedBridgeWriteRoot,
 } = mod;
+
+assert.equal(canonicalizePath('/private/tmp/ablit-smoke'), '/tmp/ablit-smoke');
+assert.equal(canonicalizePath('/tmp/ablit-smoke'), '/tmp/ablit-smoke');
+assert.equal(canonicalizePath('/private/var/folders/xyz'), '/var/folders/xyz');
+assert.equal(isSamePath('/tmp/ablit-smoke', '/private/tmp/ablit-smoke'), true);
+assert.equal(isSamePath('/tmp/ablit-smoke/', '/tmp/ablit-smoke'), true);
+assert.equal(isSamePath('/Users/me/project', '/Users/me/project'), true);
+assert.equal(isSamePath('/Users/me/project', '/Users/other/project'), false);
+assert.equal(isSamePath('', ''), true);
+
+assert.equal(isTemporaryPath('/tmp'), true);
+assert.equal(isTemporaryPath('/tmp/ablit-smoke'), true);
+assert.equal(isTemporaryPath('/private/tmp/ablit-smoke'), true);
+assert.equal(isTemporaryPath('/private/var/folders/xx/yy'), true);
+assert.equal(isTemporaryPath('C:\\Users\\me\\AppData\\Local\\Temp\\smoke'), true);
+assert.equal(isTemporaryPath('/Users/me/project'), false);
+assert.equal(isTemporaryPath(''), false);
 
 assert.equal(isUnsetWorkspace(''), true);
 assert.equal(isUnsetWorkspace('/workspace'), true);
@@ -59,12 +83,91 @@ assert.equal(
   true,
 );
 
+assert.match(BRIDGE_RESTARTING, /hello/i);
 assert.equal(workspaceGate('', '/Users/me/abliterated').ok, false);
 assert.equal(workspaceGate('', '/Users/me/abliterated').message, WORKSPACE_REQUIRED);
 assert.equal(workspaceGate('/Users/me/abliterated', '/Users/me/abliterated').ok, false);
 assert.equal(workspaceGate('/Users/me/abliterated', '/Users/me/abliterated').message, APP_ROOT_REFUSED);
 assert.equal(workspaceGate('/Users/me/abliterated/src', '/Users/me/abliterated').reason, 'app_root');
 assert.equal(workspaceGate('/Users/me/project', '/Users/me/abliterated').ok, true);
+
+assert.equal(
+  shouldWriteWorkspaceFiles({
+    workspaceRoot: '/Users/me/project',
+    appRoot: '/Users/me/abliterated',
+    connected: true,
+  }),
+  true,
+);
+assert.equal(
+  shouldWriteWorkspaceFiles({
+    planMode: true,
+    workspaceRoot: '/Users/me/project',
+    appRoot: '/Users/me/abliterated',
+    connected: true,
+  }),
+  false,
+);
+assert.equal(
+  shouldWriteWorkspaceFiles({
+    workspaceRoot: '/Users/me/project',
+    connected: false,
+  }),
+  false,
+);
+
+// When the thread's chosen workspace and the daemon global root BOTH pass the gate
+// but DIFFER, the user's thread workspace wins (fixes drift-to-daemon-root).
+assert.equal(
+  connectedBridgeWriteRoot({
+    workspaceRoot: '/Users/me/thread-choice',
+    appRoot: '/Users/me/abliterated',
+    bridgeRoot: '/Users/me/daemon-drift',
+  }),
+  '/Users/me/thread-choice',
+);
+// A workspaceRoot inside the install dir is rejected; fall back to a valid daemon root.
+assert.equal(
+  connectedBridgeWriteRoot({
+    workspaceRoot: '/Users/me/abliterated/sub',
+    appRoot: '/Users/me/abliterated',
+    bridgeRoot: '/Users/me/project',
+  }),
+  '/Users/me/project',
+);
+assert.equal(
+  connectedBridgeWriteRoot({
+    workspaceRoot: '/Users/me/project',
+    appRoot: '/Users/me/abliterated',
+    bridgeRoot: '/Users/me/abliterated',
+  }),
+  '/Users/me/project',
+);
+assert.equal(
+  connectedBridgeWriteRoot({
+    workspaceRoot: '',
+    appRoot: '/Users/me/abliterated',
+    bridgeRoot: '/Users/me/project',
+  }),
+  '/Users/me/project',
+);
+assert.equal(
+  connectedBridgeWriteRoot({
+    workspaceRoot: '',
+    appRoot: '/Users/me/abliterated',
+    bridgeRoot: '/Users/me/abliterated',
+  }),
+  '',
+);
+assert.equal(
+  shouldWriteWorkspaceFiles({
+    workspaceRoot: '',
+    appRoot: '/Users/me/abliterated',
+    connected: true,
+    bridgeRoot: '/Users/me/project',
+  }),
+  true,
+);
 
 fs.rmSync(outDir, { recursive: true, force: true });
 console.log('test-workspace-guard.mjs ok');

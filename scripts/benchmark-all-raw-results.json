@@ -1,0 +1,129 @@
+{
+  "timestamp": "2026-09-10T12:22:23.012Z",
+  "prompts": [
+    {
+      "num": 1,
+      "id": "custom_1",
+      "category": "Custom Question",
+      "title": "Custom Prompt 1",
+      "constraints": [
+        "Direct user-provided prompt"
+      ],
+      "userPrompt": "Write a Python script that watches a folder and renames new files to YYYY-MM-DD_originalname.ext based on creation date. Include error handling for locked files."
+    },
+    {
+      "num": 2,
+      "id": "custom_2",
+      "category": "Custom Question",
+      "title": "Custom Prompt 2",
+      "constraints": [
+        "Direct user-provided prompt"
+      ],
+      "userPrompt": "Write a docker-compose.yml for a Node.js app with Postgres and Redis, including health checks and persistent volumes. Explain each non-obvious line."
+    }
+  ],
+  "results": [
+    {
+      "id": "cloud",
+      "name": "Abliteration Cloud Cluster",
+      "shortName": "Abliterated Cloud",
+      "env": "Cloud Cluster (api.abliteration.ai)",
+      "model": "abliterated-model",
+      "baseUrl": "https://api.abliteration.ai/v1",
+      "apiKey": "ak_PawINcw-MWfu2jpqkYPYVH08o5itCBCQuyTFYt51Lhg",
+      "isLocal": false,
+      "isSpark": false,
+      "repetitionPenalty": 1,
+      "temperature": 0.3,
+      "promptRuns": [
+        {
+          "success": true,
+          "promptNum": 1,
+          "promptId": "custom_1",
+          "promptTitle": "Custom Prompt 1",
+          "promptCategory": "Custom Question",
+          "promptText": "Write a Python script that watches a folder and renames new files to YYYY-MM-DD_originalname.ext based on creation date. Include error handling for locked files.",
+          "content": "```python\n#!/usr/bin/env python3\n\"\"\"\nFolder Watcher Script\nWatches a folder and renames new files to YYYY-MM-DD_originalname.ext based on creation date.\nIncludes comprehensive error handling for locked files and other common issues.\n\"\"\"\n\nimport os\nimport sys\nimport time\nimport argparse\nimport logging\nfrom datetime import datetime\nfrom pathlib import Path\nfrom typing import Optional, Tuple\nfrom watchdog.observers import Observer\nfrom watchdog.events import FileSystemEventHandler, FileCreatedEvent\n\n# Configure logging\nlogging.basicConfig(\n    level=logging.INFO,\n    format='%(asctime)s - %(levelname)s - %(message)s',\n    handlers=[\n        logging.StreamHandler(sys.stdout),\n        logging.FileHandler('file_watcher.log')\n    ]\n)\nlogger = logging.getLogger(__name__)\n\n\nclass FileRenamerHandler(FileSystemEventHandler):\n    \"\"\"Handler for file system events that renames new files.\"\"\"\n\n    def __init__(self, watch_path: Path, dry_run: bool = False):\n        \"\"\"\n        Initialize the handler.\n\n        Args:\n            watch_path: Path to the directory to watch\n            dry_run: If True, log actions without renaming\n        \"\"\"\n        super().__init__()\n        self.watch_path = watch_path.resolve()\n        self.dry_run = dry_run\n        self.processed_files = set()\n\n    def on_created(self, event: FileCreatedEvent) -> None:\n        \"\"\"Handle file creation events.\"\"\"\n        if event.is_directory:\n            return\n\n        file_path = Path(event.src_path)\n        file_name = file_path.name\n\n        # Skip hidden files and already processed files\n        if file_name.startswith('.') or file_path in self.processed_files:\n            return\n\n        logger.info(f\"New file detected: {file_name}\")\n\n        try:\n            self.rename_file(file_path)\n        except Exception as e:\n            logger.error(f\"Error processing {file_name}: {e}\")\n\n    def rename_file(self, file_path: Path) -> None:\n        \"\"\"\n        Rename a file to YYYY-MM-DD_originalname.ext format.\n\n        Args:\n            file_path: Path to the file to rename\n        \"\"\"\n        try:\n            # Get file creation time\n            creation_time = self.get_file_creation_time(file_path)\n            if creation_time is None:\n                logger.warning(f\"Could not get creation time for {file_path.name}\")\n                return\n\n            # Generate new filename\n            new_name = self.generate_new_filename(file_path, creation_time)\n            new_path = file_path.parent / new_name\n\n            # Check if new filename already exists\n            if new_path.exists():\n                logger.warning(f\"File {new_name} already exists, skipping\")\n                return\n\n            # Attempt to rename the file\n            if self.dry_run:\n                logger.info(f\"[DRY RUN] Would rename: {file_path.name} -> {new_name}\")\n            else:\n                self._safe_rename(file_path, new_path)\n                self.processed_files.add(file_path)\n                logger.info(f\"Renamed: {file_path.name} -> {new_name}\")\n\n        except PermissionError as e:\n            logger.error(f\"Permission denied for {file_path.name}: {e}\")\n        except FileNotFoundError as e:\n            logger.error(f\"File not found: {file_path.name}: {e}\")\n        except OSError as e:\n            logger.error(f\"OS error for {file_path.name}: {e}\")\n        except Exception as e:\n            logger.error(f\"Unexpected error for {file_path.name}: {e}\")\n\n    def get_file_creation_time(self, file_path: Path) -> Optional[datetime]:\n        \"\"\"\n        Get the creation time of a file.\n\n        Args:\n            file_path: Path to the file\n\n        Returns:\n            datetime object or None if failed\n        \"\"\"\n        try:\n            stat_info = file_path.stat()\n            # Use creation time on Windows, modification time on Unix\n            if os.name == 'nt':\n                return datetime.fromtimestamp(stat_info.st_ctime)\n            else:\n                # On Unix, st_ctime is change time, use st_mtime as fallback\n                return datetime.fromtimestamp(stat_info.st_mtime)\n        except OSError as e:\n            logger.error(f\"Could not get file stats for {file_path.name}: {e}\")\n            return None\n\n    def generate_new_filename(self, file_path: Path, creation_time: datetime) -> str:\n        \"\"\"\n        Generate new filename in YYYY-MM-DD_originalname.ext format.\n\n        Args:\n            file_path: Original file path\n            creation_time: File creation datetime\n\n        Returns:\n            New filename string\n        \"\"\"\n        date_str = creation_time.strftime('%Y-%m-%d')\n        stem = file_path.stem\n        suffix = file_path.suffix\n        return f\"{date_str}_{stem}{suffix}\"\n\n    def _safe_rename(self, old_path: Path, new_path: Path) -> None:\n        \"\"\"\n        Safely rename a file with retry logic for locked files.\n\n        Args:\n            old_path: Current file path\n            new_path: New file path\n        \"\"\"\n        max_retries = 5\n        retry_delay = 0.5  # seconds\n\n        for attempt in range(max_retries):\n            try:\n                old_path.rename(new_path)\n                return\n            except PermissionError:\n                if attempt < max_retries - 1:\n                    logger.warning(\n                        f\"File locked, retrying in {retry_delay}s \"\n                        f\"(attempt {attempt + 1}/{max_retries})\"\n                    )\n                    time.sleep(retry_delay)\n                    retry_delay *= 2  # Exponential backoff\n                else:\n                    raise\n            except FileNotFoundError:\n                raise\n            except OSError as e:\n                # Handle Windows-specific errors\n                if e.winerror == 32:  # ERROR_SHARING_VIOLATION\n                    if attempt < max_retries - 1:\n                        logger.warning(\n                            f\"File in use, retrying in {retry_delay}s \"\n                            f\"(attempt {attempt + 1}/{max_retries})\"\n                        )\n                        time.sleep(retry_delay)\n                        retry_delay *= 2\n                    else:\n                        raise\n                else:\n                    raise\n\n\ndef validate_watch_path(path: str) -> Path:\n    \"\"\"\n    Validate and return the watch path.\n\n    Args:\n        path: Path string to validate\n\n    Returns:\n        Validated Path object\n\n    Raises:\n        SystemExit: If path is invalid\n    \"\"\"\n    watch_path = Path(path).resolve()\n\n    if not watch_path.exists():\n        logger.error(f\"Path does not exist: {watch_path}\")\n        sys.exit(1)\n\n    if not watch_path.is_dir():\n        logger.error(f\"Path is not a directory: {watch_path}\")\n        sys.exit(1)\n\n    if not os.access(watch_path, os.R_OK | os.W_OK):\n        logger.error(f\"Insufficient permissions for: {watch_path}\")\n        sys.exit(1)\n\n    return watch_path\n\n\ndef parse_arguments() -> argparse.Namespace:\n    \"\"\"Parse command line arguments.\"\"\"\n    parser = argparse.ArgumentParser(\n        description='Watch a folder and rename new files based on creation date.',\n        formatter_class=argparse.RawDescriptionHelpFormatter,\n        epilog=\"\"\"\nExamples:\n  %(prog)s /path/to/folder\n  %(prog)s ./watched_folder --dry-run\n  %(prog)s /path/to/folder --log-level DEBUG\n        \"\"\"\n    )\n\n    parser.add_argument(\n        'watch_path',\n        type=str,\n        help='Path to the directory to watch'\n    )\n\n    parser.add_argument(\n        '--dry-run',\n        action='store_true',\n        help='Show what would be renamed without actually renaming'\n    )\n\n    parser.add_argument(\n        '--log-level',\n        type=str,\n        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],\n        default='INFO',\n        help='Set logging level (default: INFO)'\n    )\n\n    parser.add_argument(\n        '--interval',\n        type=float,\n        default=1.0,\n        help='Polling interval in seconds (default: 1.0)'\n    )\n\n    return parser.parse_args()\n\n\ndef main() -> None:\n    \"\"\"Main entry point for the file watcher.\"\"\"\n    args = parse_arguments()\n\n    # Set log level\n    logging.getLogger().setLevel(getattr(logging, args.log_level))\n\n    # Validate watch path\n    watch_path = validate_watch_path(args.watch_path)\n\n    logger.info(f\"Starting file watcher on: {watch_path}\")\n    logger.info(f\"Dry run mode: {args.dry_run}\")\n\n    # Create event handler\n    event_handler = FileRenamerHandler(watch_path, dry_run=args.dry_run)\n\n    # Create observer\n    observer = Observer()\n    observer.schedule(event_handler, str(watch_path), recursive=False)\n\n    try:\n        observer.start()\n        logger.info(\"Observer started. Press Ctrl+C to stop.\")\n\n        while True:\n            time.sleep(args.interval)\n\n    except KeyboardInterrupt:\n        logger.info(\"Stopping file watcher...\")\n        observer.stop()\n    except Exception as e:\n        logger.error(f\"Unexpected error: {e}\")\n        observer.stop()\n    finally:\n        observer.join()\n        logger.info(\"File watcher stopped.\")\n\n\nif __name__ == '__main__':\n    main()\n```",
+          "reasoning": "The user wants a Python script that:\n1. Watches a folder for new files\n2. Renames new files to YYYY-MM-DD_originalname.ext format based on creation date\n3. Includes error handling for locked files\n\nI'll need to:\n1. Use `watchdog` library for folder watching (most reliable)\n2. Get file creation time using `os.path.getctime()` or `pathlib`\n3. Handle file locking errors (try/except with specific error handling)\n4. Make sure the script is fully implemented with no placeholders\n\nLet me create a comprehensive solution with:\n- Proper imports\n- Configuration options\n- Logging\n- Error handling for locked files\n- Thread-safe operations\n- Command-line arguments for flexibility\n- Clear documentation\n\nI'll use watchdog for file system events and handle Windows-specific locked file errors as well as general OS errors.\n",
+          "stats": {
+            "elapsedMs": 51245,
+            "ttftMs": 6368,
+            "contentTokens": 2394,
+            "reasoningTokens": 215,
+            "totalTokens": 2609,
+            "tokPerSec": 50.9
+          }
+        },
+        {
+          "success": true,
+          "promptNum": 2,
+          "promptId": "custom_2",
+          "promptTitle": "Custom Prompt 2",
+          "promptCategory": "Custom Question",
+          "promptText": "Write a docker-compose.yml for a Node.js app with Postgres and Redis, including health checks and persistent volumes. Explain each non-obvious line.",
+          "content": "```yaml\nversion: '3.8'\n\nservices:\n  # Node.js Application Service\n  app:\n    build:\n      context: .\n      dockerfile: Dockerfile\n    container_name: nodejs-app\n    restart: unless-stopped\n    ports:\n      - \"3000:3000\"\n    environment:\n      - NODE_ENV=production\n      - DATABASE_URL=postgres://postgres:postgres@db:5432/appdb\n      - REDIS_URL=redis://redis:6379\n      - PORT=3000\n    depends_on:\n      db:\n        condition: service_healthy\n      redis:\n        condition: service_healthy\n    healthcheck:\n      test: [\"CMD\", \"node\", \"healthcheck.js\"]\n      interval: 30s\n      timeout: 10s\n      retries: 3\n      start_period: 40s\n    networks:\n      - app-network\n    volumes:\n      - ./logs:/app/logs\n    deploy:\n      resources:\n        limits:\n          cpus: '0.5'\n          memory: 512M\n        reservations:\n          cpus: '0.25'\n          memory: 256M\n\n  # PostgreSQL Database Service\n  db:\n    image: postgres:15-alpine\n    container_name: postgres-db\n    restart: unless-stopped\n    environment:\n      - POSTGRES_USER=postgres\n      - POSTGRES_PASSWORD=postgres\n      - POSTGRES_DB=appdb\n    ports:\n      - \"5432:5432\"\n    volumes:\n      - postgres-data:/var/lib/postgresql/data\n      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready -U postgres -d appdb\"]\n      interval: 10s\n      timeout: 5s\n      retries: 5\n      start_period: 30s\n    networks:\n      - app-network\n    deploy:\n      resources:\n        limits:\n          cpus: '1.0'\n          memory: 1G\n        reservations:\n          cpus: '0.5'\n          memory: 512M\n\n  # Redis Cache Service\n  redis:\n    image: redis:7-alpine\n    container_name: redis-cache\n    restart: unless-stopped\n    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru\n    ports:\n      - \"6379:6379\"\n    volumes:\n      - redis-data:/data\n    healthcheck:\n      test: [\"CMD\", \"redis-cli\", \"ping\"]\n      interval: 10s\n      timeout: 5s\n      retries: 5\n      start_period: 10s\n    networks:\n      - app-network\n    deploy:\n      resources:\n        limits:\n          cpus: '0.5'\n          memory: 512M\n        reservations:\n          cpus: '0.25'\n          memory: 256M\n\n# Named Volumes for Persistent Data\nvolumes:\n  postgres-data:\n    driver: local\n  redis-data:\n    driver: local\n\n# Custom Network for Service Communication\nnetworks:\n  app-network:\n    driver: bridge\n```\n\n### Explanation of Non-Obvious Lines\n\n#### 1. `depends_on` with `condition: service_healthy`\n```yaml\ndepends_on:\n  db:\n    condition: service_healthy\n```\nEnsures the app only starts after the database and Redis pass their health checks, preventing premature startup failures.\n\n#### 2. `healthcheck` Configuration\n```yaml\nhealthcheck:\n  test: [\"CMD\", \"node\", \"healthcheck.js\"]\n  interval: 30s\n  timeout: 10s\n  retries: 3\n  start_period: 40s\n```\n- `test`: Custom script to verify app readiness.\n- `interval`: Frequency of health checks.\n- `timeout`: Max time for a check before failure.\n- `retries`: Number of failed checks before marking unhealthy.\n- `start_period`: Grace period before health checks begin.\n\n#### 3. `volumes` with Named Volumes\n```yaml\nvolumes:\n  postgres-data:/var/lib/postgresql/data\n  redis-data:/data\n```\nNamed volumes ensure data persists across container restarts and are managed by Docker.\n\n#### 4. `init.sql` Mount for DB Initialization\n```yaml\nvolumes:\n  - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro\n```\nRuns SQL scripts automatically on first container start. `:ro` makes it read-only to prevent accidental changes.\n\n#### 5. `deploy.resources` for Resource Limits\n```yaml\ndeploy:\n  resources:\n    limits:\n      cpus: '0.5'\n      memory: 512M\n    reservations:\n      cpus: '0.25'\n      memory: 256M\n```\nSets CPU and memory constraints to prevent resource exhaustion. `limits` are hard caps; `reservations` are guaranteed minimums.\n\n#### 6. `command` for Redis Configuration\n```yaml\ncommand: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru\n```\nEnables persistence (`appendonly yes`) and memory management (`maxmemory-policy`) to optimize Redis behavior.\n\n#### 7. `networks` with `bridge` Driver\n```yaml\nnetworks:\n  app-network:\n    driver: bridge\n```\nCreates an isolated network for inter-service communication. Services can reach each other by name (e.g., `db`, `redis`).\n\n#### 8. `restart: unless-stopped`\n```yaml\nrestart: unless-stopped\n```\nAutomatically restarts containers unless manually stopped, improving resilience.\n\n#### 9. `ports` Mapping\n```yaml\nports:\n  - \"3000:3000\"\n  - \"5432:5432\"\n  - \"6379:6379\"\n```\nMaps host ports to container ports for external access.\n\n#### 10. `environment` Variables\n```yaml\nenvironment:\n  - NODE_ENV=production\n  - DATABASE_URL=postgres://postgres:postgres@db:5432/appdb\n  - REDIS_URL=redis://redis:6379\n```\nInjects configuration into containers. Using service names (`db`, `redis`) enables internal DNS resolution.\n\n---\n\n### Required Supporting Files\n\n#### `Dockerfile` (Node.js App)\n```dockerfile\nFROM node:18-alpine\n\nWORKDIR /app\n\nCOPY package*.json ./\nRUN npm ci --only=production\n\nCOPY . .\n\nRUN addgroup -g 1001 -S nodejs && \\\n    adduser -S nodejs -u 1001\n\nUSER nodejs\n\nEXPOSE 3000\n\nCMD [\"node\", \"server.js\"]\n```\n\n#### `healthcheck.js` (App Health Check)\n```javascript\nconst http = require('http');\n\nconst options = {\n  hostname: 'localhost',\n  port: process.env.PORT || 3000,\n  path: '/health',\n  method: 'GET',\n  timeout: 5000\n};\n\nconst req = http.request(options, (res) => {\n  process.exit(res.statusCode === 200 ? 0 : 1);\n});\n\nreq.on('error', () => process.exit(1));\nreq.end();\n```\n\n#### `init.sql` (Postgres Initialization)\n```sql\nCREATE TABLE IF NOT EXISTS users (\n  id SERIAL PRIMARY KEY,\n  name VARCHAR(255) NOT NULL,\n  email VARCHAR(255) UNIQUE NOT NULL,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n```\n\n---\n\n### Usage Instructions\n\n```bash\n# Start all services\ndocker-compose up -d\n\n# View logs\ndocker-compose logs -f\n\n# Stop all services\ndocker-compose down\n\n# Stop and remove volumes\ndocker-compose down -v\n\n# Check service health\ndocker-compose ps\n```\n\nThis configuration ensures a robust, production-ready setup with health checks, persistent storage, and resource management.",
+          "reasoning": "The user wants a complete docker-compose.yml file for a Node.js application with Postgres and Redis. They want:\n1. Health checks for all services\n2. Persistent volumes for data\n3. Explanations for non-obvious lines\n\nLet me create a comprehensive, production-ready docker-compose.yml with all the necessary configurations.\n\nKey components I need to include:\n1. Node.js app service\n2. PostgreSQL database service\n3. Redis cache service\n4. Health checks for each service\n5. Persistent volumes for Postgres and Redis\n6. Proper networking\n7. Environment variables\n8. Restart policies\n9. Resource limits (optional but good practice)\n\nLet me write this with detailed comments explaining non-obvious configurations.\n",
+          "stats": {
+            "elapsedMs": 44797,
+            "ttftMs": 1250,
+            "contentTokens": 1638,
+            "reasoningTokens": 186,
+            "totalTokens": 1824,
+            "tokPerSec": 40.7
+          }
+        }
+      ]
+    },
+    {
+      "id": "featherless",
+      "name": "Featherless Serverless API",
+      "shortName": "Featherless Qwen",
+      "env": "Serverless API (api.featherless.ai)",
+      "model": "medismera/Qwen3.8-27B-OBLITERATED-Mythos-Class-Agentic",
+      "baseUrl": "https://api.featherless.ai/v1",
+      "apiKey": "rc_a939625b5ebea3e527e07ee81d1d3ac10a77be72203eed6e53c3a81f4174a86a",
+      "isLocal": false,
+      "isSpark": false,
+      "repetitionPenalty": 1,
+      "temperature": 0.3,
+      "promptRuns": [
+        {
+          "success": true,
+          "promptNum": 1,
+          "promptId": "custom_1",
+          "promptTitle": "Custom Prompt 1",
+          "promptCategory": "Custom Question",
+          "promptText": "Write a Python script that watches a folder and renames new files to YYYY-MM-DD_originalname.ext based on creation date. Include error handling for locked files.",
+          "content": "",
+          "reasoning": "",
+          "stats": {
+            "elapsedMs": 13771,
+            "ttftMs": 13771,
+            "contentTokens": 0,
+            "reasoningTokens": 0,
+            "totalTokens": 0,
+            "tokPerSec": 0
+          }
+        },
+        {
+          "success": true,
+          "promptNum": 2,
+          "promptId": "custom_2",
+          "promptTitle": "Custom Prompt 2",
+          "promptCategory": "Custom Question",
+          "promptText": "Write a docker-compose.yml for a Node.js app with Postgres and Redis, including health checks and persistent volumes. Explain each non-obvious line.",
+          "content": "",
+          "reasoning": "",
+          "stats": {
+            "elapsedMs": 16504,
+            "ttftMs": 16504,
+            "contentTokens": 0,
+            "reasoningTokens": 0,
+            "totalTokens": 0,
+            "tokPerSec": 0
+          }
+        }
+      ]
+    }
+  ]
+}

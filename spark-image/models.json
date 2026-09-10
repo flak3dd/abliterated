@@ -1,0 +1,208 @@
+{
+  "quality": {
+    "id": "krea2-raw-fp8",
+    "role": "default",
+    "build": "D",
+    "label": "Krea 2 RAW FP8 + uncensor LoRA @ 0.75 (Build D hero, Diffusers)",
+    "backend": "diffusers",
+    "pipeline_class": "Krea2Pipeline",
+    "repo": "krea/Krea-2-Raw",
+    "steps": 24,
+    "cfg": 3.5,
+    "guidance": 3.5,
+    "sampler": "euler",
+    "scheduler": "beta",
+    "defaultSize": "1328x1328",
+    "maxEdge": 1536,
+    "loraStrength": 0.75,
+    "textEncoder": "Huihui-Qwen3-VL-4B-Instruct-abliterated-fp8_scaled.safetensors",
+    "textEncoderRepo": "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated",
+    "textEncoderAltRepo": "AEON-7/Heretic-Qwen3-VL-4B",
+    "textEncoderEnv": "KREA_TEXT_ENCODER_REPO",
+    "ditFile": "krea2_raw_fp8_scaled.safetensors",
+    "files": [
+      {
+        "url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_raw_fp8_scaled.safetensors",
+        "dest": "diffusion_models/krea2_raw_fp8_scaled.safetensors"
+      },
+      {
+        "url": "https://huggingface.co/ahmed22xa/Huihui-Qwen3-VL-4B-Instruct-abliterated-comfy/resolve/main/Huihui-Qwen3-VL-4B-Instruct-abliterated-fp8_scaled.safetensors",
+        "dest": "text_encoders/Huihui-Qwen3-VL-4B-Instruct-abliterated-fp8_scaled.safetensors"
+      },
+      {
+        "url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/vae/qwen_image_vae.safetensors",
+        "dest": "vae/qwen_image_vae.safetensors"
+      }
+    ],
+    "uncensorLora": {
+      "file": "krea2_uncensor.safetensors",
+      "dest": "loras/krea2_uncensor.safetensors",
+      "strength": 0.75,
+      "strengthRange": [
+        0.7,
+        1.0
+      ],
+      "url": "https://huggingface.co/Sentinel7/krea2/resolve/main/2742640/3084588/Krea2%20NSFW%2B.safetensors",
+      "note": "TE swap alone != full unlock; DiT + LoRA @ 0.75 complete Build D."
+    },
+    "note": "REPLACE stock Qwen3-VL-4B text_encoder with Huihui (or Heretic via KREA_TEXT_ENCODER_REPO). Not CLIP. Image TE != LLM sidecar :8000."
+  },
+  "fast": {
+    "id": "krea2-turbo",
+    "role": "fast",
+    "build": "D",
+    "label": "Krea 2 Turbo (demoted Fast on Krea2Pipeline)",
+    "backend": "diffusers",
+    "pipeline_class": "Krea2Pipeline",
+    "repo": "krea/Krea-2-Turbo",
+    "steps": 8,
+    "cfg": 0.0,
+    "guidance": 0.0,
+    "status": "demoted",
+    "note": "8 steps, guidance_scale=0.0. Separate from Z-Image Draft."
+  },
+  "klein": {
+    "id": "flux2-klein-9b",
+    "role": "adherence",
+    "build": "D",
+    "label": "FLUX.2 Klein 9B base + NSFW-unlock LoRA 0.5-0.9 (stub)",
+    "backend": "diffusers",
+    "pipeline_class": "Flux2KleinPipeline",
+    "repo": "black-forest-labs/FLUX.2-klein-base-9B",
+    "steps": 28,
+    "cfg": 3.5,
+    "guidance": 3.5,
+    "status": "stub",
+    "loraStrengthRange": [
+      0.5,
+      0.9
+    ],
+    "note": "NOT 4B, NOT 4-step distill. Stub OK if weights missing."
+  },
+  "qwen_image": {
+    "id": "qwen-image-2512-fp8",
+    "role": "instruction",
+    "build": "D",
+    "label": "Qwen-Image / 2512 FP8 \u2014 type & instruction + NSFW LoRA",
+    "backend": "diffusers",
+    "pipeline_class": "QwenImagePipeline",
+    "repo": "Qwen/Qwen-Image",
+    "fp8ConvertedDir": "qwen-image-2512-fp8",
+    "status": "first_class",
+    "weightsRequired": true,
+    "steps": 30,
+    "cfg": 4.0,
+    "guidance": 4.0,
+    "textEncoderRepo": "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated",
+    "textEncoderAltRepo": "AEON-7/Heretic-Qwen3-VL-4B",
+    "nsfwLora": {
+      "dest": "loras/qwen_image_nsfw.safetensors",
+      "strength": 0.7,
+      "strengthRange": [
+        0.5,
+        0.9
+      ],
+      "note": "NSFW LoRA slot for instruction/type path."
+    },
+    "note": "Prefer converted 2512 FP8 folder if present. Swap Huihui/Heretic Qwen3-VL TE (not CLIP). UI chip disabled until weights present."
+  },
+  "qwen_edit": {
+    "id": "qwen-edit-2511-fp8",
+    "role": "edit",
+    "build": "D",
+    "label": "Qwen-Edit 2511 FP8 + NSFW LoRA \u2014 img2img / multi-ref",
+    "backend": "diffusers",
+    "pipeline_class": "QwenImageEditPlusPipeline",
+    "repo": "Qwen/Qwen-Image-Edit-2511",
+    "fp8ConvertedDir": "qwen-edit-2511-fp8",
+    "status": "first_class",
+    "weightsRequired": true,
+    "modes": [
+      "img2img",
+      "multi-ref"
+    ],
+    "steps": 28,
+    "cfg": 3.5,
+    "guidance": 3.5,
+    "textEncoderRepo": "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated",
+    "textEncoderAltRepo": "AEON-7/Heretic-Qwen3-VL-4B",
+    "nsfwLora": {
+      "dest": "loras/qwen_edit_nsfw.safetensors",
+      "strength": 0.7,
+      "strengthRange": [
+        0.5,
+        0.9
+      ]
+    },
+    "note": "First-class edit. Huihui/Heretic TE swap where Qwen3-VL conditioning applies."
+  },
+  "draft": {
+    "id": "z-image-turbo-nsfw-nvfp4",
+    "role": "draft",
+    "build": "D",
+    "label": "Z-Image Turbo NVFP4 NSFW \u2014 sketches only",
+    "backend": "diffusers",
+    "pipeline_class": "ZImagePipeline",
+    "status": "first_class",
+    "weightsRequired": true,
+    "steps": 8,
+    "cfg": 1.0,
+    "guidance": 1.0,
+    "aliases": [
+      "z-image-turbo-6b",
+      "z-image",
+      "draft",
+      "sketch"
+    ],
+    "note": "Draft/sketches only. Does NOT replace Krea-2-Turbo demoted Fast."
+  },
+  "anime": {
+    "id": "illustrious-wai-nsfw",
+    "role": "anime",
+    "build": "D",
+    "label": "Illustrious WAI-NSFW (Anime/Adult zoo, optional)",
+    "backend": "diffusers",
+    "status": "stub",
+    "weightsRequired": true,
+    "note": "Optional Build D slot \u2014 NOT quality default. pull optional."
+  },
+  "pony": {
+    "id": "pony-v6",
+    "role": "anime",
+    "build": "D",
+    "label": "Pony V6 SDXL zoo (Anime/Adult, optional)",
+    "backend": "diffusers",
+    "status": "stub",
+    "weightsRequired": true,
+    "note": "Optional Build D slot \u2014 NOT quality default. Alternative to Illustrious."
+  },
+  "upscale": {
+    "id": "seedvr2-7b-fp8",
+    "role": "upscale",
+    "build": "D",
+    "label": "SeedVR2 7B FP8 \u2014 after RAW; never native 4K RAW",
+    "backend": "diffusers",
+    "pipeline_class": "SeedVR2",
+    "status": "stub"
+  },
+  "runtime": {
+    "arch": "aarch64",
+    "cuda": "13",
+    "sm": "121",
+    "vramClass": "highvram-equivalent",
+    "unifiedMemoryGB": 128,
+    "imageApiPort": 7860,
+    "textSidecarPort": 8000,
+    "diffusersMin": "0.39.0",
+    "imageTeNote": "Image TE = Huihui (primary) or Heretic (alt via KREA_TEXT_ENCODER_REPO) Qwen3-VL-4B. NOT the LLM sidecar.",
+    "promptLlmNote": "Prompt LLM = :8000 qwen-abliterated (THe-Plague 35B-A3B NVFP4-MTP default). Alts: Huihui/OrcaRouter 27B/35B-A3B."
+  },
+  "phase2": {
+    "note": "Document only \u2014 do not pull video yet",
+    "ids": [
+      "chroma",
+      "wan-video",
+      "ltx-video"
+    ]
+  }
+}

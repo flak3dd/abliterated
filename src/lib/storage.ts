@@ -15,6 +15,7 @@ import {
   PREV4_DEFAULT_TOOLS,
   PREV5_DEFAULT_TOOLS,
   PREV6_DEFAULT_TOOLS,
+  PREV7_DEFAULT_TOOLS,
 } from '../types';
 import {
   AGENT_RUNS_KEEP,
@@ -28,8 +29,10 @@ import {
   type AgentRunRecord,
 } from './agentHelpers';
 import { getLicenseState } from './license';
+import { durableSet, isBulkyStorageKey, wipeDurableStore } from './durableStore';
 import { LEGACY_PROMPTS, SYSTEM_PROMPT } from './systemPrompt';
 import { DEFAULT_FEATHERLESS_MODEL, migrateFeatherlessModel } from './featherlessQwen.js';
+import { isTemporaryPath } from './workspaceGuard';
 
 export const KEYS = {
   settings: 'ablit_settings',
@@ -53,14 +56,13 @@ export function generatePairingCode(): string {
   return randomPairingCode();
 }
 
-const envToken = (import.meta.env.VITE_ABLITERATED_TOKEN as string | undefined)?.trim() || '';
-const envBase = (import.meta.env.VITE_ABLITERATED_BASE_URL as string | undefined)?.trim() || 'https://api.abliteration.ai/v1';
-const envModel = (import.meta.env.VITE_ABLITERATED_MODEL as string | undefined)?.trim() || 'abliterated-model';
-
 export const DEFAULT_SETTINGS: ClientSettings = {
-  baseUrl: envBase,
-  token: envToken,
-  defaultModel: envModel,
+  // Shared Abliteration/Custom slot: ship empty so Custom is not prefilled with cloud samples.
+  // Abliteration requests fall back via resolveActiveSettings (cloud URL/model).
+  // Never default-in VITE_ABLITERATED_TOKEN (would bake secrets into the SPA).
+  baseUrl: '',
+  token: '',
+  defaultModel: '',
   reasoning: 'off',
   systemPrompt: SYSTEM_PROMPT,
   remoteHostEnabled: true,
@@ -84,23 +86,48 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   sparkToken: '',
   sparkModel: 'qwen-abliterated',
   sparkViaProxy: true,
+  sparkLanHost: '',
+  sparkSshAlias: '',
   featherlessEnabled: true,
   featherlessBaseUrl: 'https://api.featherless.ai/v1',
   featherlessToken: '',
   featherlessModel: DEFAULT_FEATHERLESS_MODEL,
   featherlessViaProxy: false,
   imageGenEnabled: false,
+  imageBackend: 'spark',
   imageBaseUrl: 'http://127.0.0.1:7860/v1',
   imageToken: '',
-  imageModel: 'abliterated-flux-klein',
-  imageViaProxy: true,
+  imageModel: 'krea2-raw-fp8',
+  // Prefer off: Vite DEV browser still enables via getSettings when unset; Electron stays off.
+  imageViaProxy: false,
+  xaiImageBaseUrl: 'https://api.x.ai/v1',
+  xaiImageToken: '',
+  xaiImageModel: 'grok-imagine-image-2.0',
+  xaiImageResolution: '2k',
+  xaiImageQuality: 'auto',
   mcpServers: [],
   skillsEnabled: true,
   licenseKey: import.meta.env.DEV ? 'ABLIT-ADMIN' : '',
+  billingSiteUrl: 'https://abliterated.app',
+  billingEmail: '',
+  accountEmail: '',
+  loginId: '',
+  deviceId: '',
+  accountLoggedIn: false,
+  setupComplete: false,
+  projectRulesPinned: true,
   webSearchBraveKey: '',
   webSearchSearxUrl: '',
   jobWorktreesEnabled: false,
   multiAgentEnabled: false,
+  mempalaceEnabled: true,
+  mempalacePalacePath: '',
+  mempalaceWing: '',
+  mempalaceAutoRecall: true,
+  mempalaceAutoSave: true,
+  verifyStrictProfile: true,
+  agentMode: 'agent',
+  postEditDiagnostics: false,
 };
 
 export function isPlaceholderRoot(path: string): boolean {
@@ -172,10 +199,15 @@ function pruneMessagesForQuota(messages: Message[]): Message[] {
   return windowMessages(kept);
 }
 
+function persistDurable(key: string, value: unknown): void {
+  if (isBulkyStorageKey(key)) void durableSet(key, value);
+}
+
 function writeJson(key: string, value: unknown): void {
   const payload = () => JSON.stringify(value);
   try {
     localStorage.setItem(key, payload());
+    persistDurable(key, value);
     return;
   } catch (err) {
     if (!isQuotaError(err)) {
@@ -215,117 +247,167 @@ function writeJson(key: string, value: unknown): void {
   }
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    persistDurable(key, value);
   } catch (err) {
     console.warn(`[ablit] localStorage write still failing for ${key}`, err);
+    persistDurable(key, value);
   }
+}
+
+/**
+ * Hard invariant sanitizer: guarantees that it is impossible for settings
+ * to exist in a state that bricks or disables the AI agent.
+ */
+export function sanitizeSettings(stored?: Partial<ClientSettings>): ClientSettings {
+  const s = stored || {};
+  const storedPrompt = (s.systemPrompt || '').trim();
+  const systemPrompt =
+    !storedPrompt || storedPrompt.length < 20 || (LEGACY_PROMPTS as readonly string[]).includes(storedPrompt)
+      ? SYSTEM_PROMPT
+      : storedPrompt;
+
+  const validProviders = ['abliteration', 'platform', 'dgx-spark', 'featherless', 'custom'] as const;
+  const provider = s.inferenceProvider && validProviders.includes(s.inferenceProvider)
+    ? s.inferenceProvider
+    : 'abliteration';
+
+  const maxAgentTurns = clampMaxAgentTurns(
+    s.maxAgentTurns != null ? s.maxAgentTurns : DEFAULT_MAX_AGENT_TURNS,
+  );
+  const maxConcurrentJobs = clampMaxConcurrentJobs(
+    s.maxConcurrentJobs != null ? s.maxConcurrentJobs : DEFAULT_MAX_CONCURRENT_JOBS,
+  );
+
+  let selfDeepenPasses = clampSelfDeepenPasses(
+    s.selfDeepenPasses != null ? s.selfDeepenPasses : DEFAULT_SELF_DEEPEN_PASSES,
+  );
+  const license = getLicenseState({
+    licenseKey: typeof s.licenseKey === 'string' ? s.licenseKey.trim() : DEFAULT_SETTINGS.licenseKey,
+  });
+  if (license.isFree) {
+    selfDeepenPasses = Math.min(selfDeepenPasses, license.features.maxSelfDeepenPasses);
+  }
+
+  const defaultModel = (s.defaultModel || '').trim() || DEFAULT_SETTINGS.defaultModel || 'abliterated-model';
+  const sparkModel = (s.sparkModel || '').trim() || DEFAULT_SETTINGS.sparkModel || 'qwen-abliterated';
+  const rawFeatherlessModel = (s.featherlessModel || '').trim() || DEFAULT_SETTINGS.featherlessModel;
+  const flMig = migrateFeatherlessModel(rawFeatherlessModel);
+
+  const sparkBaseUrl = (s.sparkBaseUrl || '').trim() || DEFAULT_SETTINGS.sparkBaseUrl;
+  let featherlessBaseUrl = (s.featherlessBaseUrl || '').trim();
+  if (!featherlessBaseUrl || featherlessBaseUrl === 'http://127.0.0.1:3000/v1' || featherlessBaseUrl === 'http://localhost:3000/v1') {
+    featherlessBaseUrl = DEFAULT_SETTINGS.featherlessBaseUrl;
+  }
+  const baseUrl = (s.baseUrl || '').trim() || DEFAULT_SETTINGS.baseUrl;
+
+  // Remote host & bridge is required for AI agent tools to operate on local machine
+  const remoteHostEnabled = s.remoteHostEnabled !== false;
+
+  // Auto-enable companion flags so the active provider is marked operational
+  const sparkEnabled = provider === 'dgx-spark' ? true : s.sparkEnabled === true;
+  const featherlessEnabled = provider === 'featherless' ? true : s.featherlessEnabled !== false;
+
+  const result: ClientSettings = {
+    ...DEFAULT_SETTINGS,
+    ...s,
+    baseUrl,
+    token: typeof s.token === 'string' ? s.token.trim() : DEFAULT_SETTINGS.token,
+    defaultModel,
+    pairingCode: s.pairingCode || randomPairingCode(),
+    autoAcceptEdits: s.autoAcceptEdits === true,
+    autoRunShell: s.autoRunShell === true,
+    maxAgentTurns,
+    maxConcurrentJobs,
+    selfDeepenEnabled: s.selfDeepenEnabled !== false,
+    selfDeepenPasses,
+    deepenCompleteness: typeof s.deepenCompleteness === 'boolean' ? s.deepenCompleteness : s.selfDeepenEnabled !== false,
+    midRunInjectEnabled: s.midRunInjectEnabled !== false,
+    completionFooterEnabled: s.completionFooterEnabled !== false,
+    coalesceReasoningToContent: s.coalesceReasoningToContent !== false,
+    jobWorktreesEnabled: s.jobWorktreesEnabled === true,
+    multiAgentEnabled: s.multiAgentEnabled === true,
+    mempalaceEnabled: s.mempalaceEnabled !== false,
+    mempalacePalacePath: typeof s.mempalacePalacePath === 'string' ? s.mempalacePalacePath.trim() : '',
+    mempalaceWing: typeof s.mempalaceWing === 'string' ? s.mempalaceWing.trim() : '',
+    mempalaceAutoRecall: s.mempalaceAutoRecall !== false,
+    mempalaceAutoSave: s.mempalaceAutoSave !== false,
+    verifyStrictProfile: s.verifyStrictProfile !== false,
+    planModeEnabled: s.planModeEnabled === true,
+    buildModeEnabled: s.buildModeEnabled !== false,
+    agentMode: (s.agentMode === 'ask' || s.agentMode === 'plan' || s.agentMode === 'debug' || s.agentMode === 'agent')
+      ? s.agentMode
+      : s.planModeEnabled === true ? 'plan' : 'agent',
+    postEditDiagnostics: s.postEditDiagnostics === true,
+    fastModel: (s.fastModel || '').trim(),
+    inferenceProvider: provider,
+    sparkEnabled,
+    sparkBaseUrl,
+    sparkToken: s.sparkToken ?? DEFAULT_SETTINGS.sparkToken,
+    sparkModel,
+    sparkViaProxy: s.sparkViaProxy !== false,
+    sparkLanHost: (s.sparkLanHost || '').trim() || DEFAULT_SETTINGS.sparkLanHost,
+    sparkSshAlias: (s.sparkSshAlias || '').trim() || DEFAULT_SETTINGS.sparkSshAlias,
+    featherlessEnabled,
+    featherlessBaseUrl,
+    featherlessToken: s.featherlessToken ?? DEFAULT_SETTINGS.featherlessToken,
+    featherlessModel: flMig.model,
+    featherlessViaProxy: s.featherlessViaProxy === true,
+    imageGenEnabled: s.imageGenEnabled === true,
+    imageBackend: s.imageBackend === 'xai' ? ('xai' as const) : ('spark' as const),
+    imageBaseUrl: (s.imageBaseUrl || '').trim() || DEFAULT_SETTINGS.imageBaseUrl,
+    imageToken: s.imageToken ?? DEFAULT_SETTINGS.imageToken,
+    imageModel: (() => {
+      const raw = (s.imageModel || '').trim() || DEFAULT_SETTINGS.imageModel;
+      if (
+        raw === 'comfy-dreamshaper' || raw === 'flux2-klein-9b' || raw === 'flux2-klein-4b' ||
+        raw === 'DreamShaper_8_pruned' || raw === 'abliterated-flux-klein' ||
+        raw === 'krea2-turbo-nvfp4' || raw === 'krea2-turbo-int8' || raw === 'quality' || raw === 'hero'
+      ) {
+        return 'krea2-raw-fp8';
+      }
+      return raw;
+    })(),
+    imageViaProxy: s.imageViaProxy === true,
+    xaiImageBaseUrl: (s.xaiImageBaseUrl || '').trim() || DEFAULT_SETTINGS.xaiImageBaseUrl,
+    xaiImageToken: s.xaiImageToken ?? DEFAULT_SETTINGS.xaiImageToken,
+    xaiImageModel: (s.xaiImageModel || '').trim() || DEFAULT_SETTINGS.xaiImageModel,
+    xaiImageResolution: s.xaiImageResolution === '1k' ? ('1k' as const) : ('2k' as const),
+    xaiImageQuality: s.xaiImageQuality === 'low' ? ('low' as const) : s.xaiImageQuality === 'medium' ? ('medium' as const) : ('auto' as const),
+    mcpServers: Array.isArray(s.mcpServers) ? s.mcpServers : [],
+    skillsEnabled: s.skillsEnabled !== false,
+    licenseKey: typeof s.licenseKey === 'string' ? s.licenseKey.trim() : DEFAULT_SETTINGS.licenseKey,
+    billingSiteUrl: typeof s.billingSiteUrl === 'string' && s.billingSiteUrl.trim()
+      ? s.billingSiteUrl.trim().replace(/\/+$/, '')
+      : (DEFAULT_SETTINGS.billingSiteUrl || 'https://abliterated.app'),
+    billingEmail: typeof s.billingEmail === 'string' ? s.billingEmail.trim() : '',
+    accountEmail: typeof s.accountEmail === 'string' ? s.accountEmail.trim() : '',
+    loginId: typeof s.loginId === 'string' ? s.loginId.trim() : '',
+    deviceId: typeof s.deviceId === 'string' ? s.deviceId.trim() : '',
+    accountLoggedIn: s.accountLoggedIn === true,
+    setupComplete: s.setupComplete === true,
+    projectRulesPinned: s.projectRulesPinned !== false,
+    webSearchBraveKey: typeof s.webSearchBraveKey === 'string' ? s.webSearchBraveKey.trim() : '',
+    webSearchSearxUrl: typeof s.webSearchSearxUrl === 'string' ? s.webSearchSearxUrl.trim() : '',
+    remoteHostEnabled,
+    systemPrompt,
+  };
+
+  if (flMig.patch) {
+    result.reasoning = flMig.patch.reasoning;
+    result.coalesceReasoningToContent = flMig.patch.coalesceReasoningToContent;
+  }
+
+  return result;
 }
 
 export function getSettings(): ClientSettings {
   const stored = readJson<Partial<ClientSettings>>(KEYS.settings, {});
-  const storedPrompt = stored.systemPrompt;
-  const systemPrompt =
-    !storedPrompt || (LEGACY_PROMPTS as readonly string[]).includes(storedPrompt)
-      ? SYSTEM_PROMPT
-      : storedPrompt;
-  const _settings = {
-    ...DEFAULT_SETTINGS,
-    ...stored,
-    baseUrl: stored.baseUrl?.trim() || DEFAULT_SETTINGS.baseUrl,
-    token: stored.token?.trim() || DEFAULT_SETTINGS.token,
-    defaultModel: stored.defaultModel?.trim() || DEFAULT_SETTINGS.defaultModel,
-    pairingCode: stored.pairingCode || randomPairingCode(),
-    autoAcceptEdits: stored.autoAcceptEdits === true,
-    autoRunShell: stored.autoRunShell === true,
-    maxAgentTurns: clampMaxAgentTurns(
-      stored.maxAgentTurns != null ? stored.maxAgentTurns : DEFAULT_MAX_AGENT_TURNS,
-    ),
-    selfDeepenEnabled: stored.selfDeepenEnabled !== false,
-    selfDeepenPasses: (() => {
-      let passes = clampSelfDeepenPasses(
-        stored.selfDeepenPasses != null ? stored.selfDeepenPasses : DEFAULT_SELF_DEEPEN_PASSES,
-      );
-      // Free tier: cap self-deepen cost (0–1 max).
-      const license = getLicenseState({
-        licenseKey:
-          typeof stored.licenseKey === 'string' ? stored.licenseKey.trim() : DEFAULT_SETTINGS.licenseKey,
-      });
-      if (license.isFree) {
-        passes = Math.min(passes, license.features.maxSelfDeepenPasses);
-      }
-      return passes;
-    })(),
-    // Prefer matching self-deepen when the dedicated flag was never stored.
-    deepenCompleteness:
-      typeof stored.deepenCompleteness === 'boolean'
-        ? stored.deepenCompleteness
-        : stored.selfDeepenEnabled !== false,
-    midRunInjectEnabled: stored.midRunInjectEnabled !== false,
-    completionFooterEnabled: stored.completionFooterEnabled !== false,
-    coalesceReasoningToContent: stored.coalesceReasoningToContent !== false,
-    jobWorktreesEnabled: stored.jobWorktreesEnabled === true,
-    multiAgentEnabled: stored.multiAgentEnabled === true,
-    planModeEnabled: stored.planModeEnabled === true,
-    buildModeEnabled: stored.buildModeEnabled !== false,
-    fastModel: stored.fastModel?.trim() || '',
-    maxConcurrentJobs: clampMaxConcurrentJobs(
-      stored.maxConcurrentJobs != null ? stored.maxConcurrentJobs : DEFAULT_MAX_CONCURRENT_JOBS,
-    ),
-    inferenceProvider: stored.inferenceProvider || 'abliteration',
-    sparkEnabled: stored.sparkEnabled === true,
-    sparkBaseUrl: stored.sparkBaseUrl?.trim() || DEFAULT_SETTINGS.sparkBaseUrl,
-    sparkToken: stored.sparkToken ?? DEFAULT_SETTINGS.sparkToken,
-    sparkModel: stored.sparkModel?.trim() || DEFAULT_SETTINGS.sparkModel,
-    sparkViaProxy: stored.sparkViaProxy !== false,
-    featherlessEnabled: stored.featherlessEnabled !== false,
-    featherlessBaseUrl: (() => {
-      const raw = stored.featherlessBaseUrl?.trim() || '';
-      const legacyLocal =
-        raw === 'http://127.0.0.1:3000/v1' ||
-        raw === 'http://localhost:3000/v1';
-      if (!raw || legacyLocal) return DEFAULT_SETTINGS.featherlessBaseUrl;
-      return raw;
-    })(),
-    featherlessToken: stored.featherlessToken ?? DEFAULT_SETTINGS.featherlessToken,
-    featherlessModel: /* migrated below */ stored.featherlessModel?.trim() || DEFAULT_SETTINGS.featherlessModel,
-    featherlessViaProxy: (() => {
-      const raw = stored.featherlessBaseUrl?.trim() || '';
-      const legacyLocal =
-        raw === 'http://127.0.0.1:3000/v1' ||
-        raw === 'http://localhost:3000/v1';
-      if (!raw || legacyLocal) return false;
-      // Cloud API-key mode defaults: viaProxy off unless explicitly enabled (for local OAuth)
-      return stored.featherlessViaProxy === true;
-    })(),
-    imageGenEnabled: stored.imageGenEnabled === true,
-    imageBaseUrl: stored.imageBaseUrl?.trim() || DEFAULT_SETTINGS.imageBaseUrl,
-    imageToken: stored.imageToken ?? DEFAULT_SETTINGS.imageToken,
-    imageModel: stored.imageModel?.trim() || DEFAULT_SETTINGS.imageModel,
-    imageViaProxy: stored.imageViaProxy !== false,
-    mcpServers: Array.isArray(stored.mcpServers) ? stored.mcpServers : [],
-    skillsEnabled: stored.skillsEnabled !== false,
-    licenseKey:
-      typeof stored.licenseKey === 'string' ? stored.licenseKey.trim() : DEFAULT_SETTINGS.licenseKey,
-    webSearchBraveKey:
-      typeof stored.webSearchBraveKey === 'string' ? stored.webSearchBraveKey.trim() : '',
-    webSearchSearxUrl:
-      typeof stored.webSearchSearxUrl === 'string' ? stored.webSearchSearxUrl.trim() : '',
-    systemPrompt,
-  };
-  const flMig = migrateFeatherlessModel(stored.featherlessModel ?? _settings.featherlessModel);
-  if (flMig.migrated) {
-    _settings.featherlessModel = flMig.model;
-    if (flMig.patch) {
-      _settings.reasoning = flMig.patch.reasoning;
-      _settings.coalesceReasoningToContent = flMig.patch.coalesceReasoningToContent;
-    }
-  } else {
-    _settings.featherlessModel = flMig.model;
-  }
-  return _settings;
+  return sanitizeSettings(stored);
 }
 
 export function setSettings(settings: ClientSettings): void {
-  writeJson(KEYS.settings, settings);
+  const sanitized = sanitizeSettings(settings);
+  writeJson(KEYS.settings, sanitized);
 }
 
 function sameToolSet(a: ToolType[] | undefined, b: readonly ToolType[]): boolean {
@@ -343,6 +425,10 @@ function upgradeEnabledTools(tools: ToolType[] | undefined): ToolType[] {
   if (sameToolSet(tools, PREV4_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
   if (sameToolSet(tools, PREV5_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
   if (sameToolSet(tools, PREV6_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
+  if (sameToolSet(tools, PREV7_DEFAULT_TOOLS)) return [...ALL_TOOL_TYPES];
+  if (!tools.includes('memory_search')) {
+    return [...tools, 'memory_search', 'memory_save', 'memory_status', 'memory_wake'];
+  }
   if (!tools.includes('todo')) return [...tools, 'todo'];
   if (!tools.includes('list_skills')) {
     return [...tools, 'list_skills', 'read_skill', 'suggest_skill', 'write_skill'];
@@ -416,15 +502,22 @@ export function saveMessage(message: Message): Message[] {
   if (idx >= 0) all[idx] = stored;
   else all.push(stored);
   setMessages(all);
-  return all.filter((m) => m.threadId === message.threadId);
+  return all.filter((m) => m.threadId === toSave.threadId);
 }
 
 /** Replace one thread's rows in ablit_messages (used by Chat retry). */
 export function replaceThreadMessages(threadId: string, msgs: Message[]): Message[] {
+  const sanitized = msgs.map((m) => {
+    if (m.role === 'tool' && m.toolCall && 'result' in m.toolCall) {
+      const { result: _, ...rest } = m.toolCall;
+      return { ...m, toolCall: rest, threadId };
+    }
+    return { ...m, threadId };
+  });
   const others = getMessages().filter((m) => m.threadId !== threadId);
-  const next = [...others, ...msgs.map((m) => ({ ...m, threadId }))];
+  const next = [...others, ...sanitized];
   setMessages(next);
-  return msgs;
+  return sanitized;
 }
 
 export function deleteThreadMessages(threadId: string): void {
@@ -458,7 +551,11 @@ export function upsertJob(job: Job): Job[] {
 export function getWorkspace(): WorkspaceContext {
   const stored = readJson<Partial<WorkspaceContext>>(KEYS.workspace, {});
   const ws = { ...DEFAULT_WORKSPACE, ...stored };
-  if (ws.rootPath === '/workspace') ws.rootPath = '';
+  // Blank the placeholder always; blank a temp/scratch root only when it was
+  // auto-adopted (not an explicit user choice), so an explicit /tmp workspace survives.
+  if (ws.rootPath === '/workspace' || (isTemporaryPath(ws.rootPath) && !ws.rootExplicit)) {
+    ws.rootPath = '';
+  }
   return ws;
 }
 
@@ -487,6 +584,11 @@ export function wipeAll(): void {
   localStorage.removeItem(KEYS.jobs);
   localStorage.removeItem(KEYS.workspace);
   localStorage.removeItem(KEYS.agentRuns);
+  localStorage.removeItem('ablit_apply_inbox');
+  void import('./applyInbox')
+    .then((m) => m.clearApplyInbox())
+    .catch(() => undefined);
+  void wipeDurableStore();
 }
 
 export function uid(prefix = 'id'): string {

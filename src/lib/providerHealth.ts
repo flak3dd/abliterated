@@ -1,6 +1,7 @@
 import { resolveActiveSettings } from './activeEndpoint';
 import { endpointUrl } from './apiUrl';
 import { coalesceFetch } from './coalesceFetch';
+import { isXaiImageBackend, xaiImageEndpointUrl } from './xaiImage';
 import type { ClientSettings } from '../types';
 
 export type HealthState = 'unknown' | 'ok' | 'down';
@@ -106,10 +107,13 @@ async function pollOnce(): Promise<void> {
     next.featherless = 'unknown';
   }
 
-  if (s.imageGenEnabled && s.imageBaseUrl?.trim()) {
-    const base = s.imageBaseUrl.replace(/\/$/, '');
+  if (s.imageGenEnabled && (isXaiImageBackend(s) ? s.xaiImageBaseUrl?.trim() : s.imageBaseUrl?.trim())) {
+    const xai = isXaiImageBackend(s);
+    const url = xai
+      ? xaiImageEndpointUrl(s, '/models')
+      : `${(s.imageBaseUrl || '').replace(/\/$/, '')}/models`;
     tasks.push(
-      probe(`${base}/models`, s.imageToken).then((r) => {
+      probe(url, xai ? s.xaiImageToken : s.imageToken).then((r) => {
         next.image = r;
       }),
     );
@@ -175,7 +179,7 @@ export function healthMapToEntries(
   const push = (key: keyof ProviderHealthMap, label: string) => {
     out.push({ key, label, state: map[key] });
   };
-  if (active.provider === 'abliteration' || active.provider === 'custom') push('abliteration', active.label);
+  if (active.provider === 'abliteration' || active.provider === 'platform' || active.provider === 'custom') push('abliteration', active.label);
   else push(active.provider === 'dgx-spark' ? 'spark' : 'featherless', active.label);
   if (s.sparkEnabled && active.provider !== 'dgx-spark') push('spark', 'spark');
   if (s.featherlessEnabled !== false && active.provider !== 'featherless') push('featherless', 'featherless');

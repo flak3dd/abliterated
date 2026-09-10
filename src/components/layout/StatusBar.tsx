@@ -69,15 +69,17 @@ export function StatusBar({
   const bridgeColor =
     bridgeStatus === 'connected'
       ? 'text-emerald-400'
-      : bridgeStatus === 'connecting'
+      : bridgeStatus === 'connecting' || bridgeStatus === 'restarting'
         ? 'text-amber-400'
         : bridgeStatus === 'error'
           ? 'text-red-400'
           : 'text-zinc-500';
 
   return (
-    <footer className="flex h-6 shrink-0 items-center gap-3 overflow-hidden border-t border-border bg-surface px-2 font-mono text-[10px] text-muted">
-      <span className={cn('shrink-0', bridgeColor)}>bridge {bridgeStatus}</span>
+    <footer className="flex h-7 shrink-0 items-center gap-3 overflow-hidden border-t border-border bg-sidebar px-3 font-mono text-[10px] text-muted-foreground">
+      <span className={cn('shrink-0', bridgeColor)}>
+        bridge {bridgeStatus === 'restarting' ? 'restarting' : bridgeStatus}
+      </span>
       <span className="min-w-0 truncate" title={workspaceRoot || undefined}>
         {basename(workspaceRoot)}
       </span>

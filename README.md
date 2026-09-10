@@ -74,7 +74,8 @@ License keys in Settings. DEV auto-unlocks **Admin** (`admin` / `abliterated`, o
 - **Local execution:** code fences (`bash`/`sh`/`shell`/`zsh`) render a confirm-gated **Run** button. Diff fences render confirm-gated **Apply**. First-class tools: `read_file`, `grep`, `glob`, `list_dir`, `file_outline`, `semantic_search`, `git_status` auto-run when the bridge is connected; `git_commit` auto-runs when Auto-accept file edits is on (otherwise a **Commit** button — and the agent **resumes** after Commit/Run); `shell` auto-runs only when Auto-run shell is on; `generate_image` when Images is enabled; `web_fetch` is http(s) only; `web_search` is keyless web search (optional Brave API key / SearxNG in Settings).
 - **Grok Bot:** `src/lib/grokLayer.ts` parses unified diffs and fenced files; Settings **Auto-accept file edits** (default off) applies them via the localhost bridge after each assistant turn. Shell stays click-to-run unless Auto-run shell is enabled.
 - **Workspace:** a real directory on the daemon host. The Workspace tab path + Connect sends `set_root` then `hello`/`ls`. File tree and previews use `ls`/`read_file`. After Connect / tree reload the header shows git branch + dirty from `git_status`. Grok writes land in that folder.
-- **Daemon:** `daemon/bridge.js` is a WebSocket RPC at `ws://127.0.0.1:17322`. It binds **127.0.0.1 only** (never `0.0.0.0`). `ROOT` starts as `ABLIT_ROOT` or `process.cwd()` and is updated by `set_root`. On connect and on `hello` it replies `{type:hello, root, port}`. Also `ls`, `read_file`, `grep`, `glob`, `git_status`, `git_commit`, `apply_patch`, `write_file`, confirm-gated `exec`. Dangerous commands are refused. File ops cannot escape `ROOT`. `git_commit` never pushes and never uses `GIT_EDITOR`.
+- **MemPalace:** local verbatim memory via the `mempalace` CLI (`daemon/mempalace.js`). First-class tools `memory_search` / `memory_save` / `memory_status` / `memory_wake`. Settings can install (`uv tool install mempalace`), init a palace from the workspace, auto-recall wake-up into the system prompt, and auto-save each chat/job turn. Optional MCP: `uvx --from mempalace python -m mempalace.mcp_server`.
+- **Daemon:** `daemon/bridge.js` is a WebSocket RPC at `ws://127.0.0.1:17322`. It binds **127.0.0.1 only** (never `0.0.0.0`). `ROOT` starts as `ABLIT_ROOT` or `process.cwd()` and is updated by `set_root`. On connect and on `hello` it replies `{type:hello, root, port}`. Also `ls`, `read_file`, `grep`, `glob`, `git_status`, `git_commit`, `apply_patch`, `write_file`, confirm-gated `exec`, MemPalace RPCs. Dangerous commands are refused. File ops cannot escape `ROOT`. `git_commit` never pushes and never uses `GIT_EDITOR`.
 
 ## Security note
 
@@ -103,7 +104,7 @@ DEV uses Vite path /spark-v1 for localhost Spark.
 
 ## Optional abliterated image gen
 
-`api.abliteration.ai` does **not** offer `/v1/images/generations`. Enable the **Images** tab and point it at a local OpenAI-compatible server. See [`spark-image/`](spark-image/) for FLUX.2 Klein + abliterated text encoder (`abliterated-flux-klein` on port **7860**). DEV proxies `/image-v1` → `ABLITERATED_IMAGE_URL` or `http://127.0.0.1:7860`.
+`api.abliteration.ai` does **not** offer `/v1/images/generations`. Enable the **Images** tab and point it at a local OpenAI-compatible server. See [`spark-install/`](spark-install/) for the DGX Spark package: Diffusers Krea 2 RAW Build D (`krea2-raw-fp8`) on port **7860** (ComfyUI removed; Klein stub=`flux2-klein-9b`). DEV proxies `/image-v1` → `ABLITERATED_IMAGE_URL` or `http://127.0.0.1:7860`.
 
 Without a GPU, start a tiny PNG mock on **:7860**:
 
@@ -138,4 +139,8 @@ args: -y @modelcontextprotocol/server-filesystem .
 ## Git depth (Phase 4)
 
 Additional tools: `git_diff` (staged/unstaged/path), `checkpoint_save` / `checkpoint_restore` (`.ablit/checkpoints/`), `create_pr` (`gh pr create` when `gh` is on PATH; gated like `git_commit`).
+
+## Platform / Abliterated Cloud (LiteLLM)
+
+Select **API → Platform** to use the multi-tenant gateway (virtual key + budget). Connect with account after license/login. Gateway URL default: `VITE_PLATFORM_GATEWAY_URL` or `https://abliterated.app/api/v1`. Custom and Featherless BYOK remain unchanged. Ops/compose: see `abliterated-site/litellm/README.md`. Featherless Scale ToS applies to platform traffic.
 

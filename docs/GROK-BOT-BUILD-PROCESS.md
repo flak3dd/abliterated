@@ -15,6 +15,7 @@ Cross-links (read when relevant — do not invent parallel rules):
 | [`docs/MOBILE-CONTROL.md`](./MOBILE-CONTROL.md) | Phone = judgment only; one exec plane |
 | [`docs/LICENSE-PROTECTION.md`](./LICENSE-PROTECTION.md) | License validate / device bind / revoke |
 | [`docs/PRODUCT.md`](./PRODUCT.md) | Positioning, tiers, packaging |
+| [`docs/HIERARCHICAL-ORCHESTRATOR.md`](./HIERARCHICAL-ORCHESTRATOR.md) | Complex-task eval + hierarchical orchestrator / task graph |
 | [`BENCHMARK.md`](../BENCHMARK.md) + `docs/flagship-benchmark-*.md` | Capability matrix — cite only; never invent scores |
 
 Describe **observable** process principles only. Do not dump hidden agent instruction text into commits, PRs, or user-facing docs.
@@ -92,9 +93,9 @@ Build turns can run long. **YOU MUST** keep Greg informed with visible progress 
 ### YOU MUST
 
 - Prefer an early ack over starting a 10-minute silent cloud-agent run.
-
+- Write **full-length, fully functional** code. NEVER emit placeholder, stub, demo, or "implement X here" scripts or files.
+- Do not stop until the feature works and the relevant tests / typecheck have been run.
 - When starting a long package build, say so before launch.
-
 - On failure, report the error and the recovery you will try.
 
 ### DO NOT
@@ -102,6 +103,8 @@ Build turns can run long. **YOU MUST** keep Greg informed with visible progress 
 - DO NOT run multi-minute work with zero user-visible text.
 - DO NOT save the entire report for the end if waiting on a branch or PR.
 - DO NOT ask for every micro-step after the ack unless blocked on a real decision (section 7).
+- DO NOT write placeholder / stub / "implement later" scripts. That is a failed build.
+- DO NOT declare done without running the project's tests or typecheck for the changed surface.
 
 ---
 
@@ -184,6 +187,7 @@ Scope -> Scaffold -> Implement -> Verify -> Sync/Push -> Report
 ### 6.3 Implement
 
 - [ ] Vertical slice first (happy path), then edge cases
+- [ ] Full working code only — no placeholders, TODOs-as-implementation, or stub scripts
 - [ ] Match existing TypeScript / Swift / Tailwind style
 - [ ] Keep secrets out of the diff
 - [ ] Respect license soft-gates and MOBILE-CONTROL invariants
@@ -193,6 +197,7 @@ Scope -> Scaffold -> Implement -> Verify -> Sync/Push -> Report
 - [ ] Typecheck / unit / package scripts that already exist
 - [ ] Manual smoke of the path you changed
 - [ ] If verify fails: fix or report blocker — DO NOT claim shipped with a red build
+- [ ] Do not stop until the final product of this turn works and tests have been executed
 
 ### 6.5 Sync / Push
 

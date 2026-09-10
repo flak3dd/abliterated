@@ -1,10 +1,19 @@
 import {
   APP_ROOT_REFUSED,
+  BRIDGE_RESTARTING,
   isPathInsideAppRoot,
+  isSamePath,
   workspaceGate,
 } from './workspaceGuard';
 
-export type BridgeStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type BridgeStatus = 'disconnected' | 'connecting' | 'connected' | 'error' | 'restarting';
+
+export { BRIDGE_RESTARTING };
+
+/** Close and retry if the socket never reaches hello. */
+export const BRIDGE_HELLO_TIMEOUT_MS = 5000;
+/** Non-streaming RPC (read/write/ls/hello). exec/stdio has no cap. */
+export const BRIDGE_RPC_TIMEOUT_MS = 45_000;
 
 export type BridgeDirEntry = {
   name: string;
@@ -39,16 +48,19 @@ export class BridgeClient {
   private daemonRoot = '';
   private daemonAppRoot = '';
   private daemonPort = 17322;
+  private helloOk = false;
+  private reconnectAttempt = 0;
+  private helloTimer: number | null = null;
 
   constructor(url = 'ws://127.0.0.1:17322') {
     this.url = url;
   }
 
   get connected(): boolean {
-    return this.status === 'connected' && this.ws?.readyState === WebSocket.OPEN;
+    return this.helloOk && this.ws?.readyState === WebSocket.OPEN;
   }
 
-  waitUntilConnected(timeoutMs = 4000): Promise<boolean> {
+  waitUntilConnected(timeoutMs = BRIDGE_HELLO_TIMEOUT_MS + 1500): Promise<boolean> {
     if (this.connected) return Promise.resolve(true);
     this.connect();
     return new Promise((resolve) => {
@@ -123,19 +135,20 @@ export class BridgeClient {
   }
 
   private setStatus(next: BridgeStatus) {
+    if (this.status === next) return;
     this.status = next;
     this.listeners.forEach((cb) => cb(next));
   }
 
   private setDaemonRoot(root: string, port?: number) {
     if (typeof port === 'number' && Number.isFinite(port)) this.daemonPort = port;
-    if (root === this.daemonRoot) return;
+    if (isSamePath(root, this.daemonRoot)) return;
     this.daemonRoot = root;
     this.rootListeners.forEach((cb) => cb(root));
   }
 
   private setDaemonAppRoot(appRoot: string) {
-    if (!appRoot || appRoot === this.daemonAppRoot) return;
+    if (!appRoot || isSamePath(appRoot, this.daemonAppRoot)) return;
     this.daemonAppRoot = appRoot;
     this.appRootListeners.forEach((cb) => cb(appRoot));
   }
@@ -144,27 +157,67 @@ export class BridgeClient {
     return workspaceGate(root, this.daemonAppRoot);
   }
 
-  private assertWritableWorkspace(file?: string): void {
-    const gate = this.workspaceGateFor();
+  private assertBridgeReady(): void {
+    if (!this.connected) throw new Error(BRIDGE_RESTARTING);
+  }
+
+  private assertWritableWorkspace(file?: string, root?: string): void {
+    this.assertBridgeReady();
+    // When a caller pins an explicit write root, gate against that root, not the
+    // (possibly drifted) global daemon root.
+    const gateRoot = root && root.trim() ? root : this.daemonRoot;
+    const gate = this.workspaceGateFor(gateRoot);
     if (!gate.ok) throw new Error(gate.message);
-    if (file && isPathInsideAppRoot(file, this.daemonRoot, this.daemonAppRoot)) {
+    if (file && isPathInsideAppRoot(file, gateRoot, this.daemonAppRoot)) {
       throw new Error(APP_ROOT_REFUSED);
     }
   }
 
+  private clearHelloTimer(): void {
+    if (this.helloTimer != null) {
+      window.clearTimeout(this.helloTimer);
+      this.helloTimer = null;
+    }
+  }
+
+  private armHelloTimer(ws: WebSocket): void {
+    this.clearHelloTimer();
+    this.helloTimer = window.setTimeout(() => {
+      this.helloTimer = null;
+      if (this.ws !== ws || this.helloOk) return;
+      console.warn('[bridge] hello timeout — closing and retrying ws://127.0.0.1:17322');
+      this.setStatus('restarting');
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+    }, BRIDGE_HELLO_TIMEOUT_MS);
+  }
+
   connect(): void {
     this.closedByUser = false;
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+    if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+      if (this.helloTimer == null) this.armHelloTimer(this.ws);
+      return;
+    }
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.helloOk) return;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && !this.helloOk) {
+      if (this.helloTimer == null) this.armHelloTimer(this.ws);
       return;
     }
     this.setStatus('connecting');
     try {
       const ws = new WebSocket(this.url);
       this.ws = ws;
+      this.helloOk = false;
+      this.armHelloTimer(ws);
       ws.onopen = () => {
         // Ignore stale sockets (React StrictMode remount / reconnect race).
         if (this.ws !== ws) return;
-        this.setStatus('connected');
+        this.helloOk = false;
+        this.setStatus('connecting');
+        this.armHelloTimer(ws);
         try {
           this.sendRaw({ type: 'ping' });
           this.sendRaw({ type: 'hello' });
@@ -188,10 +241,12 @@ export class BridgeClient {
       ws.onclose = () => {
         // Do not clear a newer socket that already replaced this one.
         if (this.ws !== ws) return;
+        this.clearHelloTimer();
+        this.helloOk = false;
         this.failAll(new Error('Bridge disconnected'));
         this.ws = null;
         if (!this.closedByUser) {
-          this.setStatus('disconnected');
+          this.setStatus('restarting');
           this.scheduleReconnect();
         }
       };
@@ -201,8 +256,34 @@ export class BridgeClient {
     }
   }
 
+  /** Drop a stuck OPEN-without-hello socket and retry (Restart now). */
+  reconnect(): void {
+    this.closedByUser = false;
+    this.helloOk = false;
+    this.reconnectAttempt = 0;
+    this.clearHelloTimer();
+    if (this.reconnectTimer != null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    const prev = this.ws;
+    this.ws = null;
+    if (prev) {
+      try {
+        prev.close();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.failAll(new Error('Bridge reconnect'));
+    this.setStatus('restarting');
+    this.scheduleReconnect();
+  }
+
   cleanup(): void {
+    this.helloOk = false;
     this.closedByUser = true;
+    this.clearHelloTimer();
     if (this.reconnectTimer != null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -215,10 +296,23 @@ export class BridgeClient {
 
   private scheduleReconnect() {
     if (this.closedByUser || this.reconnectTimer != null) return;
+    const delay = Math.min(8000, Math.round(400 * Math.pow(1.6, this.reconnectAttempt)));
+    this.reconnectAttempt += 1;
+    this.setStatus('restarting');
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
-      if (!this.closedByUser) this.connect();
-    }, 2500);
+      void (async () => {
+        try {
+          const desktop = (typeof window !== 'undefined'
+            ? (window as Window & { ablitDesktop?: { ensureBridge?: () => Promise<unknown> } }).ablitDesktop
+            : undefined);
+          await desktop?.ensureBridge?.();
+        } catch {
+          /* browser DEV has no Electron spawn */
+        }
+        if (!this.closedByUser) this.connect();
+      })();
+    }, delay);
   }
 
   private failAll(err: Error) {
@@ -237,6 +331,10 @@ export class BridgeClient {
     if ('type' in msg && msg.type === 'pong') return;
 
     if ('type' in msg && msg.type === 'hello') {
+      this.helloOk = true;
+      this.reconnectAttempt = 0;
+      this.clearHelloTimer();
+      this.setStatus('connected');
       const root = typeof msg.root === 'string' ? msg.root : '';
       const port = typeof msg.port === 'number' ? msg.port : undefined;
       const appRoot = typeof msg.appRoot === 'string' ? msg.appRoot : '';
@@ -285,60 +383,104 @@ export class BridgeClient {
 
   private request(payload: Record<string, unknown>, onStdout?: (chunk: string, stream: 'stdout' | 'stderr') => void): Promise<unknown> {
     const runId = this.runId();
+    const streaming = Boolean(onStdout);
+    const limit = streaming ? 0 : BRIDGE_RPC_TIMEOUT_MS;
     return new Promise((resolve, reject) => {
+      let timer: number | null = null;
+      const clearTimer = () => {
+        if (timer != null) {
+          window.clearTimeout(timer);
+          timer = null;
+        }
+      };
       this.pending.set(runId, {
         onStdout: onStdout ? (chunk, stream) => onStdout(chunk, stream) : undefined,
-        resolve,
-        reject,
+        resolve: (value) => {
+          clearTimer();
+          resolve(value);
+        },
+        reject: (err) => {
+          clearTimer();
+          reject(err);
+        },
       });
+      if (limit > 0) {
+        timer = window.setTimeout(() => {
+          timer = null;
+          if (!this.pending.has(runId)) return;
+          this.pending.delete(runId);
+          reject(new Error(`Bridge RPC timed out after ${limit}ms (${String(payload.type || 'request')})`));
+        }, limit);
+      }
       try {
         this.sendRaw({ ...payload, runId });
       } catch (err) {
+        clearTimer();
         this.pending.delete(runId);
         reject(err instanceof Error ? err : new Error(String(err)));
       }
     });
   }
 
-  runCommand(command: string, onStdout?: (chunk: string, stream?: 'stdout' | 'stderr') => void): Promise<number> {
+  runCommand(
+    command: string,
+    onStdout?: (chunk: string, stream?: 'stdout' | 'stderr') => void,
+    opts?: { root?: string },
+  ): Promise<number> {
     if (!this.connected) {
       return Promise.resolve(126);
     }
-    const gate = this.workspaceGateFor();
+    // Gate against the pinned root when provided (so a drifted daemon root does
+    // not block a correctly-pinned exec); the daemon resolves cwd from the same root.
+    const pinned = opts?.root?.trim() || undefined;
+    const gate = this.workspaceGateFor(pinned || this.daemonRoot);
     if (!gate.ok) {
       onStdout?.(`${gate.message}\n`, 'stderr');
       return Promise.resolve(126);
     }
-    return this.request({ type: 'exec', command }, (chunk, stream) => onStdout?.(chunk, stream)).then((v) => Number(v));
-  }
-
-  applyPatch(file: string, patch: string): Promise<boolean> {
-    if (!this.connected) return Promise.resolve(false);
-    try {
-      this.assertWritableWorkspace(file);
-    } catch (err) {
-      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
-    }
-    return this.request({ type: 'apply_patch', file, patch }).then((v) => Boolean(v));
-  }
-
-  writeFile(file: string, content: string, opts?: { encoding?: string; eol?: string }): Promise<boolean> {
-    if (!this.connected) return Promise.resolve(false);
-    try {
-      this.assertWritableWorkspace(file);
-    } catch (err) {
-      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
-    }
-    return this.request({ type: 'write_file', file, content, encoding: opts?.encoding, eol: opts?.eol }).then((v) =>
-      Boolean(v),
+    return this.request({ type: 'exec', command, root: pinned }, (chunk, stream) => onStdout?.(chunk, stream)).then(
+      (v) => Number(v),
     );
+  }
+
+  applyPatch(file: string, patch: string, opts?: { root?: string }): Promise<boolean> {
+    const root = opts?.root?.trim() || undefined;
+    try {
+      this.assertWritableWorkspace(file, root);
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
+    return this.request({ type: 'apply_patch', file, patch, root }).then((v) => Boolean(v));
+  }
+
+  writeFile(
+    file: string,
+    content: string,
+    opts?: { encoding?: string; eol?: string; root?: string },
+  ): Promise<boolean> {
+    const root = opts?.root?.trim() || undefined;
+    try {
+      this.assertWritableWorkspace(file, root);
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
+    return this.request({
+      type: 'write_file',
+      file,
+      content,
+      encoding: opts?.encoding,
+      eol: opts?.eol,
+      root,
+    }).then((v) => Boolean(v));
   }
 
 
   createDirectory(dirPath: string): Promise<string> {
-    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
-    const gate = this.workspaceGateFor(dirPath);
-    if (!gate.ok) return Promise.reject(new Error(gate.message));
+    try {
+      this.assertWritableWorkspace(dirPath);
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
     return this.request({ type: 'create_dir', path: dirPath }).then((v) => {
       const msg = v as { path?: string };
       return String(msg.path || dirPath);
@@ -493,7 +635,11 @@ export class BridgeClient {
   }
 
   gitCommit(message: string, paths?: string[]): Promise<string> {
-    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    try {
+      this.assertWritableWorkspace();
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
     return this.request({ type: 'git_commit', message, paths }).then((v) => {
       const msg = v as { content?: string; text?: string };
       return String(msg.text ?? msg.content ?? '');
@@ -510,7 +656,11 @@ export class BridgeClient {
   }
 
   createPr(opts: { title: string; body?: string; base?: string }): Promise<string> {
-    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    try {
+      this.assertWritableWorkspace();
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
     return this.request({
       type: 'create_pr',
       title: opts.title,
@@ -523,7 +673,11 @@ export class BridgeClient {
   }
 
   checkpointSave(label?: string): Promise<string> {
-    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    try {
+      this.assertWritableWorkspace();
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
     return this.request({ type: 'checkpoint_save', label: label || '' }).then((v) => {
       const msg = v as { content?: string; text?: string; id?: string };
       return String(msg.text ?? msg.content ?? msg.id ?? '');
@@ -531,7 +685,11 @@ export class BridgeClient {
   }
 
   checkpointRestore(id: string): Promise<string> {
-    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    try {
+      this.assertWritableWorkspace();
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
     return this.request({ type: 'checkpoint_restore', id }).then((v) => {
       const msg = v as { content?: string; text?: string };
       return String(msg.text ?? msg.content ?? '');
@@ -578,6 +736,94 @@ export class BridgeClient {
     });
   }
 
+  mempalaceWhich(): Promise<{ ok: boolean; display?: string; error?: string; text: string }> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({ type: 'mempalace_which' }).then((v) => {
+      const msg = v as { ok?: boolean; display?: string; error?: string; text?: string };
+      return {
+        ok: msg.ok === true,
+        display: msg.display,
+        error: msg.error,
+        text: String(msg.text ?? msg.display ?? msg.error ?? ''),
+      };
+    });
+  }
+
+  mempalaceStatus(opts?: { palacePath?: string; wing?: string }): Promise<string> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({ type: 'mempalace_status', palacePath: opts?.palacePath || '', wing: opts?.wing || '' }).then(
+      (v) => {
+        const msg = v as { content?: string; text?: string };
+        return String(msg.text ?? msg.content ?? '');
+      },
+    );
+  }
+
+  mempalaceWake(opts?: { palacePath?: string; wing?: string }): Promise<string> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({ type: 'mempalace_wake', palacePath: opts?.palacePath || '', wing: opts?.wing || '' }).then(
+      (v) => {
+        const msg = v as { content?: string; text?: string };
+        return String(msg.text ?? msg.content ?? '');
+      },
+    );
+  }
+
+  mempalaceSearch(
+    query: string,
+    opts?: { palacePath?: string; wing?: string; room?: string; results?: number },
+  ): Promise<string> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({
+      type: 'mempalace_search',
+      query,
+      palacePath: opts?.palacePath || '',
+      wing: opts?.wing || '',
+      room: opts?.room || '',
+      results: opts?.results,
+    }).then((v) => {
+      const msg = v as { content?: string; text?: string };
+      return String(msg.text ?? msg.content ?? '');
+    });
+  }
+
+  mempalaceSave(
+    content: string,
+    opts?: { palacePath?: string; wing?: string; room?: string },
+  ): Promise<string> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({
+      type: 'mempalace_save',
+      content,
+      palacePath: opts?.palacePath || '',
+      wing: opts?.wing || '',
+      room: opts?.room || '',
+    }).then((v) => {
+      const msg = v as { content?: string; text?: string };
+      return String(msg.text ?? msg.content ?? '');
+    });
+  }
+
+  mempalaceInit(dir?: string, opts?: { palacePath?: string }): Promise<string> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({
+      type: 'mempalace_init',
+      dir: dir || '',
+      palacePath: opts?.palacePath || '',
+    }).then((v) => {
+      const msg = v as { content?: string; text?: string };
+      return String(msg.text ?? msg.content ?? '');
+    });
+  }
+
+  mempalaceInstall(): Promise<string> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({ type: 'mempalace_install' }).then((v) => {
+      const msg = v as { content?: string; text?: string };
+      return String(msg.text ?? msg.content ?? '');
+    });
+  }
+
   mcpCallTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<string> {
     if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
     return this.request({ type: 'mcp_call_tool', id: serverId, toolName, arguments: args }).then((v) => {
@@ -598,6 +844,16 @@ export class BridgeClient {
       const workspaceOk = msg.workspaceOk !== false && this.workspaceGateFor(root).ok;
       return { root, port, appRoot, workspaceOk };
     });
+  }
+
+  bridgeRestart(): void {
+    if (this.ws && this.connected) {
+      try {
+        this.ws.send(JSON.stringify({ type: 'bridge_restart' }));
+      } catch {
+        /* ignore */
+      }
+    }
   }
 }
 

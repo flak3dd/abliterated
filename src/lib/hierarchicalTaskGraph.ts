@@ -684,3 +684,97 @@ export function consumeBudget(
   });
   return { graph: parseTaskGraph(next), exceeded };
 }
+
+/** Default per-role node budgets (steps). */
+export function defaultNodeBudget(role?: AgentRole | string): Budget {
+  const r = (role || 'coder') as string;
+  if (r === 'critic' || r === 'verifier') return { max_steps: 8, max_tool_calls: 16 };
+  if (r === 'researcher') return { max_steps: 12, max_tool_calls: 24 };
+  if (r === 'orchestrator') return { max_steps: 10, max_tool_calls: 20 };
+  if (r === 'integrator') return { max_steps: 12, max_tool_calls: 24 };
+  return { max_steps: 16, max_tool_calls: 32 };
+}
+
+export const DEFAULT_NODE_HEARTBEAT_STALE_MS = 90_000;
+
+/** Reset stale in_progress nodes to pending and append graph history replan entries. */
+export function reclaimStaleNodes(
+  graph: TaskGraph,
+  staleMs = DEFAULT_NODE_HEARTBEAT_STALE_MS,
+  now = Date.now(),
+): { graph: TaskGraph; reclaimed: string[] } {
+  const reclaimed: string[] = [];
+  let next = graph;
+  for (const n of graph.nodes) {
+    if (n.status !== 'in_progress') continue;
+    const beat =
+      n.metadata && typeof (n.metadata as { lastBeatAt?: number }).lastBeatAt === 'number'
+        ? (n.metadata as { lastBeatAt: number }).lastBeatAt
+        : 0;
+    const started = n.started_at ? Date.parse(n.started_at) : 0;
+    const anchor = beat || started || 0;
+    if (anchor && now - anchor <= staleMs) continue;
+    reclaimed.push(n.id);
+    next = mapNode(next, n.id, (node) => ({
+      ...node,
+      status: 'pending' as NodeStatus,
+      assignee: null,
+    }));
+    const at = nowIso();
+    next = bump(next, {
+      at,
+      action: 'replan',
+      actor: 'heartbeat',
+      node_id: n.id,
+      detail: `stale > ${staleMs}ms — reclaim`,
+    });
+  }
+  return { graph: reclaimed.length ? parseTaskGraph(next) : next, reclaimed };
+}
+
+/** Record a replan: clear assignee, set pending (unless failed/blocked), bump graph history. */
+export function recordNodeReplan(
+  graph: TaskGraph,
+  nodeId: string,
+  detail: string,
+  actor = 'orchestrator',
+): TaskGraph {
+  let next = mapNode(graph, nodeId, (n) => ({
+    ...n,
+    status: (n.status === 'failed' || n.status === 'blocked' ? n.status : 'pending') as NodeStatus,
+    assignee: null,
+  }));
+  next = bump(next, {
+    at: nowIso(),
+    action: 'replan',
+    actor,
+    node_id: nodeId,
+    detail,
+  });
+  return parseTaskGraph(next);
+}
+
+/** Path-level write lock: exact artifact / metadata.lockPath claimed by in_progress nodes. */
+export function claimedWritePaths(graph: TaskGraph): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const n of graph.nodes) {
+    if (n.status !== 'in_progress') continue;
+    for (const a of n.artifacts || []) {
+      if (a.path) m.set(a.path.replace(/\\/g, '/').replace(/^\.\//, ''), n.id);
+    }
+    const lock =
+      n.metadata && typeof (n.metadata as { lockPath?: string }).lockPath === 'string'
+        ? (n.metadata as { lockPath: string }).lockPath
+        : '';
+    if (lock) m.set(lock.replace(/\\/g, '/').replace(/^\.\//, ''), n.id);
+  }
+  return m;
+}
+
+export function canClaimWritePath(graph: TaskGraph, path: string, selfId: string): boolean {
+  const key = path.replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!key) return false;
+  const claimed = claimedWritePaths(graph);
+  const owner = claimed.get(key);
+  return !owner || owner === selfId;
+}

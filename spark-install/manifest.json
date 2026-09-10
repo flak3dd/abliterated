@@ -1,0 +1,67 @@
+{
+  "name": "abliterated-spark",
+  "version": "1.4.0",
+  "description": "DGX Spark install: Build D Diffusers Krea 2 RAW image bridge + optional abliterated chat.",
+  "image": {
+    "build": "D",
+    "modelId": "krea2-raw-fp8",
+    "lightModelId": "flux2-klein-4b",
+    "maxModelId": "flux2-dev",
+    "draftModelId": "z-image-turbo-nsfw-nvfp4",
+    "backend": "diffusers",
+    "uncensoredOnly": true,
+    "hardware": {
+      "gpu": "NVIDIA GB10",
+      "sm": "121",
+      "unifiedMemoryGB": 128,
+      "bandwidthGBs": 273,
+      "arch": "aarch64",
+      "cuda": "13",
+      "diskHintGB": 350
+    },
+    "quality": {
+      "pipelineClass": "Krea2Pipeline",
+      "repo": "krea/Krea-2-Raw",
+      "textEncoder": "Huihui-Qwen3-VL-4B-Instruct-abliterated",
+      "steps": 24,
+      "guidance": 3.5,
+      "sampler": "euler",
+      "scheduler": "beta",
+      "loraStrength": 0.75,
+      "defaultSize": "1328x1328",
+      "maxEdge": 1536
+    },
+    "stubs": [
+      "flux2-klein-9b",
+      "qwen-image-2512-fp8",
+      "qwen-edit-2511-fp8",
+      "z-image-turbo-nsfw-nvfp4",
+      "seedvr2-7b-fp8",
+      "illustrious-wai-nsfw",
+      "pony-v6"
+    ],
+    "phase2DocumentOnly": [
+      "chroma",
+      "pony-v6",
+      "wan-video",
+      "ltx-video"
+    ],
+    "openaiPort": 7860,
+    "fastModelId": "krea2-turbo",
+    "adherenceModelId": "flux2-klein-9b",
+    "editModelId": "qwen-edit-2511-fp8"
+  },
+  "text": {
+    "modelId": "qwen-abliterated",
+    "repo": "THe-Plague/Qwen3.6-35B-A3B-abliterated-NVFP4-MTP",
+    "port": 8000
+  },
+  "requires": {
+    "arch": [
+      "aarch64",
+      "arm64"
+    ],
+    "cuda": "13",
+    "gpu": "NVIDIA GB10 / DGX Spark"
+  }
+}

@@ -2,10 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CommandPalette, type CommandAction } from './components/CommandPalette';
 import { BottomNav, DesktopRail } from './components/layout/Navigation';
 import { StatusBar } from './components/layout/StatusBar';
+import { ApplyInboxDrawer } from './components/layout/ApplyInboxDrawer';
 import { resumeJobQueue } from './lib/jobRunner';
 import { syncMcpServers } from './lib/mcpClient';
 import { bridge, type BridgeStatus } from './lib/bridgeClient';
 import { applyInferenceProvider, INFERENCE_PROVIDERS, resolveActiveSettings } from './lib/activeEndpoint';
+import {
+  DRAFT_IMAGE_MODEL,
+  FAST_IMAGE_MODEL,
+  KLEIN_IMAGE_MODEL,
+  UNCENSORED_IMAGE_MODEL,
+  sparkChatSettingsPatch,
+  sparkImageSettingsPatch,
+  sparkPushCommand,
+} from './lib/sparkInstall';
 import { cn } from './lib/cn';
 import {
   DEFAULT_SETTINGS,
@@ -21,16 +31,19 @@ import {
   upsertThread,
 } from './lib/storage';
 import { getLicenseState } from './lib/license';
-import { workspaceGate } from './lib/workspaceGuard';
+import { isSamePath, isTemporaryPath, workspaceGate } from './lib/workspaceGuard';
+import { SetupWizard } from './components/setup/SetupWizard';
+import { hydrateDurableStore } from './lib/durableStore';
+import { acceptAllInbox, hydrateApplyInbox } from './lib/applyInbox';
 import { ApiScreen } from './screens/ApiScreen';
 import { ChatScreen, type ChatScreenHandle } from './screens/ChatScreen';
 import { HomeScreen } from './screens/HomeScreen';
 import { JobsScreen } from './screens/JobsScreen';
 import { ModelsScreen } from './screens/ModelsScreen';
-import { ImagesScreen } from './screens/ImagesScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
+import { VllmScreen } from './screens/VllmScreen';
 import { WorkspaceScreen } from './screens/WorkspaceScreen';
-import { DEFAULT_ENABLED_TOOLS, type ClientSettings, type InferenceProvider, type Job, type Tab, type Thread, type WorkspaceContext } from './types';
+import { DEFAULT_ENABLED_TOOLS, type ClientSettings, type InferenceProvider, type Job, type Tab, type Thread, type WorkspaceContext, type AgentMode } from './types';
 
 const TAB_BY_DIGIT: Record<string, Tab> = {
   '1': 'home',
@@ -38,7 +51,7 @@ const TAB_BY_DIGIT: Record<string, Tab> = {
   '3': 'models',
   '4': 'jobs',
   '5': 'api',
-  '6': 'images',
+  '6': 'vllm',
   '7': 'settings',
 };
 
@@ -76,9 +89,11 @@ export default function App() {
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>(bridge.currentStatus);
   const [agentLabel, setAgentLabel] = useState('');
   const [composerSeed, setComposerSeed] = useState<string | null>(null);
+  const [chatFilePanel, setChatFilePanel] = useState(false);
   const license = getLicenseState(settings);
-  const planMode = settings.planModeEnabled === true;
-  const buildMode = settings.buildModeEnabled !== false && !planMode;
+  const agentMode: AgentMode = settings.agentMode || (settings.planModeEnabled ? 'plan' : 'agent');
+  const planMode = agentMode === 'plan';
+  const buildMode = agentMode === 'agent';
 
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
@@ -114,6 +129,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const desktop = window.ablitDesktop;
+    if (!desktop?.onLicenseDeepLink) return;
+    return desktop.onLicenseDeepLink((key) => {
+      const k = (key || '').trim();
+      if (!k) return;
+      const cur = settingsRef.current;
+      if ((cur.licenseKey || '').trim() === k) return;
+      const next = { ...cur, licenseKey: k };
+      setSettings(next);
+      setSettingsState(next);
+      try {
+        void desktop.setLicense?.(k);
+      } catch {
+        /* ignore */
+      }
+    });
+  }, []);
+
+  useEffect(() => {
     let handshake = 0;
     const clearForbiddenWorkspace = (appRoot = bridge.currentAppRoot) => {
       const prev = workspaceRef.current;
@@ -125,16 +159,20 @@ export default function App() {
     };
 
     const applyDaemonRoot = (root: string) => {
-      if (!root) return;
+      if (!root || isTemporaryPath(root)) return;
       if (!workspaceGate(root, bridge.currentAppRoot).ok) return;
       const prev = workspaceRef.current;
       if (!isPlaceholderRoot(prev.rootPath)) return;
+      const currentThread = getThreads().find((t) => t.id === activeThreadIdRef.current);
+      if (currentThread && !currentThread.workspaceRoot) return;
       const next = { ...prev, rootPath: root };
       setWorkspace(next);
       setWorkspaceState(next);
     };
 
-    const unsubRoot = bridge.onRootChange(applyDaemonRoot);
+    const unsubRoot = bridge.onRootChange((root) => {
+      applyDaemonRoot(root);
+    });
     const unsubAppRoot = bridge.onAppRootChange((appRoot) => {
       clearForbiddenWorkspace(appRoot);
     });
@@ -153,7 +191,7 @@ export default function App() {
                 const root = await bridge.setRoot(path);
                 if (id !== handshake) return;
                 const prev = workspaceRef.current;
-                if (prev.rootPath !== root) {
+                if (!isSamePath(prev.rootPath, root)) {
                   const next = { ...prev, rootPath: root };
                   setWorkspace(next);
                   setWorkspaceState(next);
@@ -164,10 +202,7 @@ export default function App() {
               }
             }
           }
-          const hello = await bridge.hello();
-          if (id !== handshake) return;
-          if (hello.workspaceOk) applyDaemonRoot(hello.root);
-          clearForbiddenWorkspace(hello.appRoot || bridge.currentAppRoot);
+          clearForbiddenWorkspace(bridge.currentAppRoot);
         } catch {
           /* daemon may not be listening yet; reconnect retries */
         }
@@ -242,6 +277,13 @@ export default function App() {
     };
     setThreads(upsertThread(thread));
     setActiveThreadId(thread.id);
+    const prev = workspaceRef.current;
+    if (prev.rootPath) {
+      const wsNext = { ...prev, rootPath: '' };
+      setWorkspace(wsNext);
+      setWorkspaceState(wsNext);
+    }
+    setTab('home');
   }, []);
 
   const activeThreadIdRef = useRef(activeThreadId);
@@ -256,7 +298,7 @@ export default function App() {
       root = await bridge.setRoot(trimmed);
     }
     const prev = workspaceRef.current;
-    const next = { ...prev, rootPath: root };
+    const next = { ...prev, rootPath: root, rootExplicit: true };
     setWorkspace(next);
     setWorkspaceState(next);
     const id = activeThreadIdRef.current;
@@ -264,26 +306,13 @@ export default function App() {
       setThreads((prevThreads) => {
         const existing = prevThreads.find((t) => t.id === id);
         if (!existing) return prevThreads;
-        if ((existing.workspaceRoot || undefined) === root) return prevThreads;
+        if (isSamePath(existing.workspaceRoot || '', root)) return prevThreads;
         return upsertThread({ ...existing, workspaceRoot: root, updatedAt: Date.now() });
       });
     }
   }, []);
 
-  /** Keep an already-stamped session in sync when the root changes. New chats stay empty until the picker confirms. */
-  useEffect(() => {
-    const id = activeThreadIdRef.current;
-    if (!id) return;
-    const root = workspace.rootPath.trim() || undefined;
-    setThreads((prev) => {
-      const existing = prev.find((t) => t.id === id);
-      if (!existing?.workspaceRoot) return prev;
-      if ((existing.workspaceRoot || undefined) === root) return prev;
-      return upsertThread({ ...existing, workspaceRoot: root, updatedAt: Date.now() });
-    });
-  }, [workspace.rootPath]);
-
-  /** Open a past thread, rebind model, backfill/restore workspace root. */
+  /** Open a past thread, rebind model, restore thread workspace root. */
   const openThread = useCallback((id: string) => {
     const s = settingsRef.current;
     const active = resolveActiveSettings(s);
@@ -295,51 +324,25 @@ export default function App() {
     }
     const model = active.defaultModel || existing.model;
     const currentRoot = workspaceRef.current.rootPath.trim();
-    let next: Thread = existing;
-    let changed = false;
     if (existing.model !== model) {
-      next = { ...next, model };
-      changed = true;
-    }
-    if (
-      !existing.workspaceRoot &&
-      currentRoot &&
-      workspaceGate(currentRoot, bridge.currentAppRoot).ok
-    ) {
-      next = { ...next, workspaceRoot: currentRoot };
-      changed = true;
-    }
-    if (changed) {
-      next = { ...next, updatedAt: Date.now() };
+      const next = { ...existing, model, updatedAt: Date.now() };
       setThreads(upsertThread(next));
     }
     setActiveThreadId(id);
+    setTab('home');
 
-    const threadRoot = (next.workspaceRoot || '').trim();
-    if (
-      threadRoot &&
-      !isPlaceholderRoot(threadRoot) &&
-      threadRoot !== currentRoot &&
-      workspaceGate(threadRoot, bridge.currentAppRoot).ok
-    ) {
+    const threadRoot = (existing.workspaceRoot || '').trim();
+    const targetRoot =
+      threadRoot && !isPlaceholderRoot(threadRoot) && workspaceGate(threadRoot, bridge.currentAppRoot).ok
+        ? threadRoot
+        : '';
+    if (targetRoot && !isSamePath(targetRoot, currentRoot)) {
       const prev = workspaceRef.current;
-      const wsNext = { ...prev, rootPath: threadRoot };
+      const wsNext = { ...prev, rootPath: targetRoot };
       setWorkspace(wsNext);
       setWorkspaceState(wsNext);
       if (bridge.connected) {
-        void (async () => {
-          try {
-            const root = await bridge.setRoot(threadRoot);
-            const p = workspaceRef.current;
-            if (root && root !== p.rootPath) {
-              const normalized = { ...p, rootPath: root };
-              setWorkspace(normalized);
-              setWorkspaceState(normalized);
-            }
-          } catch {
-            /* keep stamped path in history; local workspace already updated */
-          }
-        })();
+        void bridge.setRoot(targetRoot).catch(() => undefined);
       }
     }
   }, []);
@@ -391,7 +394,7 @@ export default function App() {
       },
       {
         id: 'tab-home',
-        label: 'Go to Home',
+        label: 'Go to Chat',
         hint: k('⌘1', 'Ctrl+1'),
         run: () => setTab('home'),
       },
@@ -420,10 +423,10 @@ export default function App() {
         run: () => setTab('api'),
       },
       {
-        id: 'tab-images',
-        label: 'Go to Images',
+        id: 'tab-vllm',
+        label: 'Go to vLLM',
         hint: k('⌘6', 'Ctrl+6'),
-        run: () => setTab('images'),
+        run: () => setTab('vllm'),
       },
       {
         id: 'tab-settings',
@@ -444,23 +447,28 @@ export default function App() {
         run: () => patchSettings({ autoRunShell: !settingsRef.current.autoRunShell }),
       },
       {
-        id: 'toggle-build-mode',
-        label: settings.buildModeEnabled !== false ? 'Disable build mode' : 'Enable build mode',
-        keywords: 'todo scaffold skeleton implement',
-        run: () => {
-          const on = settingsRef.current.buildModeEnabled === false;
-          patchSettings({ buildModeEnabled: on, planModeEnabled: on ? false : settingsRef.current.planModeEnabled });
-        },
+        id: 'set-mode-agent',
+        label: 'Mode: Agent (full write/verify)',
+        keywords: 'agent build implement write execute',
+        run: () => patchSettings({ agentMode: 'agent', planModeEnabled: false, buildModeEnabled: true }),
       },
       {
-        id: 'toggle-plan-mode',
-        label: settings.planModeEnabled ? 'Disable plan mode' : 'Enable plan mode',
-        keywords: 'checklist readonly',
-        run: () => {
-          const cur = settingsRef.current;
-          const on = !cur.planModeEnabled;
-          patchSettings({ planModeEnabled: on, buildModeEnabled: on ? false : true });
-        },
+        id: 'set-mode-ask',
+        label: 'Mode: Ask (read-only explore/search)',
+        keywords: 'ask question readonly explore research',
+        run: () => patchSettings({ agentMode: 'ask', planModeEnabled: false, buildModeEnabled: false }),
+      },
+      {
+        id: 'set-mode-plan',
+        label: 'Mode: Plan (research → approve checklist)',
+        keywords: 'plan checklist readonly gate',
+        run: () => patchSettings({ agentMode: 'plan', planModeEnabled: true, buildModeEnabled: false }),
+      },
+      {
+        id: 'set-mode-debug',
+        label: 'Mode: Debug (systematic reproduce & fix)',
+        keywords: 'debug fix test error bug troubleshoot',
+        run: () => patchSettings({ agentMode: 'debug', planModeEnabled: false, buildModeEnabled: false }),
       },
       {
         id: 'focus-workspace',
@@ -478,18 +486,11 @@ export default function App() {
         },
       },
       {
-        id: 'generate-image',
-        label: 'Generate image…',
-        keywords: 'flux png picture',
-        run: () => setTab('images'),
-      },
-      {
-        id: 'enable-image-gen',
-        label: 'Enable image generator',
-        keywords: 'flux spark-image',
+        id: 'open-image-studio',
+        label: 'Open Image Studio (Web App)',
+        keywords: 'flux png picture image studio generate spark',
         run: () => {
-          patchSettings({ imageGenEnabled: true });
-          setTab('images');
+          window.open('http://127.0.0.1:17326/', '_blank');
         },
       },
       {
@@ -554,12 +555,49 @@ export default function App() {
       {
         id: 'use-qwen-spark',
         label: 'Use Qwen on Spark',
-        keywords: 'provider qwen abliterated spark nim',
-        run: () =>
-          applySettings({
-            ...applyInferenceProvider(settingsRef.current, 'dgx-spark'),
-            sparkModel: 'qwen-abliterated',
-          }),
+        keywords: 'provider qwen abliterated spark vllm 8000',
+        run: () => applySettings({ ...settingsRef.current, ...sparkChatSettingsPatch(settingsRef.current) }),
+      },
+      {
+        id: 'use-spark-image-gen',
+        label: 'Use Spark image gen (RAW)',
+        keywords: 'krea raw fp8 build-d spark-image generate_image uncensored lora',
+        run: () => patchSettings(sparkImageSettingsPatch(settingsRef.current, UNCENSORED_IMAGE_MODEL)),
+      },
+      {
+        id: 'use-spark-fast-gen',
+        label: 'Use Spark Fast (Krea Turbo)',
+        keywords: 'krea turbo nvfp4 fast spark-image',
+        run: () => patchSettings(sparkImageSettingsPatch(settingsRef.current, FAST_IMAGE_MODEL)),
+      },
+      {
+        id: 'use-spark-klein-gen',
+        label: 'Use Spark Klein gen',
+        keywords: 'flux2 klein 9b adherence spark-image',
+        run: () => patchSettings(sparkImageSettingsPatch(settingsRef.current, KLEIN_IMAGE_MODEL)),
+      },
+      {
+        id: 'use-spark-draft-gen',
+        label: 'Use Spark Draft (Z-Image)',
+        keywords: 'z-image turbo draft nsfw spark',
+        run: () => patchSettings(sparkImageSettingsPatch(settingsRef.current, DRAFT_IMAGE_MODEL)),
+      },
+      {
+        id: 'copy-spark-install',
+        label: 'Copy Spark install command',
+        keywords: 'spark-install push rsync nvidia sync package',
+        run: () => {
+          const cmd = sparkPushCommand(settingsRef.current.sparkSshAlias);
+          void navigator.clipboard.writeText(cmd);
+        },
+      },
+      {
+        id: 'reveal-spark-install',
+        label: 'Reveal Spark install package',
+        keywords: 'spark-install folder extraResources',
+        run: () => {
+          void window.ablitDesktop?.revealSparkInstall?.();
+        },
       },
       {
         id: 'toggle-spark-available',
@@ -630,6 +668,12 @@ export default function App() {
       if (typing) return;
       if (paletteOpen) return;
 
+      if (mod && (e.key === 'i' || e.key === 'I')) {
+        e.preventDefault();
+        chatRef.current?.focusInput();
+        return;
+      }
+
       if (mod && (e.key === 'n' || e.key === 'N')) {
         e.preventDefault();
         createSession();
@@ -659,27 +703,172 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void hydrateDurableStore().then(() => {
+      hydrateApplyInbox();
+      setThreads(getThreads());
+      setJobs(getJobs());
+    });
+  }, []);
+
+  useEffect(() => {
     if (bridgeStatus === 'connected') {
       void syncMcpServers(settings.mcpServers || []);
     }
   }, [bridgeStatus, settings.mcpServers]);
 
+  const prevAutoAccept = useRef(false);
+  useEffect(() => {
+    const rising = !prevAutoAccept.current && settings.autoAcceptEdits;
+    prevAutoAccept.current = settings.autoAcceptEdits;
+    if (rising) void acceptAllInbox(workspace.rootPath);
+  }, [settings.autoAcceptEdits, workspace.rootPath]);
+
   return (
     <div className="flex h-full bg-background text-zinc-100">
-      <DesktopRail current={tab} onChange={setTab} jobsActive={jobsActive} />
+      {!settings.setupComplete ? (
+        <SetupWizard settings={settings} onSettingsChange={applySettings} />
+      ) : null}
+      <DesktopRail
+        current={tab}
+        onChange={setTab}
+        jobsActive={jobsActive}
+        userName={license.isFree ? 'Local' : license.label || 'Abliterated'}
+        userSub={resolveActiveSettings(settings).label}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
+        {bridgeStatus !== 'connected' ? (
+          <div className="flex items-center justify-between gap-2 border-b border-amber-800/50 bg-amber-950/40 px-3 py-1.5 font-mono text-[11px] text-amber-200">
+            <span>
+              {bridgeStatus === 'restarting' || bridgeStatus === 'connecting'
+                ? 'Bridge restarting — writes blocked until hello.'
+                : 'Bridge down — writes blocked. The desktop app will respawn ws://127.0.0.1:17322.'}
+            </span>
+            <button
+              type="button"
+              className="btn-ghost h-6 px-2 text-[10px]"
+              onClick={() => {
+                void window.ablitDesktop?.ensureBridge?.().finally(() => bridge.reconnect());
+              }}
+            >
+              Restart now
+            </button>
+          </div>
+        ) : null}
         <main className="relative min-h-0 flex-1">
           <div className="h-full">
             {visitedTabs.has('home') ? (
               <div className={panelClass('home')}>
-                <HomeScreen
-                  threads={threads}
-                  settings={settings}
-                  onThreadsChange={setThreads}
-                  onOpenThread={openThread}
-                  onNewSession={createSession}
-                  workspaceRoot={workspace.rootPath}
-                />
+                <div className="flex h-full min-w-0">
+                  <aside
+                    className={cn(
+                      'w-[220px] shrink-0 flex-col border-r border-border',
+                      activeThread ? 'hidden md:flex' : 'flex',
+                    )}
+                  >
+                    <HomeScreen
+                      compact
+                      threads={threads}
+                      settings={settings}
+                      onThreadsChange={setThreads}
+                      onOpenThread={openThread}
+                      onNewSession={createSession}
+                      workspaceRoot={workspace.rootPath}
+                      activeThreadId={activeThreadId}
+                    />
+                  </aside>
+                  <div className="min-w-0 flex-1">
+                    {activeThread ? (
+                      <ChatScreen
+                        ref={chatRef}
+                        thread={activeThread}
+                        settings={settings}
+                        autoAcceptEdits={settings.autoAcceptEdits}
+                        autoRunShell={settings.autoRunShell}
+                        workspaceRoot={workspace.rootPath}
+                        onChooseWorkspace={chooseWorkspace}
+                        onBack={() => {
+                          setActiveThreadId(null);
+                          setAgentLabel('');
+                        }}
+                        onThreadUpdate={(t) => setThreads((prev) => prev.map((x) => (x.id === t.id ? t : x)))}
+                        onAgentStatus={setAgentLabel}
+                        onGitMaybeChanged={() => void refreshGitStatus()}
+                        composerSeed={composerSeed}
+                        onComposerSeedConsumed={() => setComposerSeed(null)}
+                        agentMode={agentMode}
+                        planMode={planMode}
+                        buildMode={buildMode}
+                        onSelectAgentMode={(mode) => {
+                          applySettings({
+                            ...settingsRef.current,
+                            agentMode: mode,
+                            planModeEnabled: mode === 'plan',
+                            buildModeEnabled: mode === 'agent',
+                          });
+                        }}
+                        onTogglePlanMode={() => {
+                          const cur = settingsRef.current;
+                          const next = cur.agentMode === 'plan' ? 'agent' : 'plan';
+                          applySettings({
+                            ...cur,
+                            agentMode: next,
+                            planModeEnabled: next === 'plan',
+                            buildModeEnabled: next === 'agent',
+                          });
+                        }}
+                        onToggleBuildMode={() => {
+                          const cur = settingsRef.current;
+                          const next = cur.agentMode === 'agent' ? 'ask' : 'agent';
+                          applySettings({
+                            ...cur,
+                            agentMode: next,
+                            buildModeEnabled: next === 'agent',
+                            planModeEnabled: false,
+                          });
+                        }}
+                        onApprovePlan={() => {
+                          applySettings({
+                            ...settingsRef.current,
+                            agentMode: 'agent',
+                            planModeEnabled: false,
+                            buildModeEnabled: true,
+                          });
+                          setComposerSeed(
+                            'Plan approved. Agent mode is on. After reasoning emit ToDo: steps. If new file/folder structure is required, scaffold it first, then work the list. Write tools are unlocked.',
+                          );
+                        }}
+                        onSettingsChange={applySettings}
+                        onOpenTab={setTab}
+                        filePanelOpen={chatFilePanel}
+                        onToggleFilePanel={() => setChatFilePanel((open) => !open)}
+                      />
+                    ) : (
+                      <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+                        <span className="grid h-14 w-14 place-items-center rounded-2xl border border-border bg-panel text-primary">
+                          <img
+                            src={`${import.meta.env.BASE_URL}logo-skull-blue.png`}
+                            alt=""
+                            width={28}
+                            height={28}
+                            className="h-7 w-7 object-contain"
+                          />
+                        </span>
+                        <h2 className="mt-5 text-xl font-semibold tracking-tight">Describe the change you want</h2>
+                        <p className="mt-2 max-w-md text-balance text-sm leading-relaxed text-muted-foreground">
+                          Abliterated plans the work, edits the files, and reports back. Pin context with @path.
+                        </p>
+                        <button type="button" onClick={createSession} className="btn-primary mt-5">
+                          New Chat
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {activeThread && chatFilePanel ? (
+                    <div className="hidden min-w-[320px] max-w-[720px] w-[42%] border-l border-border lg:block">
+                      <WorkspaceScreen workspace={workspace} onChange={setWorkspaceState} />
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ) : null}
             {visitedTabs.has('workspace') ? (
@@ -702,11 +891,12 @@ export default function App() {
                 <ApiScreen settings={settings} onSettingsChange={applySettings} />
               </div>
             ) : null}
-            {visitedTabs.has('images') ? (
-              <div className={panelClass('images')}>
-                <ImagesScreen settings={settings} onSettingsChange={applySettings} />
+            {visitedTabs.has('vllm') ? (
+              <div className={panelClass('vllm')}>
+                <VllmScreen settings={settings} onSettingsChange={applySettings} />
               </div>
             ) : null}
+
             {visitedTabs.has('settings') ? (
               <div className={panelClass('settings')}>
                 <SettingsScreen
@@ -717,61 +907,16 @@ export default function App() {
               </div>
             ) : null}
           </div>
-          {activeThread ? (
-            <div className="absolute inset-0 z-10">
-              <ChatScreen
-                ref={chatRef}
-                thread={activeThread}
-                settings={settings}
-                autoAcceptEdits={settings.autoAcceptEdits}
-                autoRunShell={settings.autoRunShell}
-                workspaceRoot={workspace.rootPath}
-                onChooseWorkspace={chooseWorkspace}
-                onBack={() => {
-                  setActiveThreadId(null);
-                  setAgentLabel('');
-                }}
-                onThreadUpdate={(t) => setThreads((prev) => prev.map((x) => (x.id === t.id ? t : x)))}
-                onAgentStatus={setAgentLabel}
-                onGitMaybeChanged={() => void refreshGitStatus()}
-                composerSeed={composerSeed}
-                onComposerSeedConsumed={() => setComposerSeed(null)}
-                planMode={planMode}
-                buildMode={buildMode}
-                onTogglePlanMode={() => {
-                  const cur = settingsRef.current;
-                  const next = !cur.planModeEnabled;
-                  applySettings({
-                    ...cur,
-                    planModeEnabled: next,
-                    buildModeEnabled: next ? false : true,
-                  });
-                }}
-                onToggleBuildMode={() => {
-                  const cur = settingsRef.current;
-                  const next = cur.buildModeEnabled === false;
-                  applySettings({
-                    ...cur,
-                    buildModeEnabled: next,
-                    planModeEnabled: next ? false : cur.planModeEnabled,
-                  });
-                }}
-                onApprovePlan={() => {
-                  applySettings({
-                    ...settingsRef.current,
-                    planModeEnabled: false,
-                    buildModeEnabled: true,
-                  });
-                  setComposerSeed(
-                    'Plan approved. Build mode is on. After reasoning emit ToDo: steps. If new file/folder structure is required, scaffold it first, then work the list. Write tools are unlocked.',
-                  );
-                }}
-                onSettingsChange={applySettings}
-                onOpenTab={setTab}
-              />
-            </div>
-          ) : null}
         </main>
+        <ApplyInboxDrawer
+          workspaceRoot={workspace.rootPath}
+          onOpenFile={(rel) => {
+            const next = { ...workspace, selectedFiles: [rel] };
+            setWorkspace(next);
+            setWorkspaceState(next);
+            setTab('workspace');
+          }}
+        />
         <StatusBar
           bridgeStatus={bridgeStatus}
           workspaceRoot={workspace.rootPath}

@@ -1,0 +1,11 @@
+{
+  "name": "image-studio",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Unified Generative Diffusion & Image Studio for NVIDIA DGX Spark",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs"
+  }
+}

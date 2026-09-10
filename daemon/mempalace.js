@@ -1,0 +1,304 @@
+/**
+ * MemPalace CLI adapter for the localhost bridge.
+ * Resolves `mempalace` / uvx / python -m and runs search, wake-up, status, save, init.
+ */
+import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+
+export const MISSING_CLI =
+  'MemPalace CLI not found. Settings → MemPalace → Install, or run: uv tool install mempalace';
+
+export const DEFAULT_ROOM = 'abliterated-chat';
+export const DEFAULT_PALACE = path.join(os.homedir(), '.mempalace', 'palace');
+
+const SEARCH_TIMEOUT_MS = 60_000;
+const WAKE_TIMEOUT_MS = 60_000;
+const STATUS_TIMEOUT_MS = 45_000;
+const SAVE_TIMEOUT_MS = 180_000;
+const INIT_TIMEOUT_MS = 180_000;
+const INSTALL_TIMEOUT_MS = 300_000;
+const MAX_BUFFER = 2 * 1024 * 1024;
+const MAX_CONTENT = 24_000;
+const MAX_WAKE = 2_400;
+
+/** @type {{ cmd: string, prefix: string[] } | null | undefined} */
+let cachedLauncher;
+
+export function resetLauncherCache() {
+  cachedLauncher = undefined;
+}
+
+export function sanitizePalaceName(raw, fallback = 'workspace') {
+  const s = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+  return s || fallback;
+}
+
+export function wingFromRoot(root) {
+  const base = path.basename(String(root || '').trim());
+  return sanitizePalaceName(base, 'workspace');
+}
+
+export function clipText(text, max) {
+  const t = String(text || '');
+  if (t.length <= max) return t;
+  return `${t.slice(0, max)}\n/* truncated */`;
+}
+
+export function formatWakePrompt(text) {
+  const body = clipText(String(text || '').trim(), MAX_WAKE);
+  if (!body) return '';
+  return [
+    '## MemPalace wake-up (verbatim memory)',
+    'Search-before-answer for people, projects, and past decisions. Call memory_search before guessing.',
+    'Do not echo this block unless asked.',
+    '',
+    body,
+  ].join('\n');
+}
+
+/** Dirs Electron GUI apps often omit from PATH (uv lives in ~/.local/bin). */
+export function extraBinDirs() {
+  const home = os.homedir();
+  return [
+    path.join(home, '.local', 'bin'),
+    path.join(home, '.cargo', 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+  ];
+}
+
+export function withExtraPath(env = process.env) {
+  const extra = extraBinDirs().join(path.delimiter);
+  const cur = env.PATH || env.Path || '';
+  return { ...env, PATH: extra + (cur ? path.delimiter + cur : '') };
+}
+
+export function resolveUvBin() {
+  const forced = String(process.env.ABLIT_UV_BIN || '').trim();
+  if (forced) return forced;
+  for (const dir of extraBinDirs()) {
+    for (const name of process.platform === 'win32' ? ['uv.exe'] : ['uv']) {
+      const p = path.join(dir, name);
+      if (existsSync(p)) return p;
+    }
+  }
+  return 'uv';
+}
+
+export function uvxFromUv(uvBin) {
+  if (uvBin.endsWith('uv.exe')) return uvBin.replace(/uv\.exe$/i, 'uvx.exe');
+  if (uvBin.endsWith('uv')) return uvBin.replace(/uv$/, 'uvx');
+  return 'uvx';
+}
+
+function execOpts(extra = {}) {
+  const { env, ...rest } = extra;
+  return {
+    windowsHide: true,
+    ...rest,
+    env: withExtraPath(env || process.env),
+  };
+}
+
+/** Probe PATH / uv / python for a MemPalace launcher. Cached. */
+export async function resolveLauncher() {
+  if (cachedLauncher !== undefined) return cachedLauncher;
+  const envBin = String(process.env.ABLIT_MEMPALACE_BIN || '').trim();
+  const candidates = [];
+  if (envBin) candidates.push({ cmd: envBin, prefix: [] });
+  for (const dir of extraBinDirs()) {
+    const mp = path.join(dir, process.platform === 'win32' ? 'mempalace.exe' : 'mempalace');
+    if (existsSync(mp)) candidates.push({ cmd: mp, prefix: [] });
+  }
+  candidates.push({ cmd: 'mempalace', prefix: [] });
+  candidates.push({ cmd: resolveUvBin(), prefix: ['tool', 'run', 'mempalace'] });
+  candidates.push({ cmd: 'python3', prefix: ['-m', 'mempalace'] });
+  candidates.push({ cmd: 'python', prefix: ['-m', 'mempalace'] });
+
+  for (const c of candidates) {
+    try {
+      await execFileAsync(c.cmd, [...c.prefix, '--help'], execOpts({
+        timeout: 12_000,
+        maxBuffer: 256 * 1024,
+      }));
+      cachedLauncher = c;
+      return c;
+    } catch (err) {
+      const code = err && typeof err === 'object' ? err.code : '';
+      if (code === 'ENOENT') continue;
+      const stderr = err && typeof err === 'object' ? String(err.stderr || '') : '';
+      const msg = `${err instanceof Error ? err.message : String(err)}\n${stderr}`;
+      if (/ModuleNotFoundError|No module named ['"]mempalace['"]/i.test(msg)) continue;
+      if (/not found|cannot find/i.test(msg) && /mempalace/i.test(msg)) continue;
+      cachedLauncher = c;
+      return c;
+    }
+  }
+  cachedLauncher = null;
+  return null;
+}
+
+async function runCli(args, opts = {}) {
+  const launcher = await resolveLauncher();
+  if (!launcher) {
+    const err = new Error(MISSING_CLI);
+    err.code = 'MEMPALACE_MISSING';
+    throw err;
+  }
+  const timeout = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : SEARCH_TIMEOUT_MS;
+  const env = { ...process.env };
+  const palace = String(opts.palacePath || '').trim();
+  if (palace) env.MEMPALACE_PALACE_PATH = palace;
+  const { stdout, stderr } = await execFileAsync(
+    launcher.cmd,
+    [...launcher.prefix, ...args],
+    execOpts({
+      timeout,
+      maxBuffer: MAX_BUFFER,
+      env,
+      cwd: opts.cwd || os.homedir(),
+    }),
+  );
+  const out = String(stdout || '').trim();
+  const err = String(stderr || '').trim();
+  return { stdout: out, stderr: err, combined: [out, err].filter(Boolean).join('\n') };
+}
+
+export async function mempalaceWhich() {
+  const launcher = await resolveLauncher();
+  if (!launcher) return { ok: false, error: MISSING_CLI, cmd: '', prefix: [] };
+  return {
+    ok: true,
+    cmd: launcher.cmd,
+    prefix: launcher.prefix,
+    display: [launcher.cmd, ...launcher.prefix].join(' ').trim(),
+  };
+}
+
+export async function mempalaceStatus(opts = {}) {
+  const { combined } = await runCli(['status'], {
+    palacePath: opts.palacePath,
+    timeoutMs: STATUS_TIMEOUT_MS,
+  });
+  return combined || '(empty status)';
+}
+
+export async function mempalaceWake(opts = {}) {
+  const wing = String(opts.wing || '').trim();
+  const args = ['wake-up'];
+  if (wing) args.push('--wing', sanitizePalaceName(wing));
+  const { stdout, combined } = await runCli(args, {
+    palacePath: opts.palacePath,
+    timeoutMs: WAKE_TIMEOUT_MS,
+  });
+  const body = (stdout || combined || '').trim();
+  return formatWakePrompt(body);
+}
+
+export async function mempalaceSearch(query, opts = {}) {
+  const q = String(query || '').trim();
+  if (!q) throw new Error('missing query');
+  const args = ['search', q];
+  const wing = String(opts.wing || '').trim();
+  const room = String(opts.room || '').trim();
+  const n = Number(opts.results);
+  if (wing) args.push('--wing', sanitizePalaceName(wing));
+  if (room) args.push('--room', sanitizePalaceName(room, 'room'));
+  if (Number.isFinite(n) && n > 0) args.push('--results', String(Math.min(20, Math.max(1, Math.floor(n)))));
+  const { combined } = await runCli(args, {
+    palacePath: opts.palacePath,
+    timeoutMs: SEARCH_TIMEOUT_MS,
+  });
+  return combined || '(no results)';
+}
+
+export async function mempalaceSave(content, opts = {}) {
+  const body = clipText(String(content || '').trim(), MAX_CONTENT);
+  if (!body) throw new Error('missing content');
+  const wing = sanitizePalaceName(opts.wing || 'workspace');
+  const room = sanitizePalaceName(opts.room || DEFAULT_ROOM, DEFAULT_ROOM);
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'ablit-mempalace-'));
+  const file = path.join(tmp, 'entry.txt');
+  await writeFile(file, body, 'utf8');
+  try {
+    const { combined } = await runCli(
+      ['mine', file, '--wing', wing, '--room', room],
+      { palacePath: opts.palacePath, timeoutMs: SAVE_TIMEOUT_MS },
+    );
+    return combined || 'saved';
+  } finally {
+    try {
+      await unlink(file);
+      await rmdir(tmp);
+    } catch {
+      /* ignore cleanup */
+    }
+  }
+}
+
+export async function mempalaceInit(projectDir, opts = {}) {
+  const dir = projectDir ? path.resolve(projectDir) : os.homedir();
+  const args = ['init', dir];
+  const { combined } = await runCli(args, {
+    palacePath: opts.palacePath,
+    timeoutMs: 30_000,
+  });
+  return combined || 'initialized';
+}
+
+export async function mempalaceInstall() {
+  const uv = resolveUvBin();
+  try {
+    const { stdout, stderr } = await execFileAsync(uv, ['tool', 'install', 'mempalace'], execOpts({
+      timeout: 120_000,
+      maxBuffer: MAX_BUFFER,
+    }));
+    cachedLauncher = undefined;
+    const which = await mempalaceWhich();
+    return {
+      ok: which.ok,
+      output: [String(stdout || '').trim(), String(stderr || '').trim()].filter(Boolean).join('\n'),
+      which,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`uv tool install mempalace failed: ${msg}`);
+  }
+}
+
+export function mcpServerSpec(palacePath) {
+  const env = {};
+  const palace = String(palacePath || '').trim();
+  if (palace) env.MEMPALACE_PALACE_PATH = palace;
+
+  for (const dir of extraBinDirs()) {
+    const mpMcp = path.join(dir, process.platform === 'win32' ? 'mempalace-mcp.exe' : 'mempalace-mcp');
+    if (existsSync(mpMcp)) {
+      return {
+        name: 'mempalace',
+        command: mpMcp,
+        args: [],
+        env,
+      };
+    }
+  }
+
+  const uvx = uvxFromUv(resolveUvBin());
+  return {
+    name: 'mempalace',
+    command: existsSync(uvx) ? uvx : 'uvx',
+    args: ['--from', 'mempalace', 'mempalace-mcp'],
+    env,
+  };
+}

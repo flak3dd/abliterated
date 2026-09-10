@@ -1,10 +1,14 @@
 # Primary recipe: THe-Plague Qwen3.6-35B-A3B abliterated NVFP4 + MTP on DGX Spark (GB10).
 # Copy this folder to the Spark host. Do not pull weights onto the IDE box.
 #
-# Preferred image: vllm/vllm-openai:cu130-nightly (portable-ish; Marlin envs for sm_121).
-# Optional Spark-only ARM64: ghcr.io/aeon-7/aeon-vllm-ultimate:latest
+# vllm/vllm-openai:cu130-nightly ENTRYPOINT is already ["vllm","serve"].
+# command must start at the model path — do not prefix `vllm serve` or the
+# container crash-loops with: unrecognized arguments: serve /models/current
 #
-# Alternate weights (see README): AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4
+# Optional Spark-only ARM64: ghcr.io/aeon-7/aeon-vllm-ultimate:latest
+# Alternate weights: AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4
+# Do not pass --moe-backend marlin. NVFP4 GEMM uses VLLM_NVFP4_GEMM_BACKEND;
+# Qwen3.5 MTP draft experts are unquantized and reject moe_backend=marlin.
 
 services:
   qwen-abliterated:
@@ -13,6 +17,7 @@ services:
     restart: unless-stopped
     ipc: host
     shm_size: "16gb"
+    gpus: all
     ports:
       - "${PORT:-8000}:8000"
     volumes:
@@ -24,14 +29,8 @@ services:
       CUTE_DSL_ARCH: sm_121a
       FLASHINFER_DISABLE_VERSION_CHECK: "1"
       HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: [gpu]
+      HF_TOKEN: ${HF_TOKEN:-}
     command:
-      - vllm
-      - serve
       - /models/current
       - --host
       - "0.0.0.0"
@@ -45,13 +44,11 @@ services:
       - --enable-auto-tool-choice
       - --tool-call-parser
       - qwen3_coder
-      - --moe-backend
-      - marlin
       - --gpu-memory-utilization
       - ${GPU_MEMORY_UTILIZATION:-0.6}
       - --kv-cache-dtype
-      - fp8
+      - ${KV_CACHE_DTYPE:-fp8}
       - --max-model-len
-      - "65536"
+      - "${MAX_MODEL_LEN:-65536}"
       - --speculative-config
       - '{"method":"mtp","num_speculative_tokens":3}'

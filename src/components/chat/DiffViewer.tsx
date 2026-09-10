@@ -32,9 +32,9 @@ export function DiffViewer({ rawDiff, defaultFile, autoAccept = false }: Props) 
   const apply = async (idx: number, opts?: { auto?: boolean }) => {
     const hunk = hunksRef.current[idx];
     if (!hunk || hunk.status !== 'pending') return;
-    if (opts?.auto && wasRecentlyApplied(hunk.file)) {
+    if (wasRecentlyApplied(hunk.file)) {
       setHunkStatus(idx, 'accepted');
-      setStatusText(`Applied ${hunk.file}`);
+      setStatusText(`Already applied ${hunk.file}`);
       return;
     }
     if (opts?.auto && !bridge.connected) return;

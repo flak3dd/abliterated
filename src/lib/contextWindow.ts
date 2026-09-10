@@ -170,15 +170,19 @@ export function fitChatPayload<T extends WindowMessage>(opts: {
     if (!list.length) return list;
     const sys = list[0]?.role === 'system' ? list[0] : null;
     const rest = sys ? list.slice(1) : list.slice();
-    while (rest.length > 1 && estimateMessagesTokens([...(sys ? [sys] : []), ...rest], cpt) > msgBudget()) {
-      rest.shift();
+    const pinIdx = rest.findIndex((m) => m.role === 'user');
+    const pin = pinIdx >= 0 ? rest[pinIdx] : null;
+    const movable = pinIdx >= 0 ? rest.filter((_, i) => i !== pinIdx) : rest.slice();
+    const head = () => [...(sys ? [sys] : []), ...(pin ? [pin] : []), ...movable];
+    while (movable.length > 1 && estimateMessagesTokens(head(), cpt) > msgBudget()) {
+      movable.shift();
       dropped += 1;
-      while (rest.length > 1 && rest[0]?.role === 'tool') {
-        rest.shift();
+      while (movable.length > 1 && movable[0]?.role === 'tool') {
+        movable.shift();
         dropped += 1;
       }
     }
-    let packed = sys ? [sys, ...rest] : rest;
+    let packed = head();
     if (!packed.length) return packed;
 
     let guard = 0;

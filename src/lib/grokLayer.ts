@@ -1,6 +1,11 @@
 import { hunkToPatch, parseUnifiedDiff } from './diffParser';
 import { bridge } from './bridgeClient';
-import { isPathInsideAppRoot, workspaceGate } from './workspaceGuard';
+import {
+  connectedBridgeWriteRoot,
+  isPathInsideAppRoot,
+  joinRoot,
+  workspaceGate,
+} from './workspaceGuard';
 
 export type GrokEdit = {
   file: string;
@@ -77,8 +82,10 @@ export function isPathInsideRoot(file: string, root?: string): boolean {
     const rootN = norm(fr);
     if (!rootN) return false;
     if (fileN === rootN) return true;
-    if (!fileN.startsWith(rootN + '/')) return false;
-    return !segmentLeavesRoot(fileN.slice(rootN.length + 1));
+    // Handle cases where root already has trailing slash, or not
+    const rootWithSlash = rootN.endsWith('/') ? rootN : rootN + '/';
+    if (!fileN.startsWith(rootWithSlash)) return false;
+    return !segmentLeavesRoot(fileN.slice(rootWithSlash.length));
   }
 
   return !segmentLeavesRoot(norm(raw).replace(/^\.\//, ''));
@@ -125,7 +132,7 @@ export function noteFileApplied(file: string): void {
   recentApply.set(normalizeGrokPath(file), Date.now());
 }
 
-function parseFenceHeader(header: string): { lang: string; path: string } {
+export function parseFenceHeader(header: string): { lang: string; path: string } {
   const raw = header.trim();
   if (!raw) return { lang: '', path: '' };
   const colon = raw.match(/^([\w.+-]+)\s*:\s*(.+)$/);
@@ -141,16 +148,20 @@ function parseFenceHeader(header: string): { lang: string; path: string } {
 }
 
 function addPatch(patchesByFile: Map<string, string[]>, file: string, patch: string) {
-  const key = file || 'workspace/patch.ts';
+  const key = normalizeGrokPath(file);
+  if (!key || key === 'workspace/patch.ts') return;
   const list = patchesByFile.get(key) ?? [];
   list.push(patch);
   patchesByFile.set(key, list);
 }
 
 function ingestDiff(code: string, defaultFile: string, patchesByFile: Map<string, string[]>) {
-  const hunks = parseUnifiedDiff(code, defaultFile || 'workspace/patch.ts');
+  const fallback = defaultFile && defaultFile !== 'workspace/patch.ts' ? defaultFile : '';
+  const hunks = parseUnifiedDiff(code, fallback);
   for (const hunk of hunks) {
-    addPatch(patchesByFile, hunk.file, hunkToPatch(hunk));
+    const file = normalizeGrokPath(hunk.file);
+    if (!file || file === 'workspace/patch.ts') continue;
+    addPatch(patchesByFile, file, hunkToPatch(hunk));
   }
 }
 
@@ -187,7 +198,7 @@ function lineBeforeFence(text: string, index: number): string {
   return m ? m[1].trim() : '';
 }
 
-function commentPathFromBody(code: string): { path: string; body: string } {
+export function commentPathFromBody(code: string): { path: string; body: string } {
   const lines = code.split('\n');
   const first = lines[0] ?? '';
   const slash = first.match(SLASH_PATH_RE);
@@ -201,6 +212,32 @@ function commentPathFromBody(code: string): { path: string; body: string } {
     return { path: hinted, body: lines.slice(1).join('\n') };
   }
   return { path: '', body: code };
+}
+
+
+/** Resolve a whole-file write target from a code fence header + body (no path inference). */
+export function resolveCodeFenceWrite(
+  header: string,
+  code: string,
+): { path: string; body: string; lang: string } | null {
+  const { lang, path: headerPath } = parseFenceHeader(header);
+  if (SHELL_LANGS.has(lang) || DIFF_LANGS.has(lang)) return null;
+  const hinted = commentPathFromBody(code);
+  const filePath = headerPath || hinted.path;
+  if (!filePath || !looksLikeFilePath(filePath)) return null;
+  const body = hinted.path ? hinted.body : code;
+  return { path: normalizeGrokPath(filePath), body, lang };
+}
+
+/** True when content has ``` fences that are not shell-only (used for empty-edit operator hint). */
+export function hasNonShellCodeFences(text: string): boolean {
+  const fenceRe = /```([^\n`]*)\n([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+  while ((match = fenceRe.exec(text)) !== null) {
+    const { lang } = parseFenceHeader(match[1] || '');
+    if (!SHELL_LANGS.has(lang)) return true;
+  }
+  return false;
 }
 
 function filterEscapes(edits: GrokEdit[], root?: string): GrokEdit[] {
@@ -276,7 +313,8 @@ export function parseGrokEdits(text: string, root?: string): GrokEdit[] {
   }
 
   for (const chunk of collectUnfencedDiffs(text, fenceSpans)) {
-    ingestDiff(chunk, pendingPath || 'workspace/patch.ts', patchesByFile);
+    // Named ---/+++ diffs apply even without pendingPath; unlabeled filtered in ingestDiff/parseUnifiedDiff.
+    ingestDiff(chunk, pendingPath || '', patchesByFile);
   }
 
   const covered = new Set([...patchesByFile.keys()].map(normalizeGrokPath));
@@ -288,13 +326,47 @@ export function parseGrokEdits(text: string, root?: string): GrokEdit[] {
   return filterEscapes([...patchEdits, ...writeEdits], root);
 }
 
+/** Path-headed fences are the write channel — land when the workspace is writable. Auto-accept gates git/shell, not these. */
+export function shouldApplyGrokEditsNow(opts: {
+  autoAccept?: boolean;
+  writeToWorkspace?: boolean;
+}): boolean {
+  return opts.writeToWorkspace === true;
+}
+
+/**
+ * Drop content-fence edits whose file is already targeted by a write tool
+ * (write_file / apply_patch) this same turn. The structured tool channel is
+ * preferred and writes it, so applying the fence too would double-write (or, on
+ * a malformed fence, clobber the tool's result). Paths are compared canonicalized
+ * against the workspace root, so `foo.ts`, `./foo.ts`, and an absolute form match.
+ */
+export function dedupeEditsByToolTargets<T extends { file: string }>(
+  edits: T[],
+  toolTargetFiles: string[],
+  root: string,
+): T[] {
+  const targets = toolTargetFiles.map((f) => (f || '').trim()).filter(Boolean);
+  if (!targets.length) return edits;
+  const canon = new Set(targets.map((f) => joinRoot(root, f)));
+  return edits.filter((e) => !canon.has(joinRoot(root, e.file)));
+}
+
 export async function applyGrokEdits(
   edits: GrokEdit[],
-  opts: { autoAccept: boolean; root?: string },
+  opts: { autoAccept?: boolean; writeToWorkspace?: boolean; root?: string },
 ): Promise<GrokApplyResult[]> {
-  const root = opts.root || bridge.currentRoot;
+  const root =
+    connectedBridgeWriteRoot({
+      workspaceRoot: opts.root,
+      appRoot: bridge.currentAppRoot,
+      bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
+    }) ||
+    opts.root ||
+    bridge.currentRoot;
   const results: GrokApplyResult[] = [];
   const gate = workspaceGate(root, bridge.currentAppRoot);
+  const applyNow = shouldApplyGrokEditsNow(opts);
 
   for (const edit of edits) {
     if (!gate.ok) {
@@ -309,7 +381,7 @@ export async function applyGrokEdits(
       results.push({ file: edit.file, kind: edit.kind, status: 'error', error: 'path escape blocked' });
       continue;
     }
-    if (!opts.autoAccept) {
+    if (!applyNow) {
       results.push({ file: edit.file, kind: edit.kind, status: 'pending' });
       continue;
     }
@@ -319,7 +391,7 @@ export async function applyGrokEdits(
     }
     try {
       if (edit.kind === 'patch') {
-        const ok = await bridge.applyPatch(edit.file, edit.patch || '');
+        const ok = await bridge.applyPatch(edit.file, edit.patch || '', { root });
         if (ok) noteFileApplied(edit.file);
         results.push(
           ok
@@ -327,7 +399,7 @@ export async function applyGrokEdits(
             : { file: edit.file, kind: edit.kind, status: 'error', error: 'apply failed' },
         );
       } else {
-        const ok = await bridge.writeFile(edit.file, edit.content || '');
+        const ok = await bridge.writeFile(edit.file, edit.content || '', { root });
         if (ok) noteFileApplied(edit.file);
         results.push(
           ok
@@ -351,11 +423,15 @@ export function formatGrokStatus(
   results: GrokApplyResult[] | undefined,
   autoAccept: boolean,
   connected: boolean,
+  emptyHint?: string,
 ): string {
   const mode = autoAccept ? 'auto-accept on' : 'auto-accept off';
   const bits = [`Grok Bot · ${mode}`];
   if (!connected) bits.push('bridge down');
-  if (!results || results.length === 0) return bits.join(' · ');
+  if (!results || results.length === 0) {
+    if (emptyHint) bits.push(emptyHint);
+    return bits.join(' · ');
+  }
   const applied = results.filter((r) => r.status === 'ok').map((r) => r.file);
   const pending = results.filter((r) => r.status === 'pending');
   const errors = results.filter((r) => r.status === 'error');

@@ -52,7 +52,7 @@ export function ModelSettingsGuidePanel({
 
   if (compact) {
     const alerts = guide.items.filter((i) => i.status !== 'ok');
-    if (!alerts.length && !guide.applyPatch) return null;
+    if (!alerts.length) return null;
     return (
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-zinc-950/80 px-3 py-1.5">
         <span className="font-mono text-[10px] text-zinc-400">

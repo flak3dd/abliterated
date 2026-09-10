@@ -1,26 +1,84 @@
 {
   "name": "abliterated-ide",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2-beta",
+  "description": "Uncensored unrestricted local agent IDE for abliterated models — chat, tools, Jobs, MCP, and a localhost bridge.",
+  "author": {
+    "name": "flak3dd",
+    "url": "https://github.com/flak3dd"
+  },
+  "homepage": "https://abliterated.app",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "bridge": "node daemon/bridge.js",
-    "smoke": "node scripts/smoke-agent.mjs && node daemon/search.test.js && node daemon/fsutil.test.js && node daemon/outline.test.js && node daemon/appRoot.test.js && node daemon/pyManaged.test.js && node daemon/webSearch.test.js && node daemon/projectMemory.test.js",
+    "matrix": "bash abliterated.sh",
+    "smoke": "node scripts/smoke-agent.mjs && node daemon/search.test.js && node daemon/fsutil.test.js && node daemon/outline.test.js && node daemon/appRoot.test.js && node daemon/pyManaged.test.js && node daemon/webSearch.test.js && node daemon/projectMemory.test.js && node daemon/mempalace.test.js",
     "test:agent": "node scripts/test-agent-response.mjs",
+    "test:agent-mode": "node scripts/test-agent-mode.mjs",
     "test:reasoning": "node scripts/test-reasoning-work.mjs",
+    "test:agent-presets": "node scripts/test-agent-presets.mjs",
+    "test:live-prompts": "node scripts/test-live-prompts.mjs",
+    "test:benchmark-20": "node scripts/benchmark-20-prompts.mjs",
+    "test:featherless-benchmark": "node scripts/benchmark-20-featherless.mjs",
+    "probe:spark": "node scripts/probe-spark-models.mjs",
+    "probe:spark-ssh": "node scripts/probe-spark-ssh.mjs",
+    "probe:spark-gpt": "node scripts/inspect-spark-gpt-compose.mjs",
+    "probe:spark-gpt-status": "node scripts/wait-spark-gpt-ready.mjs",
+    "spark:tiktoken-cache": "node scripts/setup-spark-tiktoken-cache.mjs",
+    "probe:model-config": "node scripts/inspect-model-config.mjs",
+    "probe:tokenizer": "node scripts/inspect-tokenizer.mjs",
+    "probe:serving": "node scripts/inspect-serving.mjs",
+    "spark:switch-gpt": "node scripts/switch-and-warmup-spark-gpt.mjs",
+    "spark:patch-gpt": "node scripts/apply-spark-gpt-patch.mjs",
+    "spark:controller": "node spark-controller/server.mjs",
+    "test:spark-qwen-sample": "node scripts/test-spark-qwen-sample.mjs",
+    "test:spark-qwen-benchmark": "node scripts/benchmark-20-spark-qwen.mjs",
+    "test:spark-gpt-benchmark": "node scripts/benchmark-20-spark-gpt.mjs",
+    "test:spark-gpt-fix": "node scripts/test-spark-gpt-fix.mjs",
+    "test:gpt-hypothesis": "node scripts/test-gpt-hypothesis.mjs",
+    "test:spark-native-harmony": "node scripts/test-spark-native-harmony.mjs",
+    "inspect:rendered-prompt": "node scripts/inspect-rendered-prompt.mjs",
+    "inspect:chat-output": "node scripts/inspect-chat-output.mjs",
+    "inspect:raw-tokens": "node scripts/inspect-raw-tokens.mjs",
+    "inspect:harmony-code": "node scripts/inspect-harmony-code.mjs",
+    "test:benchmark-all": "node scripts/benchmark-all-models.mjs",
+    "test:benchmark-web": "node scripts/test-benchmark-web.mjs",
+    "clean:redundant": "node scripts/cleanup-redundant.mjs",
+    "test:change-audit": "node scripts/test-change-audit.mjs",
     "test:build": "node scripts/test-build-protocol.mjs",
     "test:workspace": "node scripts/test-workspace-guard.mjs",
+    "test:grok-edits": "node scripts/test-grok-edits.mjs",
+    "test:apply-inbox": "node scripts/test-apply-inbox.mjs",
+    "test:bridge-handshake": "node scripts/test-bridge-handshake.mjs",
+    "test:write-root": "node scripts/test-write-root.mjs",
     "test:memory": "node scripts/test-project-memory.mjs",
+    "test:mempalace": "node scripts/test-mempalace.mjs",
+    "test:mempalace-mcp": "node scripts/test-mempalace-mcp.mjs",
+    "test:mailersend": "node scripts/test-mailersend.mjs",
+    "email:send": "node scripts/send-mailersend.mjs",
     "test:sse": "node scripts/test-sse-parse.mjs",
+    "test:xai-image": "node scripts/test-xai-image.mjs",
+    "test:thread-io": "node scripts/test-thread-io.mjs",
+    "test:mcp-catalog": "node scripts/test-mcp-catalog.mjs",
+    "test:token-collapse": "node scripts/test-token-collapse.mjs",
     "test:featherless-qwen": "node scripts/test-featherless-qwen.mjs",
     "test:model-guide": "node scripts/test-model-settings-guide.mjs",
     "test:context": "node scripts/test-context-window.mjs",
+    "test:system-prompt": "node scripts/test-system-prompt-budget.mjs",
+    "test:race-abort": "node scripts/test-race-abort.mjs",
     "test:model-profile": "node scripts/test-model-agent-profile.mjs",
-    "test": "npm run smoke && npm run test:agent && npm run test:reasoning && npm run test:sse && npm run test:model-guide && npm run test:context && npm run test:model-profile && npm run test:build && npm run test:workspace && npm run test:memory",
+    "test:task-graph": "node scripts/test-task-graph.mjs",
+    "test": "npm run smoke && npm run test:agent && npm run test:reasoning && npm run test:change-audit && npm run test:sse && npm run test:token-collapse && npm run test:xai-image && npm run test:thread-io && npm run test:mcp-catalog && npm run test:model-guide && npm run test:context && npm run test:system-prompt && npm run test:race-abort && npm run test:model-profile && npm run test:task-graph && npm run test:build && npm run test:workspace && npm run test:grok-edits && npm run test:apply-inbox && npm run test:bridge-handshake && npm run test:write-root && npm run test:memory && npm run test:mempalace && npm run test:vdone && npm run test:multi-agent && npm run test:featherless-qwen && npm run test:prove-improve && npm run test:tool-args && npm run test:turn-workflow && npm run test:eval-fixtures && npm run test:capability-router && npm run test:url-safety && npm run test:license-harden && npm run test:spark-install && npm run test:spark-controller && npm run test:image-studio",
     "image:mock": "cd spark-image && ABLITERATED_IMAGE_MOCK=1 ABLITERATED_IMAGE_HOST=127.0.0.1 ABLITERATED_IMAGE_PORT=7860 python3 serve-openai-bridge.py",
+    "image:studio": "node image-studio/server.mjs",
+    "spark:push": "bash spark-install/push.sh",
+    "push": "node scripts/git-push.mjs",
+    "test:spark-install": "node scripts/test-spark-install.mjs",
+    "test:spark-controller": "node scripts/test-spark-controller.mjs",
+    "test:image-studio": "node scripts/test-image-studio.mjs",
     "featherless-oauth": "node featherless-oauth/server.mjs",
     "debug:featherless": "node scripts/debug-featherless.mjs",
     "bridge:install": "cp scripts/ai.abliteration.bridge.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.abliteration.bridge.plist || launchctl load -w ~/Library/LaunchAgents/ai.abliteration.bridge.plist",
@@ -32,11 +90,21 @@
     "dist:win:dir": "npm run build && electron-builder --win dir",
     "test:task": "node scripts/test-task-graph.mjs",
     "test:vdone": "node scripts/test-verify-done.mjs",
-    "test:task-graph": "node scripts/test-task-graph.mjs",
-    "test:multi-agent": "node scripts/test-multi-agent.mjs"
+    "test:multi-agent": "node scripts/test-multi-agent.mjs",
+    "test:prove-improve": "node scripts/test-prove-improve.mjs",
+    "test:tool-args": "node scripts/test-tool-args.mjs",
+    "test:turn-workflow": "node scripts/test-turn-workflow.mjs",
+    "test:eval-fixtures": "node scripts/eval-fixtures.mjs",
+    "test:capability-router": "node scripts/test-capability-router.mjs",
+    "test:billing": "node scripts/test-billing-api.mjs",
+    "test:auth": "node scripts/test-auth-api.mjs",
+    "test:url-safety": "node scripts/test-url-safety.mjs",
+    "test:license-harden": "node scripts/test-license-harden.mjs",
+    "spark:tunnel": "node scripts/spark-tunnel.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",
+    "electron-updater": "^6.8.9",
     "lucide-react": "^0.475.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -44,6 +112,7 @@
     "ws": "^8.18.1"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "@types/node": "^22.20.1",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
@@ -61,7 +130,8 @@
     "appId": "ai.abliteration.ide",
     "productName": "Abliterated",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "dist/**/*",
@@ -74,18 +144,63 @@
       "target": [
         "dir",
         "dmg"
-      ]
+      ],
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "win": {
       "target": [
         "nsis",
         "portable"
       ],
-      "publisherName": "Abliteration"
+      "publisherName": "Abliteration",
+      "icon": "build/icon-win.png"
     },
     "asarUnpack": [
       "daemon/**/*",
       "node_modules/ws/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "spark-install",
+        "to": "spark-install",
+        "filter": [
+          "**/*",
+          "!.venv/**",
+          "!**/__pycache__/**",
+          "!.env",
+          "!.env.local"
+        ]
+      },
+      {
+        "from": "spark-image",
+        "to": "spark-image",
+        "filter": [
+          "**/*",
+          "!.venv/**",
+          "!**/__pycache__/**",
+          "!logs/**",
+          "!.env",
+          "!.env.local",
+          "!.env.*.local"
+        ]
+      },
+      {
+        "from": "spark",
+        "to": "spark",
+        "filter": [
+          "**/*",
+          "!.venv/**",
+          "!**/__pycache__/**",
+          "!models/**",
+          "!.env",
+          "!.env.local",
+          "!.env.*.local"
+        ]
+      }
     ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "nsis": {
@@ -98,6 +213,29 @@
     },
     "portable": {
       "artifactName": "${productName}-${version}-${os}-${arch}-portable.${ext}"
+    },
+    "protocols": [
+      {
+        "name": "Abliterated License",
+        "schemes": [
+          "abliterated"
+        ]
+      }
+    ],
+    "afterSign": "scripts/notarize.cjs",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "flak3dd",
+        "repo": "abliterated"
+      }
+    ],
+    "linux": {
+      "target": [
+        "tar.gz"
+      ],
+      "category": "Development",
+      "icon": "build/icon-win.png"
     }
   }
 }

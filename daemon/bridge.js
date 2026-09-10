@@ -23,6 +23,8 @@ import {
 } from './pyManaged.js';
 import { searchWeb } from './webSearch.js';
 import { readProjectMemory } from './projectMemory.js';
+import { handleVllmCtl } from './vllmControl.js';
+import * as mempalace from './mempalace.js';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.ABLIT_PORT || 17322);
@@ -100,20 +102,152 @@ function isForbiddenGitMessage(message) {
   return false;
 }
 
+function stripWorkspacePrefix(relOrAbs) {
+  const raw = String(relOrAbs || '').trim();
+  if (!raw) return raw;
+  const norm = raw.replace(/\\/g, '/');
+  const rootNorm = String(ROOT || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!rootNorm) return raw;
+  if (norm === rootNorm) return '.';
+  if (norm.toLowerCase().startsWith(rootNorm.toLowerCase() + '/')) {
+    return norm.slice(rootNorm.length + 1) || '.';
+  }
+  return raw;
+}
+
 function resolveInside(relOrAbs) {
-  if (!isInsideRoot(relOrAbs)) throw new Error('path escapes workspace root');
-  const abs = path.resolve(ROOT, relOrAbs);
-  if (!isInsideRoot(abs)) throw new Error('path escapes workspace root');
+  const stripped = stripWorkspacePrefix(relOrAbs);
+  if (String(stripped).split(/[\\/]/).includes('..')) {
+    throw new Error(
+      'path escapes workspace root (".." not allowed). Use a path relative to the working directory.',
+    );
+  }
+  if (!isInsideRoot(stripped)) {
+    throw new Error(
+      `path escapes workspace root: ${String(relOrAbs)}. Stay under ${ROOT} with a relative path.`,
+    );
+  }
+  const abs = path.resolve(ROOT, stripped);
+  if (!isInsideRoot(abs)) {
+    throw new Error(
+      `path escapes workspace root: ${String(relOrAbs)}. Stay under ${ROOT} with a relative path.`,
+    );
+  }
   return abs;
 }
 
 async function resolveInsideAsync(relOrAbs) {
-  const abs = path.resolve(ROOT, relOrAbs);
-  if (!(await isInsideRootAsync(ROOT, abs))) throw new Error('path escapes workspace root');
+  const stripped = stripWorkspacePrefix(relOrAbs);
+  if (String(stripped).split(/[\\/]/).includes('..')) {
+    throw new Error(
+      'path escapes workspace root (".." not allowed). Use a path relative to the working directory.',
+    );
+  }
+  const abs = path.resolve(ROOT, stripped);
+  if (!(await isInsideRootAsync(ROOT, abs))) {
+    throw new Error(
+      `path escapes workspace root: ${String(relOrAbs)}. Stay under ${ROOT} with a relative path.`,
+    );
+  }
   return abs;
 }
 
-function handleExec(ws, msg) {
+/**
+ * Resolve a file under an EXPLICIT base root (per-write pinning), independent of
+ * the mutable global ROOT. Strips a leading base prefix, forbids "..", and keeps
+ * the result inside base. Used when a client sends its own workspace root so a
+ * write cannot be misrouted by concurrent set_root drift.
+ */
+function resolveInsideRoot(relOrAbs, base) {
+  const root = String(base || ROOT);
+  const raw = String(relOrAbs || '').trim();
+  const norm = raw.replace(/\\/g, '/');
+  const rootNorm = root.replace(/\\/g, '/').replace(/\/+$/, '');
+  let stripped = raw;
+  if (rootNorm) {
+    if (norm.toLowerCase() === rootNorm.toLowerCase()) {
+      stripped = '.';
+    } else if (norm.toLowerCase().startsWith(rootNorm.toLowerCase() + '/')) {
+      // Calculate correct slice length by finding the actual prefix length, not assuming case match
+      const rootWithSlash = rootNorm + '/';
+      const matchLen = rootWithSlash.length;
+      stripped = norm.slice(matchLen) || '.';
+    }
+  }
+  if (String(stripped).split(/[\\/]/).includes('..')) {
+    throw new Error(
+      'path escapes workspace root (".." not allowed). Use a path relative to the working directory.',
+    );
+  }
+  const abs = path.resolve(root, stripped);
+  if (!isInsideRootPath(root, abs)) {
+    throw new Error(
+      `path escapes workspace root: ${String(relOrAbs)}. Stay under ${root} with a relative path.`,
+    );
+  }
+  return abs;
+}
+
+/**
+ * Pick and validate the base root for a write. When the client sends msg.root
+ * (the thread's workspace), verify it exists, is a directory, and is not the
+ * install dir — then resolve against it. Falls back to the global ROOT.
+ */
+async function resolveWriteRoot(msg) {
+  const raw = String(msg.root || '').trim();
+  if (!raw) return ROOT;
+  const resolved = path.resolve(raw);
+  assertNotAppInstall(resolved, 'write');
+  let st = null;
+  try {
+    st = await stat(resolved);
+  } catch {
+    st = null;
+  }
+  if (!st) {
+    // Root does not exist yet (user named a new project folder): create it — but
+    // only after realpath-checking the nearest EXISTING ancestor, so a symlinked
+    // parent cannot materialize a fresh dir inside the install folder.
+    let anc = path.dirname(resolved);
+    for (;;) {
+      try {
+        await stat(anc);
+        break;
+      } catch {
+        const up = path.dirname(anc);
+        if (up === anc) throw new Error('workspace root parent not found: ' + raw);
+        anc = up;
+      }
+    }
+    let ancReal = anc;
+    try {
+      ancReal = await realpath(anc);
+    } catch {
+      ancReal = anc;
+    }
+    assertNotAppInstall(ancReal, 'write');
+    // Rebuild the target under the realpath'd ancestor (defeats symlink games).
+    const rel = path.relative(anc, resolved);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new Error('workspace root escapes its parent: ' + raw);
+    }
+    const target = path.resolve(ancReal, rel);
+    assertNotAppInstall(target, 'write');
+    await mkdir(target, { recursive: true });
+    return target;
+  }
+  if (!st.isDirectory()) throw new Error('workspace root is not a directory: ' + raw);
+  let real = resolved;
+  try {
+    real = await realpath(resolved);
+  } catch {
+    real = resolved;
+  }
+  assertNotAppInstall(real, 'write');
+  return real;
+}
+
+async function handleExec(ws, msg) {
   const runId = msg.runId;
   const command = String(msg.command || '');
   if (!command.trim()) {
@@ -126,19 +260,51 @@ function handleExec(ws, msg) {
     send(ws, { runId, type: 'exit', code: 126 });
     return;
   }
+  // Run in the thread's pinned workspace (auto-created + install-guarded by
+  // resolveWriteRoot) so shell/git/python and the created .venv all land where
+  // files are written. Fall back to the global ROOT when nothing is pinned.
+  const pinsRoot = typeof msg.root === 'string' && msg.root.trim() !== '';
+  let execCwd = ROOT;
   try {
-    assertWorkspaceNotInstall('exec');
+    execCwd = await resolveWriteRoot(msg);
   } catch (err) {
-    send(ws, { runId, type: 'stderr', data: `${err instanceof Error ? err.message : String(err)}\n` });
-    send(ws, { runId, type: 'exit', code: 126 });
-    return;
+    if (pinsRoot) {
+      send(ws, { runId, type: 'stderr', data: `${err instanceof Error ? err.message : String(err)}\n` });
+      send(ws, { runId, type: 'exit', code: 126 });
+      return;
+    }
+    execCwd = ROOT;
+  }
+  if (!pinsRoot) {
+    try {
+      assertWorkspaceNotInstall('exec');
+    } catch (err) {
+      send(ws, { runId, type: 'stderr', data: `${err instanceof Error ? err.message : String(err)}\n` });
+      send(ws, { runId, type: 'exit', code: 126 });
+      return;
+    }
   }
   const pep668 = shouldUseWorkspaceVenv(command);
   const toRun = pep668 ? wrapWithWorkspaceVenv(command) : command;
+  // Activate an EXISTING workspace .venv for every command so pip-installed console
+  // scripts (pytest/uvicorn/black/jupyter) resolve. Only PATH-prefix — never create.
+  const env = { ...process.env, ABLIT_ROOT: execCwd };
+  const venvBin = path.join(execCwd, process.platform === 'win32' ? '.venv/Scripts' : '.venv/bin');
+  let hasVenv = false;
+  try {
+    hasVenv = (await stat(venvBin)).isDirectory();
+  } catch {
+    hasVenv = false;
+  }
+  if (hasVenv) {
+    const sep = process.platform === 'win32' ? ';' : ':';
+    env.PATH = `${venvBin}${sep}${env.PATH || ''}`;
+    env.VIRTUAL_ENV = path.join(execCwd, '.venv');
+  }
   const child = spawn(toRun, {
-    cwd: ROOT,
+    cwd: execCwd,
     shell: true,
-    env: { ...process.env, ABLIT_ROOT: ROOT },
+    env,
     detached: process.platform !== 'win32',
   });
   let errBuf = '';
@@ -283,8 +449,9 @@ async function handlePatch(ws, msg) {
   const patch = String(msg.patch || '');
   try {
     if (!file) throw new Error('missing file');
-    assertWorkspaceNotInstall('patch');
-    const abs = resolveInside(file);
+    const writeRoot = await resolveWriteRoot(msg);
+    if (!msg.root) assertWorkspaceNotInstall('patch');
+    const abs = resolveInsideRoot(file, writeRoot);
     assertNotAppInstall(abs, 'patch');
     await mkdir(path.dirname(abs), { recursive: true });
     let original = '';
@@ -320,8 +487,9 @@ async function handleWrite(ws, msg) {
   const content = String(msg.content ?? '');
   try {
     if (!file) throw new Error('missing file');
-    assertWorkspaceNotInstall('write');
-    const abs = resolveInside(file);
+    const writeRoot = await resolveWriteRoot(msg);
+    if (!msg.root) assertWorkspaceNotInstall('write');
+    const abs = resolveInsideRoot(file, writeRoot);
     assertNotAppInstall(abs, 'write');
     await mkdir(path.dirname(abs), { recursive: true });
     const prev = fileMeta.get(abs);
@@ -382,6 +550,7 @@ async function handleSetRoot(ws, msg) {
     ROOT = real;
     send(ws, { runId, status: 'ok', root: ROOT, appRoot: APP_ROOT });
   } catch (err) {
+    console.warn(`[bridge handleSetRoot] ERROR for path="${msg.path}":`, err instanceof Error ? err.message : err);
     send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
   }
 }
@@ -392,20 +561,21 @@ async function handleCreateDir(ws, msg) {
   try {
     const raw = String(msg.path || '').trim();
     if (!raw) throw new Error('missing path');
-    const resolved = path.resolve(raw);
-    assertNotAppInstall(resolved, 'workspace');
+    assertWorkspaceNotInstall('create_dir');
+    const abs = resolveInside(raw);
+    assertNotAppInstall(abs, 'create_dir');
     let st;
     try {
-      st = await stat(resolved);
+      st = await stat(abs);
     } catch {
       st = null;
     }
     if (st) {
       if (!st.isDirectory()) throw new Error('path exists and is a file');
     } else {
-      await mkdir(resolved, { recursive: true });
+      await mkdir(abs, { recursive: true });
     }
-    send(ws, { runId, status: 'ok', path: resolved });
+    send(ws, { runId, status: 'ok', path: abs });
   } catch (err) {
     send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
   }
@@ -485,9 +655,19 @@ function isBinaryBuf(buf) {
 async function handleGrep(ws, msg) {
   const runId = msg.runId;
   try {
-    const pattern = String(msg.pattern ?? '');
+    let pattern = String(msg.pattern ?? '').trim();
     if (!pattern) throw new Error('missing pattern');
-    const rel = String(msg.path || '.').trim() || '.';
+    let rel = String(msg.path || '.').trim() || '.';
+    const flagRe = /^-[a-zA-Z]+$/;
+    if (flagRe.test(pattern) && rel && rel !== '.' && !flagRe.test(rel)) {
+      // Swapped argv: pattern was a flag, path was the query.
+      pattern = rel;
+      rel = '.';
+    } else if (flagRe.test(pattern)) {
+      throw new Error(
+        `grep pattern looks like a flag (${pattern}). Pass the search string as pattern and an optional relative path.`,
+      );
+    }
     const abs = resolveInside(rel);
     const globPat = msg.glob != null && String(msg.glob).trim() ? String(msg.glob).trim() : '';
     let cap = Number(msg.maxMatches);
@@ -871,6 +1051,99 @@ async function handleProjectMemory(ws, msg) {
   }
 }
 
+function mempalaceOpts(msg) {
+  return {
+    palacePath: String(msg.palacePath || msg.palace || '').trim(),
+    wing: String(msg.wing || '').trim() || mempalace.wingFromRoot(ROOT),
+    room: String(msg.room || '').trim(),
+    results: msg.results ?? msg.n ?? msg.limit,
+  };
+}
+
+function sendMempalaceError(ws, runId, err) {
+  send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
+}
+
+async function handleMempalaceWhich(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const which = await mempalace.mempalaceWhich();
+    send(ws, { runId, status: 'ok', ...which, text: which.ok ? which.display : which.error });
+  } catch (err) {
+    sendMempalaceError(ws, runId, err);
+  }
+}
+
+async function handleMempalaceStatus(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const text = await mempalace.mempalaceStatus(mempalaceOpts(msg));
+    send(ws, { runId, status: 'ok', text, content: text });
+  } catch (err) {
+    sendMempalaceError(ws, runId, err);
+  }
+}
+
+async function handleMempalaceWake(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const raw = await mempalace.mempalaceWake(mempalaceOpts(msg));
+    const text = mempalace.formatWakePrompt(raw);
+    send(ws, { runId, status: 'ok', text, content: text || raw });
+  } catch (err) {
+    sendMempalaceError(ws, runId, err);
+  }
+}
+
+async function handleMempalaceSearch(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const query = String(msg.query || msg.q || msg.search || '').trim();
+    const text = await mempalace.mempalaceSearch(query, mempalaceOpts(msg));
+    send(ws, { runId, status: 'ok', text, content: text });
+  } catch (err) {
+    sendMempalaceError(ws, runId, err);
+  }
+}
+
+async function handleMempalaceSave(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const content = String(msg.content || msg.text || msg.body || '').trim();
+    const text = await mempalace.mempalaceSave(content, mempalaceOpts(msg));
+    send(ws, { runId, status: 'ok', text, content: text });
+  } catch (err) {
+    sendMempalaceError(ws, runId, err);
+  }
+}
+
+async function handleMempalaceInit(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const dir = String(msg.dir || msg.path || ROOT || '').trim();
+    const text = await mempalace.mempalaceInit(dir, mempalaceOpts(msg));
+    send(ws, { runId, status: 'ok', text, content: text });
+  } catch (err) {
+    sendMempalaceError(ws, runId, err);
+  }
+}
+
+async function handleMempalaceInstall(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const result = await mempalace.mempalaceInstall();
+    send(ws, {
+      runId,
+      status: 'ok',
+      text: result.output || 'installed',
+      content: result.output || 'installed',
+      which: result.which,
+    });
+  } catch (err) {
+    sendMempalaceError(ws, runId, err);
+  }
+}
+
 async function handleListSkills(ws, msg) {
   const runId = msg.runId;
   try {
@@ -946,7 +1219,13 @@ async function handleMcpCallTool(ws, msg) {
 }
 
 
-const server = http.createServer((_req, res) => {
+const server = http.createServer((req, res) => {
+  if (req.url === '/restart' || req.url === '/restart/') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('restarting bridge...\n');
+    setTimeout(() => void shutdownBridge(), 100);
+    return;
+  }
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('abliterated-bridge localhost only\n');
 });
@@ -966,8 +1245,25 @@ const wss = new WebSocketServer({
       console.warn(`[bridge] rejected non-localhost WS from ${addr}`);
       return false;
     }
+    // If Origin is present, only allow loopback / file (blocks remote-page socket abuse).
+    const origin = info.origin || info.req.headers?.origin;
+    if (origin && origin !== 'null') {
+      try {
+        const u = new URL(origin);
+        const h = (u.hostname || '').toLowerCase();
+        const okHost = h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]';
+        if (u.protocol !== 'file:' && !okHost) {
+          console.warn(`[bridge] rejected WS Origin ${origin}`);
+          return false;
+        }
+      } catch {
+        console.warn(`[bridge] rejected malformed WS Origin ${origin}`);
+        return false;
+      }
+    }
     return true;
   },
+
 });
 wss.on('connection', (ws, req) => {
   const addr = req?.socket?.remoteAddress;
@@ -1001,17 +1297,21 @@ wss.on('connection', (ws, req) => {
       void handleSetRoot(ws, msg);
       return;
     }
-    if (type === 'create_dir') {
-      void handleCreateDir(ws, msg);
-      return;
-    }
     const needsWorkspace = type === 'ls' || type === 'read_file' || type === 'grep' || type === 'glob'
       || type === 'file_outline' || type === 'semantic_search' || type === 'git_status' || type === 'git_commit'
       || type === 'git_diff' || type === 'create_pr' || type === 'checkpoint_save' || type === 'checkpoint_restore'
       || type === 'checkpoint_list' || type === 'mcp_connect' || type === 'exec' || type === 'apply_patch'
-      || type === 'project_memory'
-      || type === 'write_file' || type === 'delete_file';
-    if (needsWorkspace) {
+      || type === 'project_memory' || type === 'mempalace_init'
+      || type === 'write_file' || type === 'delete_file' || type === 'create_dir';
+    // Writes/patches/exec that pin an explicit root are guarded per-operation by
+    // resolveWriteRoot (install-dir + path-escape), so a drifted or app-root GLOBAL
+    // ROOT must not block a correctly-pinned operation. Only enforce the global-root
+    // install guard when nothing is pinned.
+    const pinsRoot =
+      (type === 'write_file' || type === 'apply_patch' || type === 'exec') &&
+      typeof msg.root === 'string' &&
+      msg.root.trim() !== '';
+    if (needsWorkspace && !pinsRoot) {
       try {
         assertWorkspaceNotInstall(type);
       } catch (err) {
@@ -1081,6 +1381,34 @@ wss.on('connection', (ws, req) => {
       void handleProjectMemory(ws, msg);
       return;
     }
+    if (type === 'mempalace_which') {
+      void handleMempalaceWhich(ws, msg);
+      return;
+    }
+    if (type === 'mempalace_status') {
+      void handleMempalaceStatus(ws, msg);
+      return;
+    }
+    if (type === 'mempalace_wake') {
+      void handleMempalaceWake(ws, msg);
+      return;
+    }
+    if (type === 'mempalace_search') {
+      void handleMempalaceSearch(ws, msg);
+      return;
+    }
+    if (type === 'mempalace_save') {
+      void handleMempalaceSave(ws, msg);
+      return;
+    }
+    if (type === 'mempalace_init') {
+      void handleMempalaceInit(ws, msg);
+      return;
+    }
+    if (type === 'mempalace_install') {
+      void handleMempalaceInstall(ws, msg);
+      return;
+    }
     if (type === 'list_skills') {
       void handleListSkills(ws, msg);
       return;
@@ -1109,9 +1437,25 @@ wss.on('connection', (ws, req) => {
       void handleMcpCallTool(ws, msg);
       return;
     }
+    if (type === 'vllm_ctl') {
+      void (async () => {
+        try {
+          const result = await handleVllmCtl(String(msg.op || 'status'), msg);
+          send(ws, { runId: msg.runId, status: 'ok', result });
+        } catch (err) {
+          send(ws, { runId: msg.runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
+        }
+      })();
+      return;
+    }
+    if (type === 'bridge_restart') {
+      send(ws, { type: 'bridge_restart_ack', ok: true });
+      setTimeout(() => void shutdownBridge(), 100);
+      return;
+    }
 
     if (type === 'exec') {
-      handleExec(ws, msg);
+      void handleExec(ws, msg);
       return;
     }
     if (type === 'apply_patch') {
@@ -1120,6 +1464,10 @@ wss.on('connection', (ws, req) => {
     }
     if (type === 'write_file') {
       void handleWrite(ws, msg);
+      return;
+    }
+    if (type === 'create_dir') {
+      void handleCreateDir(ws, msg);
       return;
     }
     if (type === 'delete_file') {

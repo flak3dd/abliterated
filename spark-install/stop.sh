@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Stop Abliterated Spark image bridge (and optional vLLM) processes started by start.sh.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
+IMAGE_DIR="${ABLITERATED_SPARK_IMAGE:-$ROOT/spark-image}"
+LOG="$IMAGE_DIR/logs"
+
+kill_pidfile() {
+  local f="$1"
+  if [[ -f "$f" ]]; then
+    local pid
+    pid="$(cat "$f" 2>/dev/null || true)"
+    if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      sleep 0.4
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+    rm -f "$f"
+  fi
+}
+
+kill_pidfile "$LOG/bridge.pid"
+kill_pidfile "$LOG/vllm.pid"
+pkill -f "serve-openai-bridge.py" 2>/dev/null || true
+TEXT_DIR="${ABLITERATED_SPARK_TEXT:-$ROOT/spark}"
+if [[ -f "$TEXT_DIR/docker-compose.qwen-abliterated.yml" ]] && command -v docker >/dev/null 2>&1; then
+  (cd "$TEXT_DIR" && docker compose -f docker-compose.qwen-abliterated.yml down) >/dev/null 2>&1 || true
+fi
+docker rm -f qwen-abliterated >/dev/null 2>&1 || true
+echo "Spark image stack stopped."
