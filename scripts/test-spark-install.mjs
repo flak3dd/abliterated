@@ -205,7 +205,8 @@ execFileSync('python3', ['test_uncensored_flux.py'], { cwd: imageDir, stdio: 'in
 const outDir = path.join(root, 'dist-test-spark-install');
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
-execFileSync('node_modules/.bin/tsc', ['src/lib/sparkInstall.ts', 'src/lib/idPipeline.ts', 'src/lib/imageAspect.ts', 'src/types/index.ts', '--outDir', outDir, '--module', 'esnext', '--target', 'es2022', '--moduleResolution', 'bundler', '--strict', '--lib', 'ES2022,DOM'], { cwd: root, stdio: 'inherit' });
+execFileSync('node_modules/.bin/tsc', ['src/lib/sparkInstall.ts', 'src/lib/idPipeline.ts', 'src/lib/imageAspect.ts', 'src/types/index.ts', '--outDir', outDir, '--module', 'esnext', '--target', 'es2022', '--moduleResolution', 'bundler', '--strict',
+    '--skipLibCheck', '--lib', 'ES2022,DOM'], { cwd: root, stdio: 'inherit' });
 const mod = await import(pathToFileURL(path.join(outDir, 'lib', 'sparkInstall.js')).href);
 assert.equal(mod.UNCENSORED_IMAGE_MODEL, 'krea2-raw-fp8');
 assert.equal(mod.resolveSparkImageModel('quality'), 'krea2-raw-fp8');

@@ -492,20 +492,32 @@ export function setMessages(messages: Message[]): void {
 }
 
 export function saveMessage(message: Message): Message[] {
+  let toSave = message;
+  if (toSave.role === 'tool' && toSave.toolCall && 'result' in toSave.toolCall) {
+    const { result: _, ...rest } = toSave.toolCall;
+    toSave = { ...toSave, toolCall: rest };
+  }
   const all = getMessages();
-  const idx = all.findIndex((m) => m.id === message.id);
-  if (idx >= 0) all[idx] = message;
-  else all.push(message);
+  const idx = all.findIndex((m) => m.id === toSave.id);
+  if (idx >= 0) all[idx] = toSave;
+  else all.push(toSave);
   setMessages(all);
-  return all.filter((m) => m.threadId === message.threadId);
+  return all.filter((m) => m.threadId === toSave.threadId);
 }
 
 /** Replace one thread's rows in ablit_messages (used by Chat retry). */
 export function replaceThreadMessages(threadId: string, msgs: Message[]): Message[] {
+  const sanitized = msgs.map((m) => {
+    if (m.role === 'tool' && m.toolCall && 'result' in m.toolCall) {
+      const { result: _, ...rest } = m.toolCall;
+      return { ...m, toolCall: rest, threadId };
+    }
+    return { ...m, threadId };
+  });
   const others = getMessages().filter((m) => m.threadId !== threadId);
-  const next = [...others, ...msgs.map((m) => ({ ...m, threadId }))];
+  const next = [...others, ...sanitized];
   setMessages(next);
-  return msgs;
+  return sanitized;
 }
 
 export function deleteThreadMessages(threadId: string): void {

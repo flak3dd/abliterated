@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { ArrowLeft, ArrowDown, RotateCcw, Send, Square, PanelRight, Play, Zap, ChevronDown } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { DEEPEN_COMPLETENESS_CHAT_LABEL, DEEPEN_COMPLETENESS_TOOLTIP } from '../lib/deepenComplete';
@@ -403,6 +403,27 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           ? 'Thought on — Goal/Inspect/Steps in reasoning · Enter send'
           : `Message · @src/foo.ts pin · ${modKey} commands · Enter send`;
 
+  const completionFooterEnabled = useMemo(
+    () => settings.completionFooterEnabled !== false,
+    [settings.completionFooterEnabled],
+  );
+
+  const handleApprovePlan = useCallback(() => {
+    const host = messagesRef.current.find((x) => x.planApproved === 'awaiting');
+    if (host) persist({ ...host, planApproved: 'approved' });
+    onApprovePlan?.();
+    if (!onApprovePlan) onTogglePlanMode?.();
+  }, [messagesRef, persist, onApprovePlan, onTogglePlanMode]);
+
+  const handleDeclinePlan = useCallback(() => {
+    onTogglePlanMode?.();
+  }, [onTogglePlanMode]);
+
+  const handleOpenFile = useCallback((path: string) => {
+    fillInput(`@${path} `);
+    if (!filePanelOpen) onToggleFilePanel?.();
+  }, [fillInput, filePanelOpen, onToggleFilePanel]);
+
   return (
     <div className="flex h-full flex-col bg-background">
       <header className="flex items-center gap-2 border-b border-border bg-background/80 px-4 py-3.5 backdrop-blur">
@@ -510,20 +531,12 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                   onRestoreCheckpointById={restoreCheckpointById}
                   onWriteFile={handleWriteFile}
                   onShellExecuted={handleShellExecuted}
-                  completionFooterEnabled={settings.completionFooterEnabled !== false}
+                  completionFooterEnabled={completionFooterEnabled}
                   onContinuePrompt={handleContinuePrompt}
                   skipHighlight={m.status === 'streaming'}
-                  onApprovePlan={() => {
-                    const host = messagesRef.current.find((x) => x.planApproved === 'awaiting');
-                    if (host) persist({ ...host, planApproved: 'approved' });
-                    onApprovePlan?.();
-                    if (!onApprovePlan) onTogglePlanMode?.();
-                  }}
-                  onDeclinePlan={() => onTogglePlanMode?.()}
-                  onOpenFile={(path) => {
-                    fillInput(`@${path} `);
-                    if (!filePanelOpen) onToggleFilePanel?.();
-                  }}
+                  onApprovePlan={handleApprovePlan}
+                  onDeclinePlan={handleDeclinePlan}
+                  onOpenFile={handleOpenFile}
                 />
               ))}
             </>

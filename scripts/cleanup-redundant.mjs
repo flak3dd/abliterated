@@ -37,6 +37,7 @@ const redundantFiles = [
   'scripts/sdk_stdio_out.txt',
   'scripts/test-probe-p3.mjs',
   'scripts/test-probe-p3-exact.mjs',
+  'scripts/add-skip-lib-check.mjs',
 ];
 
 console.log('Cleaning up redundant files...');

@@ -1279,7 +1279,7 @@ export function useAgentLoop({
     const s = settingsRef.current;
     if (s.mempalaceEnabled === false || s.mempalaceAutoSave === false) return;
     if (!bridge.connected) return;
-    const rows = getMessages(thread.id);
+    const rows = messagesRef.current;
     const lastUser = [...rows].reverse().find((m) => m.role === 'user' && !isMidRunMessageContent(m.content));
     const lastAsst = [...rows].reverse().find((m) => m.role === 'assistant');
     const userText = lastUser?.content || '';
@@ -1409,7 +1409,7 @@ export function useAgentLoop({
         status: 'complete',
       };
       persist(nudge);
-      current = getMessages(thread.id);
+      current = messagesRef.current;
       return true;
     };
 
@@ -1663,6 +1663,16 @@ export function useAgentLoop({
             }
             const content = assistant.content || '';
             const detectContent = stripThinkForDetect(content);
+            const answerComplete = isAnswerCompleteMarker(content);
+            const junkTurn = shouldSkipSelfDeepen(detectContent, { status: assistant.status });
+            const isBuildOutput = looksLikeBuildOutput(detectContent, toolsUsed);
+            const parsedTodos = parseTodoItems(detectContent);
+            const isPlaceholderOutput = looksLikePlaceholderOutput(detectContent);
+            const toolEvidence = current
+              .filter((m) => m.role === 'tool')
+              .map((m) => m.content || '')
+              .join('\n');
+            const verifyText = `${detectContent}\n${toolEvidence}`;
             const retryNarration =
               looksLikeToolRetryNarration(detectContent) ||
               looksLikeToolRetryNarration(assistant.reasoning || '');
@@ -1719,7 +1729,7 @@ export function useAgentLoop({
                 break;
               }
 
-              if (isAnswerCompleteMarker(content)) {
+              if (answerComplete) {
                 assistant.content = stripAnswerCompleteMarker(content);
                 flushStreamPersist({ ...assistant });
                 // Operator mid-run overrides ANSWER_COMPLETE — integrate and continue.
@@ -1751,11 +1761,11 @@ export function useAgentLoop({
               }
               if (
                 grokBuildProcess &&
-                !shouldSkipSelfDeepen(detectContent, { status: assistant.status }) &&
-                !looksLikeBuildOutput(detectContent, toolsUsed) &&
-                !isAnswerCompleteMarker(content)
+                !junkTurn &&
+                !isBuildOutput &&
+                !answerComplete
               ) {
-                const todos = parseTodoItems(detectContent);
+                const todos = parsedTodos;
                 if (todos.length && !buildImplementNudgeUsed) {
                   buildImplementNudgeUsed = true;
                   setPhase(
@@ -1794,18 +1804,13 @@ export function useAgentLoop({
                 }
               }
 
-              const toolEvidence = current
-                .filter((m) => m.role === 'tool')
-                .map((m) => m.content || '')
-                .join('\n');
-              const verifyText = `${detectContent}\n${toolEvidence}`;
               if (
                 grokBuildProcess &&
                 !buildVerifyNudgeUsed &&
-                !shouldSkipSelfDeepen(detectContent, { status: assistant.status }) &&
-                looksLikeBuildOutput(detectContent, toolsUsed) &&
+                !junkTurn &&
+                isBuildOutput &&
                 !looksLikeVerifyEvidence(verifyText, toolsUsed) &&
-                !isAnswerCompleteMarker(content)
+                !answerComplete
               ) {
                 buildVerifyNudgeUsed = true;
                 setPhase(
@@ -1834,8 +1839,8 @@ export function useAgentLoop({
                 !isAskMode &&
                 !reasoningExecNudgeUsed &&
                 settingsRef.current.selfDeepenEnabled !== false &&
-                !isAnswerCompleteMarker(content) &&
-                !shouldSkipSelfDeepen(detectContent, { status: assistant.status }) &&
+                !answerComplete &&
+                !junkTurn &&
                 grokAcc.length === 0 &&
                 !hasBuildFileWrites(toolsUsed) &&
                 !!lastUser?.content &&
@@ -1867,24 +1872,22 @@ export function useAgentLoop({
               const missingFiles =
                 !!grokBuildProcess &&
                 !filesLanded &&
-                !looksLikeBuildOutput(detectContent, toolsUsed);
+                !isBuildOutput;
               // Already shipped a valid Done/Continue footer — treat as complete; skip an extra deepen turn.
               // A footer without landed files on a build is still a fragment.
               const footerDone =
                 liveDeepen.completionFooterEnabled !== false &&
                 hasValidCompletionFooter(content) &&
                 (filesLanded || !grokBuildProcess);
-              // Junk / error / truncated / network-error turns never deepen.
-              const junkTurn = shouldSkipSelfDeepen(detectContent, { status: assistant.status });
               const openTodos =
-                hasOpenTodos(todosRef.current) || parseTodoItems(detectContent).some((t) => !t.done);
+                hasOpenTodos(todosRef.current) || parsedTodos.some((t) => !t.done);
 
               // EARLY COMPLETION FAST-PATH: If answer is clearly complete, skip all deepen checks
               const isClearlyComplete =
-                isAnswerCompleteMarker(content) &&
+                answerComplete &&
                 toolsUsed.length > 0 &&
-                !looksLikePlaceholderOutput(content) &&
-                looksLikeVerifyEvidence(`${detectContent}\n${current.filter(m => m.role === 'tool').map(m => m.content || '').join('\n')}`, toolsUsed) &&
+                !isPlaceholderOutput &&
+                looksLikeVerifyEvidence(verifyText, toolsUsed) &&
                 filesLanded;
 
               if (isClearlyComplete) {
@@ -1897,9 +1900,9 @@ export function useAgentLoop({
               if (
                 grokBuildProcess &&
                 !placeholderNudgeUsed &&
-                looksLikePlaceholderOutput(detectContent) &&
-                !shouldSkipSelfDeepen(detectContent, { status: assistant.status }) &&
-                !isAnswerCompleteMarker(content)
+                isPlaceholderOutput &&
+                !junkTurn &&
+                !answerComplete
               ) {
                 placeholderNudgeUsed = true;
                 setPhase(
@@ -1924,7 +1927,7 @@ export function useAgentLoop({
                   deepenOn,
                   junkTurn,
                   footerDone,
-                  answerComplete: isAnswerCompleteMarker(content),
+                  answerComplete,
                   openTodos,
                   filesLanded,
                   missingFiles,
@@ -1974,7 +1977,7 @@ export function useAgentLoop({
                   content,
                   toolsUsed,
                 }) &&
-                !isAnswerCompleteMarker(content)
+                !answerComplete
               ) {
                 proveImproveNudgeUsed = true;
                 setPhase(
@@ -1997,7 +2000,7 @@ export function useAgentLoop({
                 `${extractLockedGoal(current)}\n${lastOperatorPrompt(current) || lastUser?.content || ''}`,
                 capabilityCache,
               );
-              if (!planMode && !mcpFollowNudgeUsed && needsMcpFollowNudge(capStop, toolsUsed) && !isAnswerCompleteMarker(content)) {
+              if (!planMode && !mcpFollowNudgeUsed && needsMcpFollowNudge(capStop, toolsUsed) && !answerComplete) {
                 mcpFollowNudgeUsed = true;
                 setPhase(
                   'self_deepen',
@@ -2019,7 +2022,7 @@ export function useAgentLoop({
                 !planMode &&
                 !skillReadNudgeUsed &&
                 needsSkillReadNudge(capStop, toolsUsed) &&
-                !isAnswerCompleteMarker(content)
+                !answerComplete
               ) {
                 skillReadNudgeUsed = true;
                 setPhase(
@@ -2043,7 +2046,7 @@ export function useAgentLoop({
                 !skillCreateNudgeUsed &&
                 !skillReadNudgeUsed &&
                 needsSkillCreateNudge(capStop, toolsUsed) &&
-                !isAnswerCompleteMarker(content)
+                !answerComplete
               ) {
                 skillCreateNudgeUsed = true;
                 setPhase(
@@ -2066,8 +2069,8 @@ export function useAgentLoop({
                 !planMode &&
                 !changeVerifyNudgeUsed &&
                 settingsRef.current.completionFooterEnabled !== false &&
-                !shouldSkipSelfDeepen(detectContent, { status: assistant.status }) &&
-                !isAnswerCompleteMarker(content)
+                !junkTurn &&
+                !answerComplete
               ) {
                 const audit = auditTurnChanges({
                   content: detectContent,
@@ -2136,7 +2139,7 @@ export function useAgentLoop({
 
           setPhase('tool_plan', { toolName: undefined }, turn);
           let executedAny = false;
-          let latest = getMessages(thread.id);
+          let latest = messagesRef.current;
 
           // TOOL DAG SCHEDULING: Reads → Writes → Gated/Shell
           // All reads run first in parallel, never blocked by writes
@@ -2308,12 +2311,12 @@ export function useAgentLoop({
           });
         }
       }
-      const lastAsst = [...getMessages(thread.id)].reverse().find((m) => m.role === 'assistant');
+      const lastAsst = [...messagesRef.current].reverse().find((m) => m.role === 'assistant');
       if (lastAsst) {
         paintWorkflow(lastAsst);
         persist({ ...lastAsst });
       }
-      const toolEvidenceEnd = getMessages(thread.id)
+      const toolEvidenceEnd = messagesRef.current
         .filter((m) => m.role === 'tool')
         .map((m) => m.content || '')
         .join('\n');
