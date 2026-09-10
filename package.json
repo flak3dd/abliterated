@@ -75,6 +75,7 @@
     "image:mock": "cd spark-image && ABLITERATED_IMAGE_MOCK=1 ABLITERATED_IMAGE_HOST=127.0.0.1 ABLITERATED_IMAGE_PORT=7860 python3 serve-openai-bridge.py",
     "image:studio": "node image-studio/server.mjs",
     "spark:push": "bash spark-install/push.sh",
+    "push": "node scripts/git-push.mjs",
     "test:spark-install": "node scripts/test-spark-install.mjs",
     "test:spark-controller": "node scripts/test-spark-controller.mjs",
     "test:image-studio": "node scripts/test-image-studio.mjs",
