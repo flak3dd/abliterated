@@ -51,7 +51,7 @@ export function looksLikePythonCommand(command) {
     if (!t) continue;
     // Strip leading env assignments: FOO=1 BAR=2 python …
     t = t.replace(/^(?:[A-Za-z_][\w]*=(?:'[^']*'|"[^"]*"|\S+)\s+)+/, '');
-    if (PYTHON_TOOL_RE.test(t)) return true;
+    if (PYTHON_TOOL_RE.test(t) || PYTHON_CONSOLE_RE.test(t)) return true;
   }
   return false;
 }
