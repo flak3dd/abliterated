@@ -125,7 +125,9 @@ export function workspaceGate(root: string, appRoot = ''): WorkspaceGate {
 
 /**
  * Directory the localhost bridge will actually write into.
- * Prefer the connected daemon root over a stale UI path; never the install folder.
+ * Prefer the thread's explicitly selected workspace over the daemon's mutable
+ * global root (which drifts across threads/windows); the daemon root is only a
+ * fallback when the thread has no valid workspace. Never the install folder.
  */
 export function connectedBridgeWriteRoot(opts: {
   workspaceRoot?: string;
@@ -133,7 +135,7 @@ export function connectedBridgeWriteRoot(opts: {
   bridgeRoot?: string;
 }): string {
   const app = opts.appRoot || '';
-  for (const cand of [opts.bridgeRoot, opts.workspaceRoot]) {
+  for (const cand of [opts.workspaceRoot, opts.bridgeRoot]) {
     const p = (cand || '').trim();
     if (p && workspaceGate(p, app).ok) return p;
   }

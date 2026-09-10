@@ -563,7 +563,11 @@ export function upsertJob(job: Job): Job[] {
 export function getWorkspace(): WorkspaceContext {
   const stored = readJson<Partial<WorkspaceContext>>(KEYS.workspace, {});
   const ws = { ...DEFAULT_WORKSPACE, ...stored };
-  if (ws.rootPath === '/workspace' || isTemporaryPath(ws.rootPath)) ws.rootPath = '';
+  // Blank the placeholder always; blank a temp/scratch root only when it was
+  // auto-adopted (not an explicit user choice), so an explicit /tmp workspace survives.
+  if (ws.rootPath === '/workspace' || (isTemporaryPath(ws.rootPath) && !ws.rootExplicit)) {
+    ws.rootPath = '';
+  }
   return ws;
 }
 

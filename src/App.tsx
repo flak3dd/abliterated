@@ -301,7 +301,7 @@ export default function App() {
       root = await bridge.setRoot(trimmed);
     }
     const prev = workspaceRef.current;
-    const next = { ...prev, rootPath: root };
+    const next = { ...prev, rootPath: root, rootExplicit: true };
     setWorkspace(next);
     setWorkspaceState(next);
     const id = activeThreadIdRef.current;
@@ -336,7 +336,7 @@ export default function App() {
 
     const threadRoot = (existing.workspaceRoot || '').trim();
     const targetRoot =
-      threadRoot && !isPlaceholderRoot(threadRoot) && !isTemporaryPath(threadRoot) && workspaceGate(threadRoot, bridge.currentAppRoot).ok
+      threadRoot && !isPlaceholderRoot(threadRoot) && workspaceGate(threadRoot, bridge.currentAppRoot).ok
         ? threadRoot
         : '';
     if (targetRoot && !isSamePath(targetRoot, currentRoot)) {

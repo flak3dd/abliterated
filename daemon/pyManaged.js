@@ -10,6 +10,10 @@ const PIP_MUTATE_RE =
 /** Command tokens that mean "this shell line runs Python tooling". */
 const PYTHON_TOOL_RE = /^(?:python3?(?:\.\d+)?|py|pip3?)\b/i;
 
+/** Pip-installed console scripts that live in the workspace .venv, not prefixed by python/pip. */
+const PYTHON_CONSOLE_RE =
+  /^(?:pytest|uvicorn|gunicorn|black|ruff|mypy|flake8|isort|jupyter|flask|django-admin|celery|alembic|streamlit)\b/i;
+
 const ISOLATED_RE =
   /(?:^|[/\s\\])\.venv[/\s\\]|[/\\]venv[/\\]|\buv\s+(?:pip|run|python)\b|\bpoetry\s+|\bpipenv\s+|\bconda\s+|\bvirtualenv\b|--break-system-packages|\bVIRTUAL_ENV=/i;
 

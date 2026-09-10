@@ -198,11 +198,43 @@ async function resolveWriteRoot(msg) {
   if (!raw) return ROOT;
   const resolved = path.resolve(raw);
   assertNotAppInstall(resolved, 'write');
-  let st;
+  let st = null;
   try {
     st = await stat(resolved);
   } catch {
-    throw new Error('workspace root not found: ' + raw);
+    st = null;
+  }
+  if (!st) {
+    // Root does not exist yet (user named a new project folder): create it — but
+    // only after realpath-checking the nearest EXISTING ancestor, so a symlinked
+    // parent cannot materialize a fresh dir inside the install folder.
+    let anc = path.dirname(resolved);
+    for (;;) {
+      try {
+        await stat(anc);
+        break;
+      } catch {
+        const up = path.dirname(anc);
+        if (up === anc) throw new Error('workspace root parent not found: ' + raw);
+        anc = up;
+      }
+    }
+    let ancReal = anc;
+    try {
+      ancReal = await realpath(anc);
+    } catch {
+      ancReal = anc;
+    }
+    assertNotAppInstall(ancReal, 'write');
+    // Rebuild the target under the realpath'd ancestor (defeats symlink games).
+    const rel = path.relative(anc, resolved);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new Error('workspace root escapes its parent: ' + raw);
+    }
+    const target = path.resolve(ancReal, rel);
+    assertNotAppInstall(target, 'write');
+    await mkdir(target, { recursive: true });
+    return target;
   }
   if (!st.isDirectory()) throw new Error('workspace root is not a directory: ' + raw);
   let real = resolved;
@@ -215,7 +247,7 @@ async function resolveWriteRoot(msg) {
   return real;
 }
 
-function handleExec(ws, msg) {
+async function handleExec(ws, msg) {
   const runId = msg.runId;
   const command = String(msg.command || '');
   if (!command.trim()) {
@@ -228,19 +260,51 @@ function handleExec(ws, msg) {
     send(ws, { runId, type: 'exit', code: 126 });
     return;
   }
+  // Run in the thread's pinned workspace (auto-created + install-guarded by
+  // resolveWriteRoot) so shell/git/python and the created .venv all land where
+  // files are written. Fall back to the global ROOT when nothing is pinned.
+  const pinsRoot = typeof msg.root === 'string' && msg.root.trim() !== '';
+  let execCwd = ROOT;
   try {
-    assertWorkspaceNotInstall('exec');
+    execCwd = await resolveWriteRoot(msg);
   } catch (err) {
-    send(ws, { runId, type: 'stderr', data: `${err instanceof Error ? err.message : String(err)}\n` });
-    send(ws, { runId, type: 'exit', code: 126 });
-    return;
+    if (pinsRoot) {
+      send(ws, { runId, type: 'stderr', data: `${err instanceof Error ? err.message : String(err)}\n` });
+      send(ws, { runId, type: 'exit', code: 126 });
+      return;
+    }
+    execCwd = ROOT;
+  }
+  if (!pinsRoot) {
+    try {
+      assertWorkspaceNotInstall('exec');
+    } catch (err) {
+      send(ws, { runId, type: 'stderr', data: `${err instanceof Error ? err.message : String(err)}\n` });
+      send(ws, { runId, type: 'exit', code: 126 });
+      return;
+    }
   }
   const pep668 = shouldUseWorkspaceVenv(command);
   const toRun = pep668 ? wrapWithWorkspaceVenv(command) : command;
+  // Activate an EXISTING workspace .venv for every command so pip-installed console
+  // scripts (pytest/uvicorn/black/jupyter) resolve. Only PATH-prefix — never create.
+  const env = { ...process.env, ABLIT_ROOT: execCwd };
+  const venvBin = path.join(execCwd, process.platform === 'win32' ? '.venv/Scripts' : '.venv/bin');
+  let hasVenv = false;
+  try {
+    hasVenv = (await stat(venvBin)).isDirectory();
+  } catch {
+    hasVenv = false;
+  }
+  if (hasVenv) {
+    const sep = process.platform === 'win32' ? ';' : ':';
+    env.PATH = `${venvBin}${sep}${env.PATH || ''}`;
+    env.VIRTUAL_ENV = path.join(execCwd, '.venv');
+  }
   const child = spawn(toRun, {
-    cwd: ROOT,
+    cwd: execCwd,
     shell: true,
-    env: { ...process.env, ABLIT_ROOT: ROOT },
+    env,
     detached: process.platform !== 'win32',
   });
   let errBuf = '';
@@ -1239,7 +1303,15 @@ wss.on('connection', (ws, req) => {
       || type === 'checkpoint_list' || type === 'mcp_connect' || type === 'exec' || type === 'apply_patch'
       || type === 'project_memory' || type === 'mempalace_init'
       || type === 'write_file' || type === 'delete_file' || type === 'create_dir';
-    if (needsWorkspace) {
+    // Writes/patches/exec that pin an explicit root are guarded per-operation by
+    // resolveWriteRoot (install-dir + path-escape), so a drifted or app-root GLOBAL
+    // ROOT must not block a correctly-pinned operation. Only enforce the global-root
+    // install guard when nothing is pinned.
+    const pinsRoot =
+      (type === 'write_file' || type === 'apply_patch' || type === 'exec') &&
+      typeof msg.root === 'string' &&
+      msg.root.trim() !== '';
+    if (needsWorkspace && !pinsRoot) {
       try {
         assertWorkspaceNotInstall(type);
       } catch (err) {
@@ -1383,7 +1455,7 @@ wss.on('connection', (ws, req) => {
     }
 
     if (type === 'exec') {
-      handleExec(ws, msg);
+      void handleExec(ws, msg);
       return;
     }
     if (type === 'apply_patch') {

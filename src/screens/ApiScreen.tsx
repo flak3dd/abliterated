@@ -12,6 +12,11 @@ import { setSettings } from '../lib/storage';
 import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
 import { formatFeatherlessProbeReport, probeFeatherlessChat } from '../lib/featherlessDebug';
 import { extractHttpErrorMessage } from '../lib/providerError';
+import {
+  alignSetupForProvider,
+  checkProviderAlignment,
+  getProviderSetupAlignment,
+} from '../lib/agentPresets';
 import { recommendedApiPatch } from '../lib/modelSettingsGuide';
 import {
   DRAFT_IMAGE_MODEL,
@@ -600,6 +605,66 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
               );
             })}
           </div>
+
+          {/* AI Agent API & Workflow Profile Alignment Strip */}
+          {(() => {
+            const alignment = getProviderSetupAlignment(provider);
+            const status = checkProviderAlignment(draft, provider);
+            return (
+              <div className="mt-3 rounded-xl border border-zinc-800/80 bg-zinc-950/70 p-3 shadow-inner">
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-lg">
+                      {provider === 'dgx-spark'
+                        ? '⚡'
+                        : provider === 'featherless'
+                        ? '🪶'
+                        : provider === 'platform'
+                        ? '🏛️'
+                        : provider === 'custom'
+                        ? '🔌'
+                        : '🔮'}
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[12px] font-bold text-white">
+                          Aligned Setup for {alignment.name}:
+                        </span>
+                        <span className="rounded bg-emerald-950/80 border border-emerald-500/50 px-1.5 py-0.2 font-mono text-[10px] font-bold text-emerald-300">
+                          {status.recommendedSetup.name}
+                        </span>
+                        <span className="font-mono text-[10px] text-zinc-400">
+                          ({alignment.recommendedMode} mode · {alignment.recommendedNumbers.maxAgentTurns} turns max)
+                        </span>
+                      </div>
+                      <p className="mt-0.5 font-mono text-[11px] text-zinc-400">
+                        {alignment.tagline}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {status.isAligned ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-600/60 bg-emerald-950/60 px-2.5 py-1 font-mono text-[10px] font-semibold text-emerald-300">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        ✓ Agent Profile Aligned
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => patch(alignSetupForProvider(draft, provider))}
+                        className="btn-ghost h-7 px-2.5 font-mono text-[10px] font-bold text-emerald-300 hover:text-white hover:bg-emerald-600/25 border border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.15)]"
+                        title={`Optimize turn caps, agent mode, and switches for ${alignment.name}`}
+                      >
+                        ⚡ Align Agent Profile to {alignment.name}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {authMissing ? (
             <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-amber-200">
               {authMissing}

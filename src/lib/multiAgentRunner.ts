@@ -137,7 +137,7 @@ export async function runMultiAgentFleet(opts: {
           let out = "";
           const code = await bridge.runCommand(command, (c) => {
             out += c;
-          });
+          }, { root: workspaceRoot });
           return { out, code };
         },
       });

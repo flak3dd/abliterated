@@ -18,6 +18,7 @@
     "test:agent": "node scripts/test-agent-response.mjs",
     "test:agent-mode": "node scripts/test-agent-mode.mjs",
     "test:reasoning": "node scripts/test-reasoning-work.mjs",
+    "test:agent-presets": "node scripts/test-agent-presets.mjs",
     "test:change-audit": "node scripts/test-change-audit.mjs",
     "test:build": "node scripts/test-build-protocol.mjs",
     "test:workspace": "node scripts/test-workspace-guard.mjs",

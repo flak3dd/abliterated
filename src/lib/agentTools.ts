@@ -168,11 +168,28 @@ function disconnected(
   return gated(tool, fallback);
 }
 
-async function runShellCapture(command: string): Promise<{ out: string; code: number }> {
+/** The directory the daemon should write/exec in for this thread — pins to the user's workspace. */
+function bridgeWriteRoot(workspaceRoot?: string): string | undefined {
+  return (
+    connectedBridgeWriteRoot({
+      workspaceRoot,
+      appRoot: bridge.currentAppRoot,
+      bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
+    }) ||
+    (workspaceRoot || '').trim() ||
+    undefined
+  );
+}
+
+async function runShellCapture(command: string, root?: string): Promise<{ out: string; code: number }> {
   let out = '';
-  const code = await bridge.runCommand(command, (chunk) => {
-    out += chunk;
-  });
+  const code = await bridge.runCommand(
+    command,
+    (chunk) => {
+      out += chunk;
+    },
+    { root },
+  );
   return { out, code };
 }
 
@@ -457,7 +474,7 @@ export async function executeAgentTool(
     const payload = command || JSON.stringify(tool.arguments, null, 2);
     if (autoRunShell && bridge.connected && command && !isDeadlyCommand(command)) {
       try {
-        const { out, code } = await runShellCapture(command);
+        const { out, code } = await runShellCapture(command, bridgeWriteRoot(opts.workspaceRoot));
         const result = `${out}${out && !out.endsWith('\n') ? '\n' : ''}exit ${code}`;
         return ok(tool, result);
       } catch (e) {
@@ -480,7 +497,7 @@ export async function executeAgentTool(
     if (isDeadlyCommand(command)) return err(tool, 'refused: deadly command');
     if (autoRunShell && bridge.connected) {
       try {
-        const { out, code } = await runShellCapture(command);
+        const { out, code } = await runShellCapture(command, bridgeWriteRoot(opts.workspaceRoot));
         const result = `[verify] exit ${code}\n${out}${out && !out.endsWith('\n') ? '\n' : ''}`;
         return ok(tool, result);
       } catch (e) {
@@ -792,15 +809,19 @@ export async function executeAgentTool(
  * Post-edit workspace diagnostics runner.
  * Runs `tsc --noEmit --pretty false` via bridge and parses output into DiagnosticItem array.
  */
-export async function runWorkspaceDiagnostics(_root?: string): Promise<DiagnosticItem[]> {
+export async function runWorkspaceDiagnostics(root?: string): Promise<DiagnosticItem[]> {
   if (!bridge.connected) return [];
   let stdout = '';
   let stderr = '';
   try {
-    await bridge.runCommand('npx tsc --noEmit --pretty false', (chunk, stream) => {
-      if (stream === 'stderr') stderr += chunk;
-      else stdout += chunk;
-    });
+    await bridge.runCommand(
+      'npx tsc --noEmit --pretty false',
+      (chunk, stream) => {
+        if (stream === 'stderr') stderr += chunk;
+        else stdout += chunk;
+      },
+      { root: bridgeWriteRoot(root) },
+    );
   } catch {
     return [];
   }

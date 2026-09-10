@@ -246,7 +246,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
         workspaceRoot,
         run: async (command) => {
           let out = "";
-          const code = await bridge.runCommand(command, (c) => { out += c; });
+          const code = await bridge.runCommand(command, (c) => { out += c; }, { root: workspaceRoot });
           return { out, code };
         },
       });

@@ -349,6 +349,9 @@ export interface Job {
 
 export interface WorkspaceContext {
   rootPath: string;
+  /** True when the user explicitly chose this folder (vs. auto-adopted). Lets an
+   *  explicit /tmp or /var/folders workspace survive reload without auto-adopting scratch dirs. */
+  rootExplicit?: boolean;
   currentBranch: string;
   isDirty: boolean;
   selectedFiles: string[];

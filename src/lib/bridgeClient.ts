@@ -422,16 +422,25 @@ export class BridgeClient {
     });
   }
 
-  runCommand(command: string, onStdout?: (chunk: string, stream?: 'stdout' | 'stderr') => void): Promise<number> {
+  runCommand(
+    command: string,
+    onStdout?: (chunk: string, stream?: 'stdout' | 'stderr') => void,
+    opts?: { root?: string },
+  ): Promise<number> {
     if (!this.connected) {
       return Promise.resolve(126);
     }
-    const gate = this.workspaceGateFor();
+    // Gate against the pinned root when provided (so a drifted daemon root does
+    // not block a correctly-pinned exec); the daemon resolves cwd from the same root.
+    const pinned = opts?.root?.trim() || undefined;
+    const gate = this.workspaceGateFor(pinned || this.daemonRoot);
     if (!gate.ok) {
       onStdout?.(`${gate.message}\n`, 'stderr');
       return Promise.resolve(126);
     }
-    return this.request({ type: 'exec', command }, (chunk, stream) => onStdout?.(chunk, stream)).then((v) => Number(v));
+    return this.request({ type: 'exec', command, root: pinned }, (chunk, stream) => onStdout?.(chunk, stream)).then(
+      (v) => Number(v),
+    );
   }
 
   applyPatch(file: string, patch: string, opts?: { root?: string }): Promise<boolean> {
