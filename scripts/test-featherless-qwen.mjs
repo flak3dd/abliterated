@@ -11,7 +11,7 @@ fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
 execFileSync(
   "node_modules/.bin/tsc",
-  [ "src/lib/featherlessQwen.ts", "--outDir", outDir, "--module", "esnext", "--target", "es2022", "--moduleResolution", "bundler", "--strict"], { cwd: root, stdio: "inherit" });
+  [ "src/lib/featherlessQwen.ts", "--outDir", outDir, "--module", "esnext", "--target", "es2022", "--moduleResolution", "bundler", "--strict", "--skipLibCheck"], { cwd: root, stdio: "inherit" });
 const m = await import(pathToFileURL(path.join(outDir, "featherlessQwen.js")).href);
 const {
   isLargeQwenAgentModel,

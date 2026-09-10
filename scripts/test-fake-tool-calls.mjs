@@ -10,7 +10,7 @@ const root = path.resolve(__dirname, '..');
 const outDir = path.join(root, 'dist-test-fake');
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
-execFileSync('npx', ['tsc', 'src/lib/fakeToolCalls.ts', '--outDir', outDir, '--module', 'esnext', '--target', 'es2022', '--moduleResolution', 'bundler', '--strict'], { cwd: root, stdio: 'inherit' });
+execFileSync('npx', ['tsc', 'src/lib/fakeToolCalls.ts', '--outDir', outDir, '--module', 'esnext', '--target', 'es2022', '--moduleResolution', 'bundler', '--strict --skipLibCheck'], { cwd: root, stdio: 'inherit' });
 const mod = await import(pathToFileURL(path.join(outDir, 'fakeToolCalls.js')).href);
 const { parseFakeToolCalls, looksLikeFakeToolTheater, buildFakeToolNudge } = mod;
 const fence = String.fromCharCode(96, 96, 96);

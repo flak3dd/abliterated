@@ -410,6 +410,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
   const [grokById, setGrokById] = useState<Record<string, GrokApplyResult[]>>({});
   const [latestGrok, setLatestGrok] = useState<GrokApplyResult[] | undefined>(undefined);
   const maxTurns = Math.min(MAX_AGENT_TURNS_CLAMP, clampMaxAgentTurns(settings.maxAgentTurns));
+  const completionFooterEnabled = useMemo(() => settings.completionFooterEnabled !== false, [settings.completionFooterEnabled]);
   const effectiveTools = useMemo(
     () => (planMode ? filterPlanModeTools(thread.enabledTools) : thread.enabledTools),
     [planMode, thread.enabledTools],
@@ -1156,7 +1157,15 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           }
           if (!toolCalls.length) {
             const content = assistant.content || '';
+            // Hoist pure predicates - compute once at top
             const fakeParsed = parseFakeToolCalls(content);
+            const isAnswerComplete = isAnswerCompleteMarker(content);
+            const hasMissingContent = isMissingContentAnswer(content);
+            const isBuildOutput = looksLikeBuildOutput(content);
+            const isVerifyEvidence = looksLikeVerifyEvidence(content, toolsUsed);
+            const todos = parseTodoItems(content);
+            const hasFakeToolTheater = looksLikeFakeToolTheater(content);
+            const hasReasoning = !!(assistant.reasoning || '').trim();
             if (fakeParsed.length) {
               toolCalls = fakeParsed.map((f) => ({
                 id: uid('tool'),
@@ -1167,7 +1176,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               assistant.toolCalls = toolCalls;
               flushStreamPersist({ ...assistant });
               // Fall through into existing tool execution path.
-            } else if (looksLikeFakeToolTheater(content) && !fakeToolRetryUsed) {
+            } else if (hasFakeToolTheater && !fakeToolRetryUsed) {
               fakeToolRetryUsed = true;
               setPhase(
                 'self_deepen',
@@ -1186,8 +1195,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               continue;
             } else {
               // Empty content after coalesce: no API recovery. Setting off → reasoning panel only.
-              if (isMissingContentAnswer(assistant.content)) {
-                const hasReasoning = !!(assistant.reasoning || '').trim();
+              if (hasMissingContent) {
                 if (hasReasoning && !coalesceOn) {
                   setPhase('finishing', {}, turn);
                   stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
@@ -1202,7 +1210,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                 break;
               }
 
-              if (isAnswerCompleteMarker(content)) {
+              if (isAnswerComplete) {
                 assistant.content = stripAnswerCompleteMarker(content);
                 flushStreamPersist({ ...assistant });
                 // Operator mid-run overrides ANSWER_COMPLETE — integrate and continue.
@@ -1210,7 +1218,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                   continue;
                 }
                 // After strip: empty content → coalesce again (zero-cost), never API retry.
-                if (isMissingContentAnswer(assistant.content)) {
+                const newHasMissingContent = isMissingContentAnswer(assistant.content);
+                if (newHasMissingContent) {
                   enforceThoughtNoCode(assistant, { liftToContent: !planMode });
                   if (planMode) applyPlanReasoningGuard(assistant);
                   if (finalizeReasoningChannel(assistant, coalesceOn && !planMode)) {
@@ -1220,7 +1229,6 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                     await runGrokLayer(assistant);
                   }
                   if (isMissingContentAnswer(assistant.content)) {
-                    const hasReasoning = !!(assistant.reasoning || '').trim();
                     if (hasReasoning && !coalesceOn) {
                       setPhase('finishing', {}, turn);
                       stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
@@ -1239,8 +1247,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                 stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
                 break;
               }
-              if (grokBuildProcess && !looksLikeBuildOutput(content) && !isAnswerCompleteMarker(content)) {
-                const todos = parseTodoItems(content);
+              if (grokBuildProcess && !isBuildOutput && !isAnswerComplete) {
                 if (todos.length && !buildImplementNudgeUsed) {
                   buildImplementNudgeUsed = true;
                   setPhase(
@@ -1282,9 +1289,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               if (
                 grokBuildProcess &&
                 !buildVerifyNudgeUsed &&
-                looksLikeBuildOutput(content) &&
-                !looksLikeVerifyEvidence(content, toolsUsed) &&
-                !isAnswerCompleteMarker(content)
+                isBuildOutput &&
+                !isVerifyEvidence &&
+                !isAnswerComplete
               ) {
                 buildVerifyNudgeUsed = true;
                 setPhase(
@@ -1345,7 +1352,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
 
           setPhase('tool_plan', { toolName: undefined }, turn);
           let executedAny = false;
-          let latest = getMessages(thread.id);
+          let latest = messagesRef.current;
           for (const tool of toolCalls) {
             toolsUsed.push(tool.name);
             setPhase('tool_exec', { toolName: tool.name }, turn);
@@ -1774,7 +1781,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                   onCreatePr={handleCreatePr}
                   onCheckpointRestore={handleCheckpointRestore}
                   onShellExecuted={handleShellExecuted}
-                  completionFooterEnabled={settings.completionFooterEnabled !== false}
+                  completionFooterEnabled={completionFooterEnabled}
                   onContinuePrompt={handleContinuePrompt}
                   skipHighlight={m.status === 'streaming'}
                 />
