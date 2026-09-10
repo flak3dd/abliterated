@@ -1,0 +1,25 @@
+[
+  {
+    "id": "p1_file_watcher_rename",
+    "category": "Code generation",
+    "title": "Folder Watcher & Date Renamer with Locked File Handling",
+    "constraints": [
+      "Python script watching a folder",
+      "Renames new files to YYYY-MM-DD_originalname.ext based on creation date",
+      "Include error handling for locked files (PermissionError / in-use retry)"
+    ],
+    "userPrompt": "Write a Python script that watches a folder and renames new files to YYYY-MM-DD_originalname.ext based on creation date. Include error handling for locked files."
+  },
+  {
+    "id": "p2_docker_compose_stack",
+    "category": "Code generation",
+    "title": "Docker Compose for Node.js, Postgres & Redis",
+    "constraints": [
+      "docker-compose.yml for Node.js app + Postgres + Redis",
+      "Must include health checks for all services",
+      "Must include persistent volumes for Postgres & Redis",
+      "Explain each non-obvious line"
+    ],
+    "userPrompt": "Write a docker-compose.yml for a Node.js app with Postgres and Redis, including health checks and persistent volumes. Explain each non-obvious line."
+  }
+]

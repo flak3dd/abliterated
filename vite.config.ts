@@ -502,9 +502,180 @@ function vllmCtlDevPlugin(): Plugin {
   };
 }
 
+/** DEV/preview: Benchmark Workbench API & SSE runner. */
+function benchmarkDevPlugin(): Plugin {
+  const handler: Connect.NextHandleFunction = async (req, res, next) => {
+    const raw = (req.url || "").split("?")[0];
+    
+    // Serve /benchmark or /benchmark/ directly
+    if (raw === "/benchmark" || raw === "/benchmark/") {
+      const benchmarkHtmlPath = path.join(__dirname, "public/benchmark.html");
+      if (fs.existsSync(benchmarkHtmlPath)) {
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        return res.end(fs.readFileSync(benchmarkHtmlPath, "utf8"));
+      }
+    }
+
+    if (!raw.startsWith("/api/benchmark")) return next();
+
+    const sendJson = (code: number, data: unknown) => {
+      res.statusCode = code;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(JSON.stringify(data, null, 2));
+    };
+
+    if (raw === "/api/benchmark/config") {
+      try {
+        const promptsFile = path.join(__dirname, "scripts/benchmark-prompts.json");
+        let prompts = [];
+        if (fs.existsSync(promptsFile)) {
+          try { prompts = JSON.parse(fs.readFileSync(promptsFile, "utf8")); } catch {}
+        }
+
+        // Active Spark model check
+        let activeSparkModel: string | null = null;
+        try {
+          const sRes = await fetch("http://127.0.0.1:8000/v1/models", { signal: AbortSignal.timeout(1500) });
+          if (sRes.ok) {
+            const sData = (await sRes.json()) as any;
+            activeSparkModel = sData?.data?.[0]?.id || null;
+          }
+        } catch {
+          // spark offline or not forwarded
+        }
+
+        return sendJson(200, {
+          ok: true,
+          prompts,
+          activeSparkModel,
+          models: [
+            { id: "cloud", name: "Abliteration Cloud Cluster", model: process.env.VITE_ABLITERATED_MODEL || "abliterated-model", endpoint: "https://api.abliteration.ai/v1", isLocal: false },
+            { id: "featherless", name: "Featherless Serverless API", model: process.env.FEATHERLESS_MODEL || "medismera/Qwen3.8-27B-OBLITERATED-Mythos-Class-Agentic", endpoint: "https://api.featherless.ai/v1", isLocal: false },
+            { id: "spark-gpt", name: "DGX Spark GPT-OSS 120B", model: "gpt-oss-120b-abliterated", endpoint: "http://127.0.0.1:8000/v1", isLocal: true, isActive: activeSparkModel === "gpt-oss-120b-abliterated" },
+            { id: "spark-qwen", name: "DGX Spark Qwen 35B NVFP4", model: "qwen-abliterated", endpoint: "http://127.0.0.1:8000/v1", isLocal: true, isActive: activeSparkModel === "qwen-abliterated" },
+          ],
+        });
+      } catch (err: unknown) {
+        return sendJson(500, { ok: false, error: String(err) });
+      }
+    }
+
+    if (raw === "/api/benchmark/save-config") {
+      if ((req.method || "").toUpperCase() !== "POST") return sendJson(405, { error: "Method not allowed" });
+      const chunks: Buffer[] = [];
+      req.on("data", (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      req.on("end", () => {
+        try {
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          if (Array.isArray(body.prompts)) {
+            const promptsFile = path.join(__dirname, "scripts/benchmark-prompts.json");
+            fs.writeFileSync(promptsFile, JSON.stringify(body.prompts, null, 2), "utf8");
+            return sendJson(200, { ok: true, count: body.prompts.length });
+          }
+          return sendJson(400, { ok: false, error: "Missing prompts array in body" });
+        } catch (e: any) {
+          return sendJson(400, { ok: false, error: e.message });
+        }
+      });
+      return;
+    }
+
+    if (raw === "/api/benchmark/run") {
+      if ((req.method || "").toUpperCase() !== "POST") return sendJson(405, { error: "Method not allowed" });
+      const chunks: Buffer[] = [];
+      req.on("data", (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      req.on("end", async () => {
+        let body: Record<string, any> = {};
+        try {
+          const rawText = Buffer.concat(chunks).toString("utf8");
+          if (rawText.trim()) body = JSON.parse(rawText);
+        } catch {}
+
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+        });
+
+        const sendEvent = (event: string, data: unknown) => {
+          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+
+        const args = ["scripts/benchmark-all-models.mjs", "--non-interactive"];
+        if (body.models) args.push("--models", body.models);
+        if (body.preset) args.push("--preset", body.preset);
+        if (body.prompts) args.push("--prompts", body.prompts);
+        if (body.prompt1) args.push("--prompt1", body.prompt1);
+        if (body.prompt2) args.push("--prompt2", body.prompt2);
+        if (body.noSwitch) args.push("--no-switch");
+        if (body.autoSwitch) args.push("--auto-switch");
+
+        sendEvent("start", { args, timestamp: new Date().toISOString() });
+
+        const { spawn } = await import("child_process");
+        const proc = spawn("node", args, { cwd: __dirname, env: { ...process.env } });
+
+        proc.stdout.on("data", (d: Buffer) => {
+          sendEvent("stdout", d.toString("utf8"));
+        });
+
+        proc.stderr.on("data", (d: Buffer) => {
+          sendEvent("stderr", d.toString("utf8"));
+        });
+
+        proc.on("close", (code: number) => {
+          let results: any = null;
+          let reviewMd: string = "";
+          try {
+            const resFile = path.join(__dirname, "scripts/benchmark-all-raw-results.json");
+            if (fs.existsSync(resFile)) results = JSON.parse(fs.readFileSync(resFile, "utf8"));
+            const mdFile = path.join(__dirname, "scripts/benchmark-all-review.md");
+            if (fs.existsSync(mdFile)) reviewMd = fs.readFileSync(mdFile, "utf8");
+          } catch {}
+
+          sendEvent("done", { code, results, reviewMd });
+          res.end();
+        });
+
+        req.on("close", () => {
+          try { proc.kill(); } catch {}
+        });
+      });
+      return;
+    }
+
+    if (raw === "/api/benchmark/results") {
+      try {
+        let results: any = null;
+        let reviewMd: string = "";
+        const resFile = path.join(__dirname, "scripts/benchmark-all-raw-results.json");
+        if (fs.existsSync(resFile)) results = JSON.parse(fs.readFileSync(resFile, "utf8"));
+        const mdFile = path.join(__dirname, "scripts/benchmark-all-review.md");
+        if (fs.existsSync(mdFile)) reviewMd = fs.readFileSync(mdFile, "utf8");
+        return sendJson(200, { ok: true, results, reviewMd });
+      } catch (e: any) {
+        return sendJson(500, { ok: false, error: e.message });
+      }
+    }
+
+    return next();
+  };
+
+  return {
+    name: "benchmark-dev",
+    configureServer(server) {
+      server.middlewares.use(handler);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(handler);
+    },
+  };
+}
+
 export default defineConfig({
   base: "./",
-  plugins: [react(), docsStaticIndex(), webSearchDevPlugin(), mailerSendDevPlugin(), vllmCtlDevPlugin()],
+  plugins: [react(), docsStaticIndex(), webSearchDevPlugin(), mailerSendDevPlugin(), vllmCtlDevPlugin(), benchmarkDevPlugin()],
   resolve: {
     alias: {
       mailersend: path.resolve(__dirname, "src/lib/mailersend.ts"),

@@ -1,7 +1,7 @@
 import { resolveFeatherlessModelId } from './featherlessQwen.js';
 /** Keep in sync with sseParse.ts thinking-family detection. */
 const THINKING_MODEL_RE =
-  /qwen3|qwen-abliterated|qwq[-_]?|deepseek-r1|deepseek-reasoner|hunyuan-t1|glm-4\.5|glm-5|magistral/i;
+  /qwen3|qwen-abliterated|qwq[-_]?|deepseek-r1|deepseek-reasoner|hunyuan-t1|glm-4\.5|glm-5|magistral|gpt-oss/i;
 
 export type ModelFamily = 'thinking' | 'instruct' | 'code' | 'vision' | 'base';
 export type GuideStatus = 'ok' | 'warn' | 'block';

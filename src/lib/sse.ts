@@ -15,6 +15,7 @@ import {
   applyCompletionChunk,
   completionChunkError,
   isThinkingFamilyModel,
+  isGptOssModel,
   thinkingChatTemplateKwargs,
   shouldForceThinkingOff,
 } from './sseParse';
@@ -875,6 +876,12 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
           ? { enable_thinking: kwargs.enable_thinking }
           : kwargs;
     }
+  }
+  // GPT-OSS reasoning depth is set via reasoning_effort (Harmony injects it into the
+  // system message), NOT chat_template_kwargs. low → low; high/max → high. Spark-only
+  // (where gpt-oss runs) so other providers never see the field.
+  if (active.provider === 'dgx-spark' && isGptOssModel(model) && settings.reasoning !== 'off') {
+    body.reasoning_effort = settings.reasoning === 'low' ? 'low' : 'high';
   }
   const applyFit = (window: number, charsPerToken?: number) => {
     const fitted = fitChatPayload({

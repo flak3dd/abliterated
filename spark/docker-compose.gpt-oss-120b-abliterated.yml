@@ -16,11 +16,16 @@ services:
     ports:
       - "${PORT:-8000}:8000"
     volumes:
-      - ${MODEL_DIR:-./models/Huihui-gpt-oss-120b-mxfp4-abliterated}:/models/current:ro
+      - ${GPT_OSS_MODEL_DIR:-./models/Huihui-gpt-oss-120b-mxfp4-abliterated}:/models/current:ro
+      - ./tiktoken_cache:/root/.cache/tiktoken:ro
+      - ./tiktoken_cache:/tmp/tiktoken_cache:ro
+      - ./serving_patch.py:/usr/local/lib/python3.12/dist-packages/vllm/entrypoints/openai/chat_completion/serving.py:ro
     environment:
-      VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8: "1"
+      VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8: "0"
       CUTE_DSL_ARCH: sm_121a
       FLASHINFER_DISABLE_VERSION_CHECK: "1"
+      TIKTOKEN_RS_CACHE_DIR: "/root/.cache/tiktoken"
+      TIKTOKEN_ENCODINGS_BASE: "/root/.cache/tiktoken"
       HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
       HF_TOKEN: ${HF_TOKEN:-}
     command:
@@ -30,19 +35,9 @@ services:
       - --port
       - "8000"
       - --served-model-name
-      - ${SERVED_NAME:-gpt-oss-120b-abliterated}
+      - gpt-oss-120b-abliterated
       - --trust-remote-code
-      - --reasoning-parser
-      - openai_gptoss
-      - --enable-auto-tool-choice
-      - --tool-call-parser
-      - openai
-      - --quantization
-      - mxfp4
       - --gpu-memory-utilization
-      - ${GPU_MEMORY_UTILIZATION:-0.70}
-      - --kv-cache-dtype
-      - ${KV_CACHE_DTYPE:-fp8}
+      - "0.80"
       - --max-model-len
-      - "${MAX_MODEL_LEN:-131072}"
-      - --enable-prefix-caching
+      - "32768"

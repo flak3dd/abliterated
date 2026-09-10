@@ -39,7 +39,7 @@ echo "compose missing — docker run fallback"
 exec docker run --rm --gpus all --ipc=host --shm-size=16g \
   -p "${PORT}:8000" \
   -v "${ABS_MODEL}:/models/current:ro" \
-  -e VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8=1 \
+  -e VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8=0 \
   -e CUTE_DSL_ARCH=sm_121a \
   -e FLASHINFER_DISABLE_VERSION_CHECK=1 \
   -e HUGGING_FACE_HUB_TOKEN="${HF_TOKEN:-}" \

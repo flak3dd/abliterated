@@ -22,10 +22,15 @@ export type ChunkApplyResult = {
 };
 
 const THINKING_MODEL_RE =
-  /qwen3|qwen-abliterated|qwq[-_]?|deepseek-r1|deepseek-reasoner|hunyuan-t1|glm-4\.5|glm-5|magistral/i;
+  /qwen3|qwen-abliterated|qwq[-_]?|deepseek-r1|deepseek-reasoner|hunyuan-t1|glm-4\.5|glm-5|magistral|gpt-oss/i;
 
 export function isThinkingFamilyModel(model: string): boolean {
   return THINKING_MODEL_RE.test(model || '');
+}
+
+/** GPT-OSS uses Harmony mode (server-side reasoning via vLLM), not Qwen-style enable_thinking. */
+export function isGptOssModel(model: string): boolean {
+  return /gpt-oss/i.test(model || '');
 }
 
 /**
@@ -67,6 +72,8 @@ export function thinkingChatTemplateKwargs(
   reasoning: ReasoningLevelLite,
 ): ThinkingChatTemplateKwargs | undefined {
   if (!isThinkingFamilyModel(model)) return undefined;
+  // GPT-OSS uses Harmony mode (vLLM reasoning_parser). No chat_template_kwargs needed.
+  if (isGptOssModel(model)) return undefined;
   if (shouldForceThinkingOff(model)) {
     return { enable_thinking: false };
   }

@@ -92,25 +92,11 @@ export function VllmScreen({ settings, onSettingsChange }: Props) {
     });
   };
 
-  const run = async (op: string, extra: Record<string, unknown> = {}) => {
-    setBusy(op);
-    try {
-      const out = await vllmCtl(op, { alias, config: cfg, recipe: cfg.recipe, ...extra });
-      setLog(
-        [out.stdout, out.stderr, out.state, out.error]
-          .filter((x) => typeof x === 'string' && x.trim())
-          .join('\n')
-          .slice(-4000) || `${op} ok`,
-      );
-      await refresh();
-    } catch (err) {
-      setLog(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const useInIde = () => {
+  // Point the IDE provider at the currently selected recipe's served model. Switching
+  // the vLLM server WITHOUT this leaves the app requesting the previous model name
+  // (mismatch → 404 / garbled / empty responses), which is the "model switching is
+  // broken" symptom. Serving a recipe now applies this automatically.
+  const applyIdeProvider = () => {
     const patch =
       cfg.recipe === 'gpt-oss' ? sparkGptOssSettingsPatch(settings) : sparkChatSettingsPatch(settings);
     onSettingsChange({
@@ -120,6 +106,34 @@ export function VllmScreen({ settings, onSettingsChange }: Props) {
       sparkModel: cfg.servedName,
       sparkBaseUrl: `http://127.0.0.1:${cfg.port}/v1`,
     });
+  };
+
+  const run = async (op: string, extra: Record<string, unknown> = {}) => {
+    setBusy(op);
+    try {
+      const out = await vllmCtl(op, { alias, config: cfg, recipe: cfg.recipe, ...extra });
+      const outLog =
+        [out.stdout, out.stderr, out.state, out.error]
+          .filter((x) => typeof x === 'string' && x.trim())
+          .join('\n')
+          .slice(-4000) || `${op} ok`;
+      // Switching the served model must also switch what the IDE talks to.
+      if (op === 'serve') {
+        applyIdeProvider();
+        setLog(`${outLog}\n→ IDE now uses DGX Spark · ${cfg.servedName}`);
+      } else {
+        setLog(outLog);
+      }
+      await refresh();
+    } catch (err) {
+      setLog(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const useInIde = () => {
+    applyIdeProvider();
     setLog('IDE provider set to DGX Spark · ' + cfg.servedName);
   };
 

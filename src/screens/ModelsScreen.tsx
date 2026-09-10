@@ -352,13 +352,24 @@ export function ModelsScreen({ settings, onSettingsChange, onOpenTab }: Props) {
         <div className="font-mono text-xs font-semibold tracking-wide text-zinc-200">
           MODELS <span className="text-muted">({active.label})</span>
         </div>
-        <button
-          type="button"
-          onClick={() => void load({ page: 1, append: false })}
-          className="rounded border border-border px-2 py-1 font-mono text-[10px] text-zinc-300"
-        >
-          {loading ? 'Loading…' : 'Refresh'}
-        </button>
+        <div className="flex items-center gap-2">
+          <a
+            href="/benchmark.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-1 font-mono text-[10px] font-semibold text-cyan-300 hover:bg-cyan-500/20 hover:border-cyan-400"
+            title="Open 4-Model Comparative Benchmark Suite (Web UI)"
+          >
+            ⚡ Benchmark Workbench
+          </a>
+          <button
+            type="button"
+            onClick={() => void load({ page: 1, append: false })}
+            className="rounded border border-border px-2 py-1 font-mono text-[10px] text-zinc-300"
+          >
+            {loading ? 'Loading…' : 'Refresh'}
+          </button>
+        </div>
       </div>
       {isFeatherless ? (
         <div className="mb-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 font-mono text-[10px] leading-5 text-emerald-100/90">
