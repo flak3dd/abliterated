@@ -492,15 +492,15 @@ export function setMessages(messages: Message[]): void {
 }
 
 export function saveMessage(message: Message): Message[] {
-  let toSave = message;
-  if (toSave.role === 'tool' && toSave.toolCall && 'result' in toSave.toolCall) {
-    const { result: _, ...rest } = toSave.toolCall;
-    toSave = { ...toSave, toolCall: rest };
-  }
+  // Strip duplicate tool result from toolCall on tool role messages (content is canonical)
+  const stored = message.role === 'tool' && message.toolCall
+    ? { ...message, toolCall: { ...message.toolCall, result: undefined } }
+    : message;
+
   const all = getMessages();
-  const idx = all.findIndex((m) => m.id === toSave.id);
-  if (idx >= 0) all[idx] = toSave;
-  else all.push(toSave);
+  const idx = all.findIndex((m) => m.id === message.id);
+  if (idx >= 0) all[idx] = stored;
+  else all.push(stored);
   setMessages(all);
   return all.filter((m) => m.threadId === toSave.threadId);
 }

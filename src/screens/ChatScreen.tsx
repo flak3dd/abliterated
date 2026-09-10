@@ -282,55 +282,37 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
   },
   ref,
 ) {
-  const {
-    messages,
-    messagesRef,
-    hiddenPrefix,
-    setHiddenPrefix,
-    input,
-    setInput,
-    busy,
-    loopTurn,
-    maxTurns,
-    lastProof,
-    bridgeStatus,
-    appRoot,
-    setDirConfirmed,
-    needsWorkingDir,
-    grokById,
-    grokHeader: _grokHeader,
-    planChecklist,
-    agentPhase,
-    phaseMeta,
-    showIdleMonitor,
-    queuedMidRun,
-    showJump,
-    statusLabel,
-    agentProfile: _agentProfile,
-    effectiveTools: _effectiveTools,
-    completenessOn,
-    runStartedAtRef,
-    scrollerRef,
-    inputRef,
-    persist,
-    scrollToBottom,
-    sendText,
-    send,
-    stop,
-    retry,
-    fillInput,
-    continueAfterTool,
-    handleGitCommit,
-    handleCreatePr,
-    handleCheckpointRestore,
-    restoreCheckpointById,
-    handleWriteFile,
-    handleShellExecuted,
-    handleContinuePrompt,
-    patchDeepenCompleteness,
-    deepenThisAnswerNow: _deepenThisAnswerNow,
-  } = useAgentLoop({
-    thread,
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [hiddenPrefix, setHiddenPrefix] = useState(0);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [loopTurn, setLoopTurn] = useState(0);
+  const [lastStopReason, setLastStopReason] = useState<AgentStopReason | null>(null);
+  const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>(bridge.currentStatus);
+  const [appRoot, setAppRoot] = useState(bridge.currentAppRoot);
+  const [dirConfirmed, setDirConfirmed] = useState(false);
+  const [grokById, setGrokById] = useState<Record<string, GrokApplyResult[]>>({});
+  const [latestGrok, setLatestGrok] = useState<GrokApplyResult[] | undefined>(undefined);
+  const maxTurns = Math.min(MAX_AGENT_TURNS_CLAMP, clampMaxAgentTurns(settings.maxAgentTurns));
+  const completionFooterEnabled = useMemo(() => settings.completionFooterEnabled !== false, [settings.completionFooterEnabled]);
+  const effectiveTools = useMemo(
+    () => (planMode ? filterPlanModeTools(thread.enabledTools) : thread.enabledTools),
+    [planMode, thread.enabledTools],
+  );
+  const agentProfile = useMemo(() => {
+    const active = resolveActiveSettings(settings);
+    const peek = peekFeatherlessModel(active.defaultModel);
+    return buildModelAgentProfile({
+      model: active.defaultModel || thread.model,
+      provider: active.provider,
+      reasoning: settings.reasoning,
+      planMode,
+      buildMode,
+      toolUse: peek?.toolUse,
+      contextLength: peek?.contextLength,
+      enabledTools: effectiveTools,
+    });
+  }, [
     settings,
     autoAcceptEdits,
     autoRunShell,
@@ -345,6 +327,711 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     agentMode,
     onSettingsChange,
   });
+
+
+  const executeTool = async (tool: ToolCallPayload): Promise<{ msg: Message; executed: boolean }> => {
+    if (planMode && isMcpToolName(tool.name)) {
+      const denied = {
+        ...tool,
+        status: 'denied' as const,
+        result: 'Plan mode: MCP tools locked until you approve the plan.',
+      };
+      return {
+        msg: makeToolMessage(denied, denied.result || ''),
+        executed: false,
+      };
+    }
+    const tools = planMode ? effectiveTools : thread.enabledTools;
+    const result = await executeAgentTool(tool, {
+      enabledTools: tools,
+      autoAcceptEdits: planMode ? false : autoAcceptRef.current,
+      autoRunShell: planMode ? false : autoRunRef.current,
+      settings,
+      workspaceRoot,
+      mode: 'interactive',
+      onGitMaybeChanged: () => onGitMaybeChangedRef.current?.(),
+      executeMcpTool: executeMcpToolCall,
+      todoItems: todosRef.current,
+      onTodos: (items) => {
+        todosRef.current = items;
+        setPlanChecklist(items.map((t) => (t.done ? `[x] ${t.text}` : t.text)));
+      },
+    });
+    return { msg: makeToolMessage(result.tool, result.content), executed: result.executed };
+  };
+
+
+  const runCreatePrClick = useCallback(
+    async (message: Message) => {
+      const tool = message.toolCall;
+      if (!tool || tool.name !== 'create_pr') return;
+      if (busyRef.current) return;
+      const title = toolArgString(tool.arguments, ['title']);
+      const body = toolArgString(tool.arguments, ['body', 'description']);
+      const base = toolArgString(tool.arguments, ['base', 'baseBranch']) || undefined;
+      try {
+        const result = await bridge.createPr({ title, body, base });
+        persist({ ...message, content: result, toolCall: { ...tool, status: 'executed', result } });
+        onGitMaybeChangedRef.current?.();
+        await continueAfterToolRef.current?.(message.id);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        persist({ ...message, content: msg, toolCall: { ...tool, status: 'error', result: msg } });
+      }
+    },
+    [persist],
+  );
+
+  const runCheckpointRestoreClick = useCallback(
+    async (message: Message) => {
+      const tool = message.toolCall;
+      if (!tool || tool.name !== 'checkpoint_restore') return;
+      if (busyRef.current) return;
+      const id = toolArgString(tool.arguments, ['id', 'checkpoint', 'name']);
+      try {
+        const result = await bridge.checkpointRestore(id);
+        persist({ ...message, content: result, toolCall: { ...tool, status: 'executed', result } });
+        onGitMaybeChangedRef.current?.();
+        await continueAfterToolRef.current?.(message.id);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        persist({ ...message, content: msg, toolCall: { ...tool, status: 'error', result: msg } });
+      }
+    },
+    [persist],
+  );
+
+  const runGitCommitClick = useCallback(
+    async (message: Message) => {
+      const tool = message.toolCall;
+      if (!tool || tool.name !== 'git_commit') return;
+      if (busyRef.current) return;
+      const commitMsg = toolArgString(tool.arguments, ['message', 'msg']);
+      const paths = asStringList(tool.arguments.paths);
+      try {
+        const result = await bridge.gitCommit(commitMsg, paths);
+        persist({ ...message, content: result, toolCall: { ...tool, status: 'executed', result } });
+        onGitMaybeChangedRef.current?.();
+        await continueAfterToolRef.current?.(message.id);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        persist({ ...message, content: msg, toolCall: { ...tool, status: 'error', result: msg } });
+      }
+    },
+    [persist],
+  );
+
+  const finishRun = (
+    stopReason: AgentStopReason,
+    meta: { startedAt: number; turns: number; tools: string[] },
+  ) => {
+    const endedAt = Date.now();
+    setLastStopReason(stopReason);
+    recordAgentRun({
+      threadId: thread.id,
+      startedAt: meta.startedAt,
+      endedAt,
+      turns: meta.turns,
+      stopReason,
+      tools: meta.tools,
+      ms: endedAt - meta.startedAt,
+    });
+  };
+
+  const runCompletion = async (history: Message[]) => {
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setBusy(true);
+    setLoopTurn(1);
+    loopTurnRef.current = 1;
+    setLastStopReason(null);
+    pendingMidRunRef.current = [];
+    setQueuedMidRun(0);
+    queuedMidRunRef.current = 0;
+    setShowIdleMonitor(false);
+    let current = history;
+    const startedAt = Date.now();
+    runStartedAtRef.current = startedAt;
+    phaseMetaRef.current = { runStartedAt: startedAt };
+    setPhase('starting', { runStartedAt: startedAt }, 1);
+    const toolsUsed: string[] = [];
+    let turnsDone = 0;
+    let deepensUsed = 0;
+    let fakeToolRetryUsed = false;
+    let buildTodoNudgeUsed = false;
+    let buildImplementNudgeUsed = false;
+    let buildVerifyNudgeUsed = false;
+    let stopReason: AgentStopReason = 'no_tools';
+    let turnCap = clampMaxAgentTurns(settingsRef.current.maxAgentTurns);
+    const deepenCap = clampSelfDeepenPasses(settingsRef.current.selfDeepenPasses);
+
+    const drainMidRunMessages = (): boolean => {
+      const pending = pendingMidRunRef.current.splice(0, pendingMidRunRef.current.length);
+      setQueuedMidRun(0);
+      queuedMidRunRef.current = 0;
+      if (!pending.length) return false;
+      setPhase('integrating_mid_run', {}, turnsDone || loopTurnRef.current);
+      const nudge: Message = {
+        id: uid('msg'),
+        threadId: thread.id,
+        role: 'user',
+        content: buildMidRunIntegrateNudge(pending),
+        createdAt: Date.now(),
+        status: 'complete',
+      };
+      persist(nudge);
+      current = getMessages(thread.id);
+      return true;
+    };
+
+    try {
+      const lastUser = [...history].reverse().find((m) => m.role === 'user');
+      const grokBuildProcess =
+        !planMode &&
+        !!(
+          lastUser &&
+          shouldApplyBuildProcess(lastUser.content, { buildMode: !!buildMode, planMode: !!planMode })
+        );
+      const exploreIntent = !!(lastUser && looksExploreIntent(lastUser.content));
+      const prefetched =
+        lastUser && bridge.connected ? await prefetchWorkspaceFiles(lastUser.content, workspaceRoot) : [];
+      if (ac.signal.aborted) {
+        stopReason = 'abort';
+        return;
+      }
+
+      for (let turn = 1; turn <= turnCap; turn++) {
+        turnCap = clampMaxAgentTurns(settingsRef.current.maxAgentTurns);
+        if (turn > turnCap) {
+          stopReason = 'cap';
+          break;
+        }
+        if (ac.signal.aborted) {
+          stopReason = 'abort';
+          break;
+        }
+        // Safe boundary: before next stream — integrate any mid-run operator notes.
+        if (turn > 1) drainMidRunMessages();
+        setLoopTurn(turn);
+        loopTurnRef.current = turn;
+        turnsDone = turn;
+        turnHasContentRef.current = false;
+        turnHasReasoningRef.current = false;
+        setPhase(
+          'starting',
+          {
+            runStartedAt: runStartedAtRef.current,
+            hasContent: false,
+            hasReasoning: false,
+            reasoningStartedAt: undefined,
+            toolName: undefined,
+          },
+          turn,
+        );
+        const assistant: Message = {
+          id: uid('msg'),
+          threadId: thread.id,
+          role: 'assistant',
+          content: '',
+          createdAt: Date.now(),
+          status: 'streaming',
+        };
+        persist(assistant);
+        try {
+          const live = settingsRef.current;
+          const active = resolveActiveSettings(live);
+          const result = await streamChatCompletion({
+            settings: live,
+            model: active.defaultModel || thread.model,
+            messages: toApiMessages(current, turn === 1 ? prefetched : []),
+            abortSignal: ac.signal,
+            enabledTools: planMode ? effectiveTools : thread.enabledTools,
+            extraTools: agentProfile.allowMcp
+              ? (mcpToolsToOpenAi(listConnectedMcpTools()) as Parameters<
+                  typeof streamChatCompletion
+                >[0]['extraTools'])
+              : undefined,
+            toolChoice: turn === 1 && exploreIntent ? 'required' : 'auto',
+            flightKey: `chat:${thread.id}`,
+            onDelta: (text) => {
+              if (!turnHasContentRef.current) {
+                // First real content delta — replace any live-mirrored reasoning preview.
+                assistant.content = text;
+                turnHasContentRef.current = true;
+                setPhase('writing', { hasContent: true }, turn);
+              } else {
+                assistant.content += text;
+                if (agentPhaseRef.current !== 'writing' && agentPhaseRef.current !== 'tool_plan') {
+                  setPhase('writing', { hasContent: true }, turn);
+                }
+              }
+              persistStream({ ...assistant });
+            },
+            onReasoningDelta: (text) => {
+              assistant.reasoning = (assistant.reasoning || '') + text;
+              if (!turnHasReasoningRef.current) {
+                turnHasReasoningRef.current = true;
+                setPhase(
+                  'reasoning',
+                  {
+                    hasReasoning: true,
+                    reasoningStartedAt: Date.now(),
+                  },
+                  turn,
+                );
+              } else if (
+                agentPhaseRef.current !== 'writing' &&
+                agentPhaseRef.current !== 'reasoning' &&
+                !turnHasContentRef.current
+              ) {
+                setPhase('reasoning', { hasReasoning: true }, turn);
+              }
+              persistStream({ ...assistant });
+            },
+          });
+          let toolCalls = result.toolCalls;
+          assistant.toolCalls = toolCalls.length ? toolCalls : undefined;
+          // Safety net: detokenize full strings (covers non-SSE / missed-delta paths)
+          assistant.content = detokenizeArtifacts(assistant.content || '');
+          if (assistant.reasoning) {
+            assistant.reasoning = detokenizeArtifacts(assistant.reasoning);
+          }
+          assistant.status = 'complete';
+          // Thought never keeps code — lift fences/diffs into content (files), then Plan strips writes.
+          enforceThoughtNoCode(assistant, { liftToContent: !planMode });
+          const coalesceOn = settingsRef.current.coalesceReasoningToContent !== false;
+          if (planMode) applyPlanReasoningGuard(assistant);
+          finalizeReasoningChannel(assistant, coalesceOn && !planMode);
+          assistant.content = liftTodoListToContent(assistant.content || '', assistant.reasoning || '');
+          if (planMode) applyPlanReasoningGuard(assistant);
+          else enforceThoughtNoCode(assistant, { liftToContent: true });
+          flushStreamPersist({ ...assistant });
+          await runGrokLayer(assistant);
+
+          if (ac.signal.aborted) {
+            // Already finalized + attempted grok above (runGrokLayer no-ops in planMode).
+            if (!(assistant.content || '').trim() && !(assistant.reasoning || '').trim()) {
+              assistant.content = '(stopped)';
+              flushStreamPersist({ ...assistant });
+            }
+            stopReason = 'abort';
+            break;
+          }
+          if (!toolCalls.length) {
+            const content = assistant.content || '';
+            // Hoist pure predicates - compute once at top
+            const fakeParsed = parseFakeToolCalls(content);
+            const isAnswerComplete = isAnswerCompleteMarker(content);
+            const hasMissingContent = isMissingContentAnswer(content);
+            const isBuildOutput = looksLikeBuildOutput(content);
+            const isVerifyEvidence = looksLikeVerifyEvidence(content, toolsUsed);
+            const todos = parseTodoItems(content);
+            const hasFakeToolTheater = looksLikeFakeToolTheater(content);
+            const hasReasoning = !!(assistant.reasoning || '').trim();
+            if (fakeParsed.length) {
+              toolCalls = fakeParsed.map((f) => ({
+                id: uid('tool'),
+                name: f.name as ToolCallPayload['name'],
+                arguments: f.arguments,
+                status: 'pending' as const,
+              }));
+              assistant.toolCalls = toolCalls;
+              flushStreamPersist({ ...assistant });
+              // Fall through into existing tool execution path.
+            } else if (hasFakeToolTheater && !fakeToolRetryUsed) {
+              fakeToolRetryUsed = true;
+              setPhase(
+                'self_deepen',
+                { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+                turn,
+              );
+              const nudge: Message = {
+                id: uid('msg'),
+                threadId: thread.id,
+                role: 'user',
+                content: buildFakeToolNudge(),
+                createdAt: Date.now(),
+                status: 'complete',
+              };
+              current = persist(nudge);
+              continue;
+            } else {
+              // Empty content after coalesce: no API recovery. Setting off → reasoning panel only.
+              if (hasMissingContent) {
+                if (hasReasoning && !coalesceOn) {
+                  setPhase('finishing', {}, turn);
+                  stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
+                  break;
+                }
+                setPhase(hasReasoning ? 'finishing' : 'error', {}, turn);
+                if (!hasReasoning) {
+                  assistant.content = EMPTY_CONTENT_REPLY_NOTE;
+                  flushStreamPersist({ ...assistant });
+                }
+                stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
+                break;
+              }
+
+              if (isAnswerComplete) {
+                assistant.content = stripAnswerCompleteMarker(content);
+                flushStreamPersist({ ...assistant });
+                // Operator mid-run overrides ANSWER_COMPLETE — integrate and continue.
+                if (drainMidRunMessages()) {
+                  continue;
+                }
+                // After strip: empty content → coalesce again (zero-cost), never API retry.
+                const newHasMissingContent = isMissingContentAnswer(assistant.content);
+                if (newHasMissingContent) {
+                  enforceThoughtNoCode(assistant, { liftToContent: !planMode });
+                  if (planMode) applyPlanReasoningGuard(assistant);
+                  if (finalizeReasoningChannel(assistant, coalesceOn && !planMode)) {
+                    if (planMode) applyPlanReasoningGuard(assistant);
+                    else enforceThoughtNoCode(assistant, { liftToContent: true });
+                    flushStreamPersist({ ...assistant });
+                    await runGrokLayer(assistant);
+                  }
+                  if (isMissingContentAnswer(assistant.content)) {
+                    if (hasReasoning && !coalesceOn) {
+                      setPhase('finishing', {}, turn);
+                      stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
+                      break;
+                    }
+                    setPhase(hasReasoning ? 'finishing' : 'error', {}, turn);
+                    if (!hasReasoning) {
+                      assistant.content = EMPTY_CONTENT_REPLY_NOTE;
+                      flushStreamPersist({ ...assistant });
+                    }
+                    stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
+                    break;
+                  }
+                }
+                setPhase('finishing', {}, turn);
+                stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
+                break;
+              }
+              if (grokBuildProcess && !isBuildOutput && !isAnswerComplete) {
+                if (todos.length && !buildImplementNudgeUsed) {
+                  buildImplementNudgeUsed = true;
+                  setPhase(
+                    'self_deepen',
+                    { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+                    turn,
+                  );
+                  const nudge: Message = {
+                    id: uid('msg'),
+                    threadId: thread.id,
+                    role: 'user',
+                    content: buildBuildModeImplementNudge(),
+                    createdAt: Date.now(),
+                    status: 'complete',
+                  };
+                  current = persist(nudge);
+                  continue;
+                }
+                if (!todos.length && !buildTodoNudgeUsed) {
+                  buildTodoNudgeUsed = true;
+                  setPhase(
+                    'self_deepen',
+                    { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+                    turn,
+                  );
+                  const nudge: Message = {
+                    id: uid('msg'),
+                    threadId: thread.id,
+                    role: 'user',
+                    content: buildBuildModeTodoNudge(),
+                    createdAt: Date.now(),
+                    status: 'complete',
+                  };
+                  current = persist(nudge);
+                  continue;
+                }
+              }
+
+              if (
+                grokBuildProcess &&
+                !buildVerifyNudgeUsed &&
+                isBuildOutput &&
+                !isVerifyEvidence &&
+                !isAnswerComplete
+              ) {
+                buildVerifyNudgeUsed = true;
+                setPhase(
+                  'self_deepen',
+                  { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+                  turn,
+                );
+                const nudge: Message = {
+                  id: uid('msg'),
+                  threadId: thread.id,
+                  role: 'user',
+                  content: buildVerifyBeforeDoneNudge(),
+                  createdAt: Date.now(),
+                  status: 'complete',
+                };
+                current = persist(nudge);
+                continue;
+              }
+
+              const liveDeepen = settingsRef.current;
+              const deepenPasses = clampSelfDeepenPasses(liveDeepen.selfDeepenPasses);
+              const deepenOn =
+                liveDeepen.selfDeepenEnabled !== false && deepenPasses > 0 && deepensUsed < deepenPasses;
+              // Already shipped a valid Done/Continue footer — treat as complete; skip an extra deepen turn.
+              const footerDone =
+                liveDeepen.completionFooterEnabled !== false && hasValidCompletionFooter(content);
+              if (deepenOn && content.trim() && !footerDone) {
+                deepensUsed += 1;
+                setPhase(
+                  'self_deepen',
+                  { deepenPass: deepensUsed, deepenMax: deepenPasses || deepenCap },
+                  turn,
+                );
+                const nudge: Message = {
+                  id: uid('msg'),
+                  threadId: thread.id,
+                  role: 'user',
+                  content: buildSelfDeepenNudge({
+                    completeness: liveDeepen.deepenCompleteness !== false,
+                  }),
+                  createdAt: Date.now(),
+                  status: 'complete',
+                };
+                current = persist(nudge);
+                // Mid-run drain happens at the top of the next turn — avoid a second nudge here.
+                continue;
+              }
+              // Would stop: if mid-run notes arrived, integrate and keep going.
+              if (drainMidRunMessages()) {
+                continue;
+              }
+              // Content is non-empty here (coalesce / empty handling above).
+              setPhase('finishing', {}, turn);
+              stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
+              break;
+            }
+          }
+
+          setPhase('tool_plan', { toolName: undefined }, turn);
+          let executedAny = false;
+          let latest = messagesRef.current;
+          for (const tool of toolCalls) {
+            toolsUsed.push(tool.name);
+            setPhase('tool_exec', { toolName: tool.name }, turn);
+            if (ac.signal.aborted) {
+              latest = persist(makeToolMessage({ ...tool, status: 'error', result: 'aborted' }, 'aborted'));
+              continue;
+            }
+            const { msg, executed } = await executeTool(tool);
+            if (executed) executedAny = true;
+            latest = persist(msg);
+          }
+          current = latest;
+          if (ac.signal.aborted) {
+            stopReason = 'abort';
+            break;
+          }
+          if (!executedAny) {
+            setPhase('waiting_gate', { toolName: toolCalls[0]?.name }, turn);
+            stopReason = 'pending_gate';
+            break;
+          }
+          // Mid-run drain at next turn top (avoids double integrate nudge).
+          if (turn === turnCap) {
+            stopReason = 'cap';
+          }
+        } catch (err) {
+          if ((err as Error).name === 'AbortError') {
+            setPhase('stopped', {}, turn);
+            assistant.status = 'complete';
+            const coalesceOnAbort = settingsRef.current.coalesceReasoningToContent !== false;
+            enforceThoughtNoCode(assistant, { liftToContent: !planMode });
+            if (planMode) applyPlanReasoningGuard(assistant);
+            finalizeReasoningChannel(assistant, coalesceOnAbort && !planMode);
+            if (planMode) applyPlanReasoningGuard(assistant);
+            else enforceThoughtNoCode(assistant, { liftToContent: true });
+            if (!assistant.content.trim() && !assistant.reasoning?.trim()) assistant.content = '(stopped)';
+            // Apply diffs from coalesced reasoning even on abort (no-op if planMode).
+            await runGrokLayer(assistant);
+            stopReason = 'abort';
+          } else {
+            setPhase('error', {}, turn);
+            assistant.status = 'error';
+            assistant.content = assistant.content || (err instanceof Error ? err.message : String(err));
+            stopReason = 'error';
+          }
+          flushStreamPersist({ ...assistant });
+          break;
+        }
+      }
+      if (turnsDone >= turnCap && stopReason === 'no_tools') {
+        /* completed last turn with no tools — already no_tools */
+      } else if (turnsDone >= turnCap && stopReason !== 'pending_gate' && stopReason !== 'abort' && stopReason !== 'error') {
+        // If we exited the loop by exhausting turns after tools, mark cap
+        const last = current[current.length - 1];
+        if (last?.role === 'tool') stopReason = 'cap';
+      }
+    } finally {
+      abortRef.current = null;
+      if (stopReason === 'abort') setPhase('stopped', {}, turnsDone);
+      else if (stopReason === 'error') setPhase('error', {}, turnsDone);
+      else if (stopReason === 'pending_gate') setPhase('waiting_gate', {}, turnsDone);
+      else setPhase('finishing', {}, turnsDone);
+      setBusy(false);
+      setLoopTurn(0);
+      loopTurnRef.current = 0;
+      // Persist any undrained mid-run notes as an integrate nudge so they remain in context.
+      if (pendingMidRunRef.current.length) {
+        const pending = pendingMidRunRef.current.splice(0, pendingMidRunRef.current.length);
+        setQueuedMidRun(0);
+        queuedMidRunRef.current = 0;
+        if (pending.length) {
+          persist({
+            id: uid('msg'),
+            threadId: thread.id,
+            role: 'user',
+            content: buildMidRunIntegrateNudge(pending),
+            createdAt: Date.now(),
+            status: 'complete',
+          });
+        }
+      }
+      finishRun(stopReason, { startedAt, turns: turnsDone, tools: [...new Set(toolsUsed)] });
+      if (stopReason === 'cap') {
+        persist({
+          id: uid('msg'),
+          threadId: thread.id,
+          role: 'assistant',
+          content: buildIncompleteCapNote(turnCap),
+          createdAt: Date.now(),
+          status: 'complete',
+        });
+      }
+      // Compact idle monitor remembers last stop phase briefly.
+      const endPhase: AgentPhase =
+        stopReason === 'abort'
+          ? 'stopped'
+          : stopReason === 'error'
+            ? 'error'
+            : stopReason === 'cap'
+              ? 'stopped'
+            : stopReason === 'pending_gate'
+              ? 'waiting_gate'
+              : 'idle';
+      agentPhaseRef.current = endPhase;
+      setAgentPhase(endPhase);
+      setShowIdleMonitor(endPhase !== 'idle');
+      if (endPhase === 'idle') {
+        onAgentStatusRef.current?.('');
+      } else {
+        pushAgentStatus(endPhase, phaseMetaRef.current, turnsDone, 0);
+      }
+    }
+  };
+
+  const continueAfterTool = useCallback(
+    async (messageId: string) => {
+      if (busyRef.current) return;
+      const list = messagesRef.current;
+      if (!canResumeAfterTool(list, messageId)) return;
+      await runCompletion(list);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [thread, settings, workspaceRoot, autoAcceptEdits],
+  );
+  continueAfterToolRef.current = continueAfterTool;
+
+  const sendText = async (textRaw: string) => {
+    const text = textRaw.trim();
+    if (!text) return;
+
+    const gate = workspaceGate(workspaceRoot, appRoot);
+    const needsDir = !gate.ok || (messagesRef.current.length === 0 && !dirConfirmed);
+    if (needsDir && !busy) return;
+
+    const midRunOn = settings.midRunInjectEnabled !== false;
+    if (busy) {
+      if (!midRunOn) return;
+      // Queue mid-run barge-in: finish current atomic step, then drain at turn boundary.
+      pendingMidRunRef.current.push(text);
+      setQueuedMidRun(pendingMidRunRef.current.length);
+      setInput('');
+      const user: Message = {
+        id: uid('msg'),
+        threadId: thread.id,
+        role: 'user',
+        content: `${MID_RUN_PREFIX}${text}`,
+        createdAt: Date.now(),
+        status: 'complete',
+      };
+      persist(user);
+      nearBottomRef.current = true;
+      setShowJump(false);
+      requestAnimationFrame(() => scrollToBottom(true));
+      queuedMidRunRef.current = pendingMidRunRef.current.length;
+      pushAgentStatus(agentPhaseRef.current, phaseMetaRef.current, loopTurn, queuedMidRunRef.current);
+      return;
+    }
+
+    setInput('');
+    const user: Message = {
+      id: uid('msg'),
+      threadId: thread.id,
+      role: 'user',
+      content: text,
+      createdAt: Date.now(),
+      status: 'complete',
+    };
+    const history = persist(user);
+    nearBottomRef.current = true;
+    setShowJump(false);
+    requestAnimationFrame(() => scrollToBottom(true));
+    const title = thread.title === 'New session' ? text.slice(0, 48) : thread.title;
+    const updated = { ...thread, title, updatedAt: Date.now() };
+    upsertThread(updated);
+    onThreadUpdate(updated);
+    await runCompletion(history);
+  };
+
+  sendTextRef.current = sendText;
+
+  const send = async () => {
+    await sendText(input);
+  };
+
+  const handleContinuePrompt = useCallback((text: string) => {
+    void sendTextRef.current(text);
+  }, []);
+
+  const stop = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  const retry = useCallback(async () => {
+    if (busy) return;
+    if (!workspaceGate(workspaceRoot, appRoot).ok) return;
+    const list = messagesRef.current;
+    const lastUserIdx = [...list].map((m, i) => [m, i] as const).reverse().find(([m]) => m.role === 'user');
+    if (!lastUserIdx) return;
+    const trimmed = list.slice(0, lastUserIdx[1] + 1);
+    messagesRef.current = trimmed;
+    setMessages(trimmed);
+    setHiddenPrefix(Math.max(0, trimmed.length - MESSAGE_WINDOW));
+    replaceThreadMessages(thread.id, trimmed);
+    await runCompletion(trimmed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, thread, settings, workspaceRoot, autoAcceptEdits]);
+
+  const fillInput = useCallback((text: string) => {
+    setInput(text);
+    window.setTimeout(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      const len = text.length;
+      el.setSelectionRange(len, len);
+    }, 0);
+  }, []);
 
   useImperativeHandle(
     ref,
