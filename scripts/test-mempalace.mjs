@@ -44,6 +44,16 @@ assert.equal(added[0].env.MEMPALACE_PALACE_PATH, '/tmp/palace');
 const off = withMempalaceMcpServer(added, false);
 assert.equal(off[0].enabled, false);
 
+// Legacy broken uvx config auto-migration
+const migrated = withMempalaceMcpServer(
+  [{ id: '1', name: 'mempalace', command: 'uvx', args: ['--from', 'mempalace', 'python', '-m', 'mempalace.mcp_server'], enabled: true }],
+  true,
+  '/tmp/palace-migrated',
+);
+assert.equal(migrated[0].command, 'mempalace-mcp');
+assert.deepEqual(migrated[0].args, []);
+assert.equal(migrated[0].env?.MEMPALACE_PALACE_PATH, '/tmp/palace-migrated');
+
 const text = formatSessionMemory('what did we decide?', 'use relative paths', {
   model: 'abliterated-model',
   thread: 't1',

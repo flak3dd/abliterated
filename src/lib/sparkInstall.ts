@@ -100,10 +100,15 @@ export function sparkChatUrl(settings: Pick<ClientSettings, 'sparkLanHost'>): st
 }
 
 export const SPARK_CHAT_MODEL = 'qwen-abliterated';
+export const SPARK_GPT_OSS_MODEL = 'gpt-oss-120b-abliterated';
 
 export function sparkChatSettingsPatch(settings: Pick<ClientSettings, 'sparkLanHost'>): Partial<ClientSettings> {
   const loopback = sparkLanIsLoopback(settings);
   return { inferenceProvider: 'dgx-spark', sparkEnabled: true, remoteHostEnabled: true, sparkModel: SPARK_CHAT_MODEL, sparkBaseUrl: sparkChatUrl(settings), sparkViaProxy: loopback };
+}
+
+export function sparkGptOssSettingsPatch(settings: Pick<ClientSettings, 'sparkLanHost'>): Partial<ClientSettings> {
+  return { ...sparkChatSettingsPatch(settings), sparkModel: SPARK_GPT_OSS_MODEL };
 }
 
 export function sparkQwenPushCommand(alias: string): string {

@@ -75,8 +75,9 @@ export function hasOpenTodos(items?: { done?: boolean }[]): boolean {
 }
 
 /**
- * Generic self-deepen only for open todos. Never on junk, length, or a Done footer.
- * Verify-before-done and prove-improve have their own one-shot nudges.
+ * Generic self-deepen for unfinished work. Never on junk, a Done footer, or
+ * after files already landed on the bridge. Missing file landings deepen even
+ * without an open ToDo (fragment / ToDo-only turns).
  */
 export function shouldEvidenceDeepen(opts: {
   content: string;
@@ -85,10 +86,14 @@ export function shouldEvidenceDeepen(opts: {
   footerDone?: boolean;
   answerComplete?: boolean;
   openTodos?: boolean;
+  filesLanded?: boolean;
+  missingFiles?: boolean;
 }): boolean {
   if (!opts.deepenOn) return false;
   if (opts.junkTurn || opts.footerDone || opts.answerComplete) return false;
+  if (opts.filesLanded) return false;
   if (!(opts.content || '').trim()) return false;
+  if (opts.missingFiles) return true;
   return !!opts.openTodos;
 }
 

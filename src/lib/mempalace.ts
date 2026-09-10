@@ -19,9 +19,9 @@ export const MEMPALACE_CATALOG_ENTRY = {
   name: MEMPALACE_MCP_NAME,
   title: 'MemPalace',
   blurb: 'Local-first verbatim AI memory (wings, rooms, drawers). Official: mempalaceofficial.com',
-  command: 'uvx',
-  args: ['--from', 'mempalace', 'python', '-m', 'mempalace.mcp_server'],
-  runner: 'uvx' as const,
+  command: 'mempalace-mcp',
+  args: [] as string[],
+  runner: 'mempalace-mcp' as const,
 };
 
 export function mempalaceWingFor(settings: Pick<MempalaceSettings, 'mempalaceWing'>, workspaceRoot: string): string {
@@ -57,13 +57,22 @@ export function withMempalaceMcpServer(
   }
   const env = palacePath.trim() ? { MEMPALACE_PALACE_PATH: palacePath.trim() } : undefined;
   if (idx >= 0) {
+    const existing = list[idx];
+    const isLegacyBrokenArgs =
+      existing.command === 'uvx' &&
+      Array.isArray(existing.args) &&
+      existing.args.some((a) => a === 'python' || a === 'mempalace.mcp_server');
     const next = [...list];
     next[idx] = {
-      ...next[idx],
+      ...existing,
       enabled: true,
-      command: next[idx].command || MEMPALACE_CATALOG_ENTRY.command,
-      args: next[idx].args?.length ? next[idx].args : [...MEMPALACE_CATALOG_ENTRY.args],
-      env: { ...(next[idx].env || {}), ...(env || {}) },
+      command: isLegacyBrokenArgs ? MEMPALACE_CATALOG_ENTRY.command : existing.command || MEMPALACE_CATALOG_ENTRY.command,
+      args: isLegacyBrokenArgs
+        ? [...MEMPALACE_CATALOG_ENTRY.args]
+        : existing.args !== undefined
+          ? existing.args
+          : [...MEMPALACE_CATALOG_ENTRY.args],
+      env: { ...(existing.env || {}), ...(env || {}) },
     };
     return next;
   }

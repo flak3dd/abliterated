@@ -51,7 +51,7 @@ import { streamChatCompletion } from "./sse";
 import { buildModelAgentProfile } from "./modelAgentProfile";
 import { peekFeatherlessModel } from "./featherlessLimits";
 import { getJobs, getSettings, getWorkspace, setJobs, uid, upsertJob } from "./storage";
-import { workspaceGate } from "./workspaceGuard";
+import { connectedBridgeWriteRoot, workspaceGate } from "./workspaceGuard";
 import { TASK_GRAPH_PATH, formatTaskGraphPrompt, parseTaskGraph, shouldUseTaskGraph } from "./taskGraph";
 import { prepareJobWorktree } from "./jobWorktree";
 import { runMultiAgentFleet, shouldRunMultiAgent } from "./multiAgentRunner";
@@ -352,6 +352,7 @@ async function runJob(initial: Job, settings: ClientSettings) {
     toolUse: jobPeek?.toolUse,
     contextLength: jobPeek?.contextLength,
     enabledTools,
+    workspaceRoot: effectiveRoot || workspaceRoot,
   });
   const capPlan = planCapabilities({
     queryText: job.prompt,
@@ -395,9 +396,9 @@ async function runJob(initial: Job, settings: ClientSettings) {
     settings.planModeEnabled === true
       ? ''
       : buildProcess
-        ? buildReasoningThenBuildNudge()
+        ? buildReasoningThenBuildNudge({ toolsOff: !jobProfile.sendTools })
         : settings.buildModeEnabled !== false
-          ? buildBuildModeAlwaysNudge()
+          ? buildBuildModeAlwaysNudge({ toolsOff: !jobProfile.sendTools })
           : large
             ? buildLargeJobNudge()
             : '',
@@ -547,7 +548,11 @@ async function runJob(initial: Job, settings: ClientSettings) {
           const applied = await applyGrokEdits(edits, {
             writeToWorkspace: true,
             autoAccept: settings.autoAcceptEdits === true,
-            root: effectiveRoot,
+            root: connectedBridgeWriteRoot({
+              workspaceRoot: effectiveRoot,
+              appRoot: bridge.currentAppRoot,
+              bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
+            }) || effectiveRoot,
           });
           const pending = edits.filter((_, i) => applied[i]?.status === 'pending');
           if (pending.length) enqueuePendingEdits(pending, `job:${job.id}`);
@@ -602,7 +607,10 @@ async function runJob(initial: Job, settings: ClientSettings) {
           !looksLikeBuildOutput(assistantText, toolsUsed)
         ) {
           buildImplementNudgeUsed = true;
-          history.push({ role: "user", content: buildBuildModeImplementNudge() });
+          history.push({
+            role: "user",
+            content: buildBuildModeImplementNudge({ toolsOff: !jobProfile.sendTools }),
+          });
           job = appendLog(job, "build process: ToDo without diffs — implement nudge");
           continue;
         }

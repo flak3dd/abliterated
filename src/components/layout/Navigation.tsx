@@ -8,6 +8,7 @@ import {
   MessageSquare,
   PanelLeft,
   Radio,
+  Server,
   Settings,
   type LucideIcon,
 } from 'lucide-react';
@@ -20,11 +21,12 @@ const PRIMARY: { id: Tab; label: string; shortcut: string; icon: LucideIcon }[] 
   { id: 'models', label: 'Models', shortcut: '⌘3', icon: Cpu },
   { id: 'jobs', label: 'Jobs', shortcut: '⌘4', icon: ListTodo },
   { id: 'api', label: 'API Endpoints', shortcut: '⌘5', icon: Radio },
-  { id: 'images', label: 'Images', shortcut: '⌘6', icon: ImageIcon },
+  { id: 'vllm', label: 'vLLM', shortcut: '⌘6', icon: Server },
+  { id: 'images', label: 'Images', shortcut: '⌘7', icon: ImageIcon },
 ];
 
 const SECONDARY: { id: Tab; label: string; shortcut: string; icon: LucideIcon }[] = [
-  { id: 'settings', label: 'Settings', shortcut: '⌘7', icon: Settings },
+  { id: 'settings', label: 'Settings', shortcut: '⌘8', icon: Settings },
 ];
 
 const ITEMS = [...PRIMARY, ...SECONDARY];

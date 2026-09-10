@@ -21,6 +21,7 @@ spark-image/logs/
 __pycache__/
 *.py[cod]
 .ablit/*.py
+scripts/mailersend_*.json
 
 # Code signing secrets (never commit)
 build/signing/

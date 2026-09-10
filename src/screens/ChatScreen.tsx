@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle } from 'react';
+import { forwardRef, useEffect, useImperativeHandle } from 'react';
 import { ArrowLeft, ArrowDown, RotateCcw, Send, Square, ListChecks, PanelRight, Play } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { DEEPEN_COMPLETENESS_CHAT_LABEL, DEEPEN_COMPLETENESS_TOOLTIP } from '../lib/deepenComplete';
@@ -9,9 +9,8 @@ import { resolveActiveSettings } from '../lib/activeEndpoint';
 import { ProofChip } from '../components/chat/ProofChip';
 import { enqueueChatAsJob } from '../lib/jobRunner';
 import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
-import type { ClientSettings, Tab, Thread } from '../types';
-
-import { PLAN_MODE_TOOLS } from '../types';
+import type { ClientSettings, Tab, Thread, AgentMode } from '../types';
+import { ALL_AGENT_MODES, PLAN_MODE_TOOLS } from '../types';
 import { MESSAGE_WINDOW, useAgentLoop } from '../hooks/useAgentLoop';
 
 export interface ChatScreenHandle {
@@ -19,6 +18,7 @@ export interface ChatScreenHandle {
   retry: () => Promise<void>;
   continueAfterTool: (messageId: string) => Promise<void>;
   fillInput: (text: string) => void;
+  focusInput: () => void;
 }
 
 interface Props {
@@ -36,8 +36,10 @@ interface Props {
   onComposerSeedConsumed?: () => void;
   planMode?: boolean;
   buildMode?: boolean;
+  agentMode?: AgentMode;
   onTogglePlanMode?: () => void;
   onToggleBuildMode?: () => void;
+  onSelectAgentMode?: (mode: AgentMode) => void;
   onApprovePlan?: () => void;
   /** Persist ClientSettings patches (Completeness toggle syncs with Settings/Jobs). */
   onSettingsChange?: (s: ClientSettings) => void;
@@ -109,7 +111,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     onComposerSeedConsumed,
     planMode = false,
     buildMode = false,
+    agentMode,
     onTogglePlanMode,
+    onSelectAgentMode,
     onApprovePlan,
     onSettingsChange,
     onOpenTab,
@@ -159,6 +163,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     handleGitCommit,
     handleCreatePr,
     handleCheckpointRestore,
+    restoreCheckpointById,
     handleWriteFile,
     handleShellExecuted,
     handleContinuePrompt,
@@ -177,6 +182,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     onComposerSeedConsumed,
     planMode,
     buildMode,
+    agentMode,
     onSettingsChange,
   });
 
@@ -187,9 +193,38 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
       retry,
       continueAfterTool,
       fillInput,
+      focusInput: () => {
+        inputRef.current?.focus();
+      },
     }),
-    [stop, retry, continueAfterTool, fillInput],
+    [stop, retry, continueAfterTool, fillInput, inputRef],
   );
+
+  const currentMode: AgentMode = agentMode || settings.agentMode || (planMode ? 'plan' : 'agent');
+
+  const handleModeSelect = (mode: AgentMode) => {
+    if (onSelectAgentMode) {
+      onSelectAgentMode(mode);
+    } else if (onSettingsChange) {
+      onSettingsChange({
+        ...settings,
+        agentMode: mode,
+        planModeEnabled: mode === 'plan',
+        buildModeEnabled: mode === 'agent',
+      });
+    }
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'i' || e.key === 'I')) {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [inputRef]);
 
   const modKey = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K';
   const midRunOn = settings.midRunInjectEnabled !== false;
@@ -221,7 +256,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         <div className="min-w-0 flex-1">
           <div className="truncate text-[20px] font-semibold tracking-tight text-foreground">{thread.title}</div>
           <div className="truncate font-mono text-[10.5px] text-muted-foreground">
-            {resolveActiveSettings(settings).label} · {agentProfile.label} · {planMode ? 'PLAN · ' : buildMode ? 'BUILD · ' : ''}
+            {resolveActiveSettings(settings).label} · {agentProfile.label} · {currentMode.toUpperCase()} ·
             {agentProfile.useThoughtLock ? 'THOUGHT · ' : ''}
             {completenessOn ? 'COMPLETE · ' : ''}{statusLabel}
             {grokHeader ? ` · ${grokHeader}` : ''}
@@ -284,11 +319,29 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           onOpenTab={onOpenTab}
         />
       ) : null}
+      <div className="flex border-b border-border bg-background px-4 py-2">
+        <div className="flex gap-1 rounded-lg bg-surface p-0.5">
+          {ALL_AGENT_MODES.map((m) => (
+            <button
+              key={m}
+              onClick={() => handleModeSelect(m)}
+              className={cn(
+                'rounded-md px-3 py-1 font-mono text-[11px] capitalize transition-colors',
+                currentMode === m
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div
         className={cn(
-          'relative min-h-0 flex-1 chat-terminal',
-          planMode ? 'chat-terminal--plan' : buildMode ? 'chat-terminal--build' : 'chat-terminal--discuss',
+          'chat-terminal flex flex-1 flex-col overflow-hidden',
+          currentMode === 'plan' ? 'chat-terminal--plan' : currentMode === 'ask' ? 'chat-terminal--discuss' : 'chat-terminal--build',
         )}
       >
         <div className="chat-terminal-bg" aria-hidden="true" />
@@ -337,13 +390,14 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                   key={m.id}
                   message={m}
                   autoAcceptEdits={autoAcceptEdits}
-                  writesLocked={planMode}
-                  terminalTone={planMode ? 'plan' : buildMode ? 'build' : 'discuss'}
+                  writesLocked={currentMode === 'plan' || currentMode === 'ask'}
+                  terminalTone={currentMode === 'plan' ? 'plan' : currentMode === 'ask' ? 'discuss' : 'build'}
                   grokResults={grokById[m.id]}
                   bridgeConnected={bridgeStatus === 'connected'}
                   onGitCommit={handleGitCommit}
                   onCreatePr={handleCreatePr}
                   onCheckpointRestore={handleCheckpointRestore}
+                  onRestoreCheckpointById={restoreCheckpointById}
                   onWriteFile={handleWriteFile}
                   onShellExecuted={handleShellExecuted}
                   completionFooterEnabled={settings.completionFooterEnabled !== false}
@@ -376,7 +430,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         ) : null}
       </div>
 
-      {!planMode && planChecklist.length ? (
+      {currentMode !== 'plan' && planChecklist.length ? (
         <div className="border-t border-zinc-800 bg-zinc-950/60 px-3 py-2">
           <div className="font-mono text-[10px] uppercase tracking-wide text-zinc-400">ToDo</div>
           <ul className="mt-1 max-h-28 space-y-0.5 overflow-auto font-mono text-[11px] text-zinc-300">
@@ -390,13 +444,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         </div>
       ) : null}
 
-      {!planMode && buildMode ? (
-        <div className="border-t border-amber-800/50 bg-amber-950/20 px-3 py-1.5 font-mono text-[10px] text-amber-200/90">
-          Build mode locked — todo → explore tools → real diffs in content this turn
-          {thoughtOn ? ' · Thought: Goal / Inspect / steps in reasoning first' : ''}.
-        </div>
-      ) : null}
-      {planMode ? (
+      {currentMode === 'plan' ? (
         <div className="border-t border-sky-800/60 bg-sky-950/30 px-3 py-2">
           <div className="font-mono text-[10px] uppercase tracking-wide text-sky-300">
             Plan mode · tools {effectiveTools.join(', ') || PLAN_MODE_TOOLS.join(', ')}
@@ -439,6 +487,16 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               Cancel plan
             </button>
           </div>
+        </div>
+      ) : null}
+      {currentMode === 'ask' ? (
+        <div className="border-t border-emerald-800/60 bg-emerald-950/30 px-3 py-1.5 font-mono text-[10px] text-emerald-300">
+          Ask mode (read-only) — explore & search without writes.
+        </div>
+      ) : null}
+      {currentMode === 'debug' ? (
+        <div className="border-t border-amber-800/60 bg-amber-950/30 px-3 py-1.5 font-mono text-[10px] text-amber-300">
+          Debug mode — systematic protocol: reproduce → isolate → hypothesize → fix → verify.
         </div>
       ) : null}
       {needsWorkingDir && messages.length > 0 && onChooseWorkspace ? (
@@ -520,27 +578,33 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             />
             {DEEPEN_COMPLETENESS_CHAT_LABEL}
           </label>
-          {onTogglePlanMode ? (
-            <label
-              className={
-                'flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded border px-2 py-1 font-mono text-[10px] ' +
-                (planMode
-                  ? 'border-sky-600/70 bg-sky-950/50 text-sky-300'
-                  : 'border-border bg-background text-muted')
-              }
-              title="Plan mode: read-only explore → checklist until Approve. Write/shell/MCP stay locked."
-            >
-              <input
-                type="checkbox"
-                role="switch"
-                aria-checked={planMode}
-                checked={planMode}
-                onChange={() => onTogglePlanMode()}
-                className="h-3 w-3 accent-sky-400"
-              />
-              {planMode ? 'Plan active' : 'Plan mode'}
-            </label>
-          ) : null}
+          <div className="flex items-center rounded-lg border border-border/80 bg-zinc-900/90 p-0.5 shadow-inner">
+            {ALL_AGENT_MODES.map((m) => {
+              const active = currentMode === m;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => handleModeSelect(m)}
+                  className={cn(
+                    'px-2 py-0.5 font-mono text-[10.5px] font-medium rounded transition-all capitalize',
+                    active
+                      ? m === 'plan'
+                        ? 'border border-sky-500/50 bg-sky-950/60 text-sky-300 shadow-sm'
+                        : m === 'ask'
+                        ? 'border border-emerald-500/50 bg-emerald-950/60 text-emerald-300 shadow-sm'
+                        : m === 'debug'
+                        ? 'border border-amber-500/50 bg-amber-950/60 text-amber-300 shadow-sm'
+                        : 'border border-zinc-600/60 bg-zinc-800 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-zinc-200',
+                  )}
+                  title={`${m.toUpperCase()} mode (Cmd+I to focus)`}
+                >
+                  {m}
+                </button>
+              );
+            })}
+          </div>
           {busy ? (
             <>
               <button type="button" onClick={stop} className="btn-danger shrink-0" title="Stop agent (Esc)">

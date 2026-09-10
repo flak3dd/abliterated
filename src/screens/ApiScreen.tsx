@@ -17,9 +17,11 @@ import {
   DRAFT_IMAGE_MODEL,
   FAST_IMAGE_MODEL,
   SPARK_CHAT_MODEL,
+  SPARK_GPT_OSS_MODEL,
   UNCENSORED_IMAGE_MODEL,
   sparkBridgeDownHint,
   sparkChatSettingsPatch,
+  sparkGptOssSettingsPatch,
   sparkImageSettingsPatch,
   sparkOpsCheatSheet,
   sparkPushCommand,
@@ -610,11 +612,14 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
         {provider === 'dgx-spark' ? (
           <Section
             title="DGX Spark"
-            hint={`Qwen abliterated vLLM on :8000 (served name ${SPARK_CHAT_MODEL}). Set LAN host then Use Spark Qwen. NVIDIA Sync uses 127.0.0.1 and Vite /spark-v1.`}
+            hint={`Qwen (${SPARK_CHAT_MODEL}) or GPT-OSS 120B MXFP4 (${SPARK_GPT_OSS_MODEL}) on :8000 — one at a time. NVIDIA Sync uses 127.0.0.1 and Vite /spark-v1.`}
           >
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" onClick={() => patch(sparkChatSettingsPatch(draft))} className="btn-primary h-8 px-3 text-[12px]">
                 Use Spark Qwen
+              </button>
+              <button type="button" onClick={() => patch(sparkGptOssSettingsPatch(draft))} className="btn-ghost h-8 px-3 text-[12px]">
+                Use GPT-OSS 120B
               </button>
               <label className="flex items-center gap-2 text-[13px] text-foreground">
                 <input

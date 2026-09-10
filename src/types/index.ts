@@ -1,7 +1,30 @@
 import type { FileRef, PlanApproved, PlanItem, WorkflowStep } from '../lib/turnWorkflow';
 
-export type Tab = 'home' | 'workspace' | 'models' | 'jobs' | 'api' | 'settings' | 'images';
+export type Tab = 'home' | 'workspace' | 'models' | 'jobs' | 'api' | 'vllm' | 'settings' | 'images';
 export type ReasoningLevel = 'off' | 'low' | 'high' | 'max';
+
+/** Unified agent interaction mode selector. */
+export type AgentMode = 'agent' | 'ask' | 'plan' | 'debug';
+export const ALL_AGENT_MODES: AgentMode[] = ['agent', 'ask', 'plan', 'debug'];
+
+/** Diagnostic item from post-edit lint/type-check. */
+export interface DiagnosticItem {
+  file: string;
+  line?: number;
+  col?: number;
+  message: string;
+  severity?: 'error' | 'warning' | 'info';
+}
+
+/** IDE snapshot captured before the first token of a run. */
+export interface IdeSnapshot {
+  prompt: string;
+  mode: AgentMode;
+  openTabs: string[];
+  activeEditor?: { path: string; cursorLine: number; selectionText?: string };
+  attachedImages?: Array<{ name: string; dataUrl: string }>;
+  atRefs?: Array<{ ref: string; path?: string }>;
+}
 export const ALL_TOOL_TYPES = [
   'web_fetch',
   'web_search',
@@ -203,6 +226,30 @@ export const PLAN_MODE_TOOLS: ToolType[] = [
   'memory_wake',
 ];
 
+/** Strict read-only tools for Ask mode — no writes, no shell, no mutations. */
+export const ASK_MODE_TOOLS: ToolType[] = [
+  'read_file',
+  'grep',
+  'glob',
+  'list_dir',
+  'file_outline',
+  'semantic_search',
+  'git_status',
+  'git_diff',
+  'web_fetch',
+  'web_search',
+  'todo',
+  'task_read',
+  'list_skills',
+  'read_skill',
+  'memory_search',
+  'memory_status',
+  'memory_wake',
+];
+
+/** Debug mode: full tools — same as Agent. Debugging needs maximum capability. */
+export const DEBUG_MODE_TOOLS: ToolType[] = [...ALL_TOOL_TYPES];
+
 export type HunkStatus = 'pending' | 'accepted' | 'rejected';
 
 export interface DiffHunk {
@@ -215,7 +262,7 @@ export interface DiffHunk {
   status: HunkStatus;
 }
 
-export type ToolCallStatus = 'pending' | 'allowed' | 'denied' | 'executed' | 'error';
+export type ToolCallStatus = 'pending' | 'running' | 'completed' | 'allowed' | 'denied' | 'executed' | 'error';
 
 export interface ToolCallPayload {
   id: string;
@@ -227,6 +274,13 @@ export interface ToolCallPayload {
 
 export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 export type MessageStatus = 'streaming' | 'complete' | 'error';
+
+export interface ChangeSummary {
+  files: { path: string; status?: string }[];
+  changes: string[];
+  verifications: string[];
+  verified: boolean;
+}
 
 export interface Message {
   id: string;
@@ -244,6 +298,15 @@ export interface Message {
   planApproved?: PlanApproved;
   steps?: WorkflowStep[];
   files?: FileRef[];
+  changeSummary?: ChangeSummary;
+  /** Which agent mode produced this message. */
+  mode?: AgentMode;
+  /** Auto-checkpoint id stamped after the first write in a run. */
+  checkpointId?: string;
+  /** Human-readable label for the checkpoint. */
+  checkpointLabel?: string;
+  /** Post-edit diagnostics (lint/type-check) injected for the next turn. */
+  diagnostics?: DiagnosticItem[];
 }
 
 export interface Thread {
@@ -420,6 +483,10 @@ export interface ClientSettings {
   mempalaceAutoSave: boolean;
   /** Verify-strict quality loop (Build + skills auto-inject). Default true. */
   verifyStrictProfile: boolean;
+  /** Unified agent mode: agent (full), ask (read-only), plan (research→approve), debug (systematic debug). Default 'agent'. */
+  agentMode: AgentMode;
+  /** Opt-in: run tsc/lint after edits and inject results into next turn. Default false. */
+  postEditDiagnostics: boolean;
 }
 
 export type ChatOpenAiToolCall = {

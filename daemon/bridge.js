@@ -23,6 +23,7 @@ import {
 } from './pyManaged.js';
 import { searchWeb } from './webSearch.js';
 import { readProjectMemory } from './projectMemory.js';
+import { handleVllmCtl } from './vllmControl.js';
 import * as mempalace from './mempalace.js';
 
 const HOST = '127.0.0.1';
@@ -164,9 +165,13 @@ function resolveInsideRoot(relOrAbs, base) {
   const rootNorm = root.replace(/\\/g, '/').replace(/\/+$/, '');
   let stripped = raw;
   if (rootNorm) {
-    if (norm === rootNorm) stripped = '.';
-    else if (norm.toLowerCase().startsWith(rootNorm.toLowerCase() + '/')) {
-      stripped = norm.slice(rootNorm.length + 1) || '.';
+    if (norm.toLowerCase() === rootNorm.toLowerCase()) {
+      stripped = '.';
+    } else if (norm.toLowerCase().startsWith(rootNorm.toLowerCase() + '/')) {
+      // Calculate correct slice length by finding the actual prefix length, not assuming case match
+      const rootWithSlash = rootNorm + '/';
+      const matchLen = rootWithSlash.length;
+      stripped = norm.slice(matchLen) || '.';
     }
   }
   if (String(stripped).split(/[\\/]/).includes('..')) {
@@ -1150,7 +1155,13 @@ async function handleMcpCallTool(ws, msg) {
 }
 
 
-const server = http.createServer((_req, res) => {
+const server = http.createServer((req, res) => {
+  if (req.url === '/restart' || req.url === '/restart/') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('restarting bridge...\n');
+    setTimeout(() => void shutdownBridge(), 100);
+    return;
+  }
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('abliterated-bridge localhost only\n');
 });
@@ -1352,6 +1363,22 @@ wss.on('connection', (ws, req) => {
     }
     if (type === 'mcp_call_tool') {
       void handleMcpCallTool(ws, msg);
+      return;
+    }
+    if (type === 'vllm_ctl') {
+      void (async () => {
+        try {
+          const result = await handleVllmCtl(String(msg.op || 'status'), msg);
+          send(ws, { runId: msg.runId, status: 'ok', result });
+        } catch (err) {
+          send(ws, { runId: msg.runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
+        }
+      })();
+      return;
+    }
+    if (type === 'bridge_restart') {
+      send(ws, { type: 'bridge_restart_ack', ok: true });
+      setTimeout(() => void shutdownBridge(), 100);
       return;
     }
 

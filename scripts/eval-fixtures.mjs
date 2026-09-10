@@ -162,6 +162,24 @@ assert.equal(
   false,
 );
 assert.equal(
+  hg.shouldEvidenceDeepen({
+    content: "ToDo:\n- [ ] scaffold",
+    deepenOn: true,
+    openTodos: true,
+    filesLanded: true,
+  }),
+  false,
+);
+assert.equal(
+  hg.shouldEvidenceDeepen({
+    content: "here is a sketch",
+    deepenOn: true,
+    openTodos: false,
+    missingFiles: true,
+  }),
+  true,
+);
+assert.equal(
   hg.multiAgentShouldRun({
     multiAgentEnabled: true,
     jobMultiAgent: true,

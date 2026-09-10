@@ -2,8 +2,10 @@ import { memo, useMemo, useState, type ReactNode } from 'react';
 import {
   Brain,
   Check,
+  CheckCircle2,
   Code2,
   Copy,
+  FileCode,
   FileText,
   GitBranch,
   GitCommit,
@@ -13,6 +15,9 @@ import {
   Search,
   Terminal,
   Zap,
+  RotateCcw,
+  AlertTriangle,
+  Loader2,
 } from 'lucide-react';
 import { DiffViewer } from './DiffViewer';
 import { ReasoningTrace } from './ReasoningTrace';
@@ -405,6 +410,7 @@ export type MessageBubbleProps = {
   onApprovePlan?: () => void;
   onDeclinePlan?: () => void;
   onOpenFile?: (path: string) => void;
+  onRestoreCheckpointById?: (checkpointId: string) => void;
 };
 
 function MessageBubbleInner({
@@ -425,6 +431,7 @@ function MessageBubbleInner({
   onApprovePlan,
   onDeclinePlan,
   onOpenFile,
+  onRestoreCheckpointById,
 }: MessageBubbleProps) {
   const [copied, setCopied] = useState(false);
 
@@ -468,6 +475,20 @@ function MessageBubbleInner({
     return parseCompletionFooter(displayContent);
   }, [m.role, m.status, completionFooterEnabled, displayContent]);
 
+  const changeSummary = useMemo(() => {
+    if (m.role !== 'assistant') return null;
+    if (m.changeSummary) return m.changeSummary;
+    if (footer?.changes?.length || footer?.verifications?.length) {
+      return {
+        files: (m.files || []).map((f) => ({ path: f.path, status: 'modified' })),
+        changes: footer.changes || (footer.summary ? [footer.summary] : []),
+        verifications: footer.verifications || [],
+        verified: (footer.verifications?.length || 0) > 0,
+      };
+    }
+    return null;
+  }, [m.role, m.changeSummary, footer, m.files]);
+
   const mainContent = footer ? footer.body : displayContent;
 
   const contentNode = useMemo(() => {
@@ -502,6 +523,22 @@ function MessageBubbleInner({
           <span className="flex items-center gap-1 text-amber-400">
             <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping" />
             streaming
+          </span>
+        ) : null}
+        {m.role === 'assistant' && m.mode ? (
+          <span
+            className={cn(
+              'rounded px-1.5 py-0.2 text-[9px] uppercase font-mono font-medium border',
+              m.mode === 'plan'
+                ? 'border-sky-800/60 bg-sky-950/60 text-sky-300'
+                : m.mode === 'ask'
+                ? 'border-emerald-800/60 bg-emerald-950/60 text-emerald-300'
+                : m.mode === 'debug'
+                ? 'border-amber-800/60 bg-amber-950/60 text-amber-300'
+                : 'border-zinc-700/60 bg-zinc-800/60 text-zinc-300',
+            )}
+          >
+            {m.mode}
           </span>
         ) : null}
         {m.status === 'error' ? <span className="text-rose-400 font-semibold">error</span> : null}
@@ -556,8 +593,15 @@ function MessageBubbleInner({
                 <ToolIcon size={11} />
                 {m.toolCall.name}
               </span>
-              <span className="rounded bg-surface px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-zinc-400 border border-border-subtle">
-                {m.toolCall.status}
+              <span className="rounded bg-surface px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-zinc-400 border border-border-subtle inline-flex items-center gap-1">
+                {m.toolCall.status === 'running' ? (
+                  <>
+                    <Loader2 size={10} className="animate-spin text-amber-400" />
+                    <span className="text-amber-400">running</span>
+                  </>
+                ) : (
+                  m.toolCall.status
+                )}
               </span>
               {toolSummary(m.toolCall) ? (
                 <span className="min-w-0 truncate text-zinc-300 text-[11px] max-w-[280px]">
@@ -657,12 +701,131 @@ function MessageBubbleInner({
                 {m.status === 'streaming' ? <span className="stream-cursor" aria-hidden /> : null}
               </>
             )}
+            {changeSummary && (changeSummary.changes.length > 0 || changeSummary.verifications.length > 0) ? (
+              <div className="mt-3 rounded-lg border border-border/80 bg-surface/50 p-3 text-[11px] leading-5 font-mono">
+                <div className="mb-2 flex items-center justify-between border-b border-border/60 pb-1.5">
+                  <div className="flex items-center gap-1.5 font-semibold text-zinc-200">
+                    <CheckCircle2
+                      size={13}
+                      className={changeSummary.verified ? 'text-emerald-400' : 'text-amber-400'}
+                    />
+                    <span className="text-[10.5px] uppercase tracking-wider">
+                      {changeSummary.verified ? 'Verified Changes' : 'Summary of Changes'}
+                    </span>
+                  </div>
+                  <span
+                    className={cn(
+                      'rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-semibold border',
+                      changeSummary.verified
+                        ? 'border-emerald-800/60 bg-emerald-950/70 text-emerald-300'
+                        : 'border-amber-800/60 bg-amber-950/70 text-amber-300',
+                    )}
+                  >
+                    {changeSummary.verified ? 'Verified' : 'Unverified'}
+                  </span>
+                </div>
+
+                {changeSummary.files.length > 0 ? (
+                  <div className="mb-2 flex flex-wrap items-center gap-1">
+                    <span className="text-[9.5px] uppercase tracking-wider text-muted-foreground mr-1">
+                      Files:
+                    </span>
+                    {changeSummary.files.map((f, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        title={f.path}
+                        onClick={() => onOpenFile?.(f.path)}
+                        className="inline-flex items-center gap-1 rounded border border-border/70 bg-zinc-900/80 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:border-sky-500/50 hover:text-sky-200 transition-colors"
+                      >
+                        <FileCode size={10} className="text-zinc-500" />
+                        <span>{f.path.split('/').pop()}</span>
+                        {f.status && f.status !== 'modified' ? (
+                          <span className="text-[8.5px] text-zinc-500">({f.status})</span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+
+                {changeSummary.changes.length > 0 ? (
+                  <div className="mb-2">
+                    <div className="text-[9.5px] uppercase tracking-wider text-muted-foreground mb-1">
+                      Changes:
+                    </div>
+                    <ul className="space-y-1 pl-1">
+                      {changeSummary.changes.map((item, idx) => (
+                        <li key={idx} className="flex items-start gap-1.5 text-zinc-300">
+                          <span className="text-sky-400 mt-0.5 shrink-0">•</span>
+                          <span className="break-words">{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {changeSummary.verifications.length > 0 ? (
+                  <div className="mb-1">
+                    <div className="text-[9.5px] uppercase tracking-wider text-muted-foreground mb-1">
+                      Self-Verification:
+                    </div>
+                    <ul className="space-y-1 pl-1">
+                      {changeSummary.verifications.map((item, idx) => (
+                        <li key={idx} className="flex items-start gap-1.5 text-zinc-300">
+                          <Check size={11} className="text-emerald-400 mt-1 shrink-0" />
+                          <span className="break-words text-emerald-200/90">{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {m.checkpointId ? (
+              <div className="mt-2.5 flex items-center justify-between rounded-lg border border-sky-800/50 bg-sky-950/40 px-3 py-2 font-mono text-[11px] text-sky-200 shadow-sm">
+                <div className="flex items-center gap-2 min-w-0">
+                  <RotateCcw size={12} className="text-sky-400 shrink-0" />
+                  <span className="text-zinc-400 text-[10px] uppercase tracking-wider">Checkpoint:</span>
+                  <span className="font-semibold text-sky-300 truncate text-[11px]">{m.checkpointLabel || m.checkpointId}</span>
+                </div>
+                {onRestoreCheckpointById ? (
+                  <button
+                    type="button"
+                    onClick={() => onRestoreCheckpointById(m.checkpointId!)}
+                    className="shrink-0 ml-3 rounded border border-sky-600/60 bg-sky-900/70 px-2.5 py-1 text-[10px] font-semibold text-sky-200 hover:bg-sky-800 hover:text-white transition-all shadow-sm"
+                  >
+                    Restore Checkpoint
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
+            {m.diagnostics && m.diagnostics.length > 0 ? (
+              <div className="mt-2.5 rounded-lg border border-amber-800/60 bg-amber-950/30 p-2.5 font-mono text-[11px] text-amber-200">
+                <div className="flex items-center gap-1.5 font-semibold text-amber-300 text-[11px]">
+                  <AlertTriangle size={13} className="text-amber-400 shrink-0" />
+                  <span>Post-edit diagnostics: {m.diagnostics.length} issue(s) detected</span>
+                </div>
+                <div className="mt-2 max-h-32 overflow-y-auto space-y-1 text-[10px] text-amber-200/80 pr-1">
+                  {m.diagnostics.map((d, i) => (
+                    <div key={i} className="truncate">
+                      <span className="text-zinc-400">{d.file}{d.line ? `:${d.line}` : ''}</span>{' '}
+                      <span className="text-amber-400">[{d.severity || 'error'}]</span> {d.message}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             {footer ? (
               <div className="mt-3 border-t border-zinc-800 pt-2.5">
-                <div className="mb-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-zinc-300">
-                  <span className="text-[10px] uppercase tracking-wider font-semibold text-emerald-400">Done · </span>
-                  {footer.summary}
-                </div>
+                {(!changeSummary || changeSummary.changes.length === 0) && (
+                  <div className="mb-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-zinc-300">
+                    <span className="text-[10px] uppercase tracking-wider font-semibold text-emerald-400">Done · </span>
+                    {footer.summary}
+                  </div>
+                )}
                 <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-muted font-medium">Suggested Next Steps</div>
                 <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap">
                   {footer.options.map((opt, i) => (

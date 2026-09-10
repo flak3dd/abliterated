@@ -43,6 +43,7 @@ const {
   joinRoot,
   workspaceGate,
   shouldWriteWorkspaceFiles,
+  connectedBridgeWriteRoot,
 } = mod;
 
 assert.equal(canonicalizePath('/private/tmp/ablit-smoke'), '/tmp/ablit-smoke');
@@ -112,6 +113,48 @@ assert.equal(
     connected: false,
   }),
   false,
+);
+
+assert.equal(
+  connectedBridgeWriteRoot({
+    workspaceRoot: '/Users/me/ui-stale',
+    appRoot: '/Users/me/abliterated',
+    bridgeRoot: '/Users/me/project',
+  }),
+  '/Users/me/project',
+);
+assert.equal(
+  connectedBridgeWriteRoot({
+    workspaceRoot: '/Users/me/project',
+    appRoot: '/Users/me/abliterated',
+    bridgeRoot: '/Users/me/abliterated',
+  }),
+  '/Users/me/project',
+);
+assert.equal(
+  connectedBridgeWriteRoot({
+    workspaceRoot: '',
+    appRoot: '/Users/me/abliterated',
+    bridgeRoot: '/Users/me/project',
+  }),
+  '/Users/me/project',
+);
+assert.equal(
+  connectedBridgeWriteRoot({
+    workspaceRoot: '',
+    appRoot: '/Users/me/abliterated',
+    bridgeRoot: '/Users/me/abliterated',
+  }),
+  '',
+);
+assert.equal(
+  shouldWriteWorkspaceFiles({
+    workspaceRoot: '',
+    appRoot: '/Users/me/abliterated',
+    connected: true,
+    bridgeRoot: '/Users/me/project',
+  }),
+  true,
 );
 
 fs.rmSync(outDir, { recursive: true, force: true });

@@ -1,6 +1,11 @@
 import { hunkToPatch, parseUnifiedDiff } from './diffParser';
 import { bridge } from './bridgeClient';
-import { isPathInsideAppRoot, joinRoot, workspaceGate } from './workspaceGuard';
+import {
+  connectedBridgeWriteRoot,
+  isPathInsideAppRoot,
+  joinRoot,
+  workspaceGate,
+} from './workspaceGuard';
 
 export type GrokEdit = {
   file: string;
@@ -77,8 +82,10 @@ export function isPathInsideRoot(file: string, root?: string): boolean {
     const rootN = norm(fr);
     if (!rootN) return false;
     if (fileN === rootN) return true;
-    if (!fileN.startsWith(rootN + '/')) return false;
-    return !segmentLeavesRoot(fileN.slice(rootN.length + 1));
+    // Handle cases where root already has trailing slash, or not
+    const rootWithSlash = rootN.endsWith('/') ? rootN : rootN + '/';
+    if (!fileN.startsWith(rootWithSlash)) return false;
+    return !segmentLeavesRoot(fileN.slice(rootWithSlash.length));
   }
 
   return !segmentLeavesRoot(norm(raw).replace(/^\.\//, ''));
@@ -349,7 +356,14 @@ export async function applyGrokEdits(
   edits: GrokEdit[],
   opts: { autoAccept?: boolean; writeToWorkspace?: boolean; root?: string },
 ): Promise<GrokApplyResult[]> {
-  const root = opts.root || bridge.currentRoot;
+  const root =
+    connectedBridgeWriteRoot({
+      workspaceRoot: opts.root,
+      appRoot: bridge.currentAppRoot,
+      bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
+    }) ||
+    opts.root ||
+    bridge.currentRoot;
   const results: GrokApplyResult[] = [];
   const gate = workspaceGate(root, bridge.currentAppRoot);
   const applyNow = shouldApplyGrokEditsNow(opts);

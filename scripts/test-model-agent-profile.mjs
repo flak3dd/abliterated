@@ -68,9 +68,18 @@ const base = buildModelAgentProfile({
   provider: "featherless",
   toolUse: false,
   contextLength: 8192,
+  buildMode: true,
+  workspaceRoot: "/Users/me/project",
 });
 assert.equal(base.toolTier, "none");
 assert.equal(base.sendTools, false);
+assert.ok(base.systemAddendum.includes("Native function tools are OFF"));
+assert.ok(base.systemAddendum.includes("OVERRIDE"));
+assert.ok(base.systemAddendum.includes("markdown ToDo"));
+assert.ok(base.systemAddendum.includes("Build lock without tools"));
+assert.ok(base.systemAddendum.includes("/Users/me/project"));
+assert.ok(base.systemAddendum.includes("ws://127.0.0.1:17322"));
+assert.equal(base.systemAddendum.includes("call `todo` with 3"), false);
 
 fs.rmSync(outDir, { recursive: true, force: true });
 console.log("test-model-agent-profile: ok");

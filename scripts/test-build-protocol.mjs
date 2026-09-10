@@ -306,4 +306,22 @@ assert.equal(looksTrivialFileEdit('scaffold the whole app project skeleton now')
 assert.equal(shouldApplyBuildProcess('fix the typo in main.ts', { buildMode: true }), false);
 assert.ok(shouldApplyBuildProcess('Build a file structure for the new feature module', { buildMode: true }));
 
+const helpersSrc = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src/lib/agentHelpers.ts'),
+  'utf8',
+);
+assert.ok(helpersSrc.includes('BUILD_PROCESS_SECTION_NO_TOOLS'));
+assert.ok(helpersSrc.includes('do NOT call `todo` or write_file as function tools'));
+assert.ok(helpersSrc.includes('Ignore any instruction to "call `todo`"'));
+assert.ok(helpersSrc.includes('connected bridge filepath'));
+assert.ok(helpersSrc.includes('toolsOff?: boolean'));
+assert.ok(helpersSrc.includes('buildLandCompleteFilesNudge'));
+assert.ok(helpersSrc.includes('previous turn was a fragment'));
+const loopSrc = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src/hooks/useAgentLoop.ts'),
+  'utf8',
+);
+assert.ok(loopSrc.includes('buildBuildModeTodoNudge({ toolsOff: !agentProfile.sendTools })'));
+assert.ok(loopSrc.includes('buildReasoningThenBuildNudge({ toolsOff })'));
+
 console.log('build protocol ok');

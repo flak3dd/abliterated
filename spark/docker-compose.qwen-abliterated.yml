@@ -47,8 +47,8 @@ services:
       - --gpu-memory-utilization
       - ${GPU_MEMORY_UTILIZATION:-0.6}
       - --kv-cache-dtype
-      - fp8
+      - ${KV_CACHE_DTYPE:-fp8}
       - --max-model-len
-      - "65536"
+      - "${MAX_MODEL_LEN:-65536}"
       - --speculative-config
       - '{"method":"mtp","num_speculative_tokens":3}'

@@ -1,0 +1,48 @@
+# vLLM option: Huihui gpt-oss-120b MXFP4 abliterated on DGX Spark (GB10).
+# Weights: batsclamp/Huihui-gpt-oss-120b-mxfp4-abliterated (~65 GB).
+# Shares :8000 with qwen-abliterated — only one text container at a time.
+#
+# vllm/vllm-openai:cu130-nightly ENTRYPOINT is already ["vllm","serve"].
+# command must start at the model path — do not prefix `vllm serve`.
+
+services:
+  gpt-oss-120b-abliterated:
+    image: ${IMAGE:-vllm/vllm-openai:cu130-nightly}
+    container_name: gpt-oss-120b-abliterated
+    restart: unless-stopped
+    ipc: host
+    shm_size: "16gb"
+    gpus: all
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ${MODEL_DIR:-./models/Huihui-gpt-oss-120b-mxfp4-abliterated}:/models/current:ro
+    environment:
+      VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8: "1"
+      CUTE_DSL_ARCH: sm_121a
+      FLASHINFER_DISABLE_VERSION_CHECK: "1"
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+    command:
+      - /models/current
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --served-model-name
+      - ${SERVED_NAME:-gpt-oss-120b-abliterated}
+      - --trust-remote-code
+      - --reasoning-parser
+      - openai_gptoss
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - openai
+      - --quantization
+      - mxfp4
+      - --gpu-memory-utilization
+      - ${GPU_MEMORY_UTILIZATION:-0.70}
+      - --kv-cache-dtype
+      - ${KV_CACHE_DTYPE:-fp8}
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-131072}"
+      - --enable-prefix-caching

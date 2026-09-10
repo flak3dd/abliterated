@@ -19,7 +19,7 @@ import {
   type AgentPhaseMeta,
 } from '../lib/agentPhase';
 import { bridge, type BridgeStatus } from '../lib/bridgeClient';
-import { shouldWriteWorkspaceFiles, workspaceGate } from '../lib/workspaceGuard';
+import { connectedBridgeWriteRoot, shouldWriteWorkspaceFiles, workspaceGate } from '../lib/workspaceGuard';
 import {
   applyGrokEdits,
   dedupeEditsByToolTargets,
@@ -56,8 +56,8 @@ import {
   buildPlanModeNudge,
   buildThoughtModeNudge,
   buildBuildModeAlwaysNudge,
-  filterPlanModeTools,
-  parseTodoBullets,
+  filterModeTools,
+  buildModeNudge,
   parseTodoItems,
   type TodoItem,
   looksExploreIntent,
@@ -69,8 +69,10 @@ import {
   buildReasoningThenBuildNudge,
   buildBuildModeTodoNudge,
   buildBuildModeImplementNudge,
+  buildPlaceholderCodeNudge,
   liftTodoListToContent,
   looksLikeBuildOutput,
+  looksLikePlaceholderOutput,
   shouldSkipSelfDeepen,
   looksTrivialFileEdit,
   looksPromptOnlyRequest,
@@ -104,7 +106,9 @@ import {
   buildReasoningExecuteNudge,
 } from '../lib/reasoningWork';
 import { hasValidCompletionFooter } from '../lib/completionFooter';
-import { asStringList, executeAgentTool, toolArgString } from '../lib/agentTools';
+import { auditTurnChanges } from '../lib/changeAudit';
+import { asStringList, executeAgentTool, runWorkspaceDiagnostics, toolArgString } from '../lib/agentTools';
+import { buildModePromptSection } from '../lib/systemPrompt';
 import { executeMcpToolCall, listConnectedMcpTools, mcpToolsToOpenAi, isMcpToolName } from '../lib/mcpClient';
 import {
   planCapabilities,
@@ -135,6 +139,7 @@ import type {
   Message,
   Thread,
   ToolCallPayload,
+  AgentMode,
 } from '../types';
 
 
@@ -183,7 +188,7 @@ function applyPlanReasoningGuard(assistant: Message): void {
 
 function grokAutoAcceptSuffix(workspaceRoot: string): string {
   const root = workspaceRoot.trim() || '.';
-  return `Workspace writes are ON. Every code file must land under ${root} via write_file or path-headed fences/diffs. Do not leave source only in chat. Shell still needs Run unless auto-run is on.`;
+  return `Workspace writes are ON. Every code file must land under the connected bridge filepath ${root} via write_file or path-headed fences/diffs (ws://127.0.0.1:17322). Do not leave source only in chat. Shell still needs Run unless auto-run is on.`;
 }
 
 /** Cap tool results in API payloads (full text still kept in UI/storage). */
@@ -194,8 +199,24 @@ function truncateForApi(content: string): string {
   return `${content.slice(0, MAX_API_TOOL_CHARS)}\n/* truncated for API (${content.length} chars) */`;
 }
 
-const LIVE_WORKSPACE_SUFFIX =
-  'Live workspace. Files land this turn: call write_file, or put the full file in CONTENT as ```diff / // relative/path (first line // path). Both are applied automatically — do not wait for a click, do not paste tool JSON, do not describe a retry. Chat-only source is a failed build. Call list_dir/glob/read_file/grep — do not fake ls/tree in bash. Answers in content. Reasoning is outline only — never code, diffs, bash, or // path files.';
+function liveWorkspaceSuffix(root: string, toolsOff: boolean): string {
+  const dest = root.trim()
+    ? `the connected bridge filepath ${root}`
+    : 'the connected bridge workspace';
+  if (toolsOff) {
+    return (
+      `Live workspace. Files land this turn on ${dest} via \`\`\`diff / // relative/path fences in CONTENT — ` +
+      'the client writes them through ws://127.0.0.1:17322. Do not call write_file. Chat-only source is a failed build. ' +
+      'Answers in content. Reasoning is outline only — never code, diffs, bash, or // path files.'
+    );
+  }
+  return (
+    `Live workspace. Files land this turn on ${dest}: call write_file, or put the full file in CONTENT as \`\`\`diff / // relative/path (first line // path). ` +
+    'Both are applied automatically through the localhost bridge — do not wait for a click, do not paste tool JSON, do not describe a retry. ' +
+    'Chat-only source is a failed build. Call list_dir/glob/read_file/grep — do not fake ls/tree in bash. Answers in content. ' +
+    'Reasoning is outline only — never code, diffs, bash, or // path files.'
+  );
+}
 
 const PATH_MENTION_RE =
   /(?:^|[\s`'"(])((?:src|lib|app|daemon|public|tests?|scripts?|components?|screens?)\/[\w./+-]+|[\w./-]*package\.json|[\w./-]*tsconfig[\w./-]*|[\w./+-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|css|html|py|rs|go|toml|ya?ml))\b/gi;
@@ -383,6 +404,7 @@ export interface UseAgentLoopProps {
   onComposerSeedConsumed?: () => void;
   planMode?: boolean;
   buildMode?: boolean;
+  agentMode?: AgentMode;
   onSettingsChange?: (s: ClientSettings) => void;
 }
 
@@ -401,8 +423,16 @@ export function useAgentLoop({
   onComposerSeedConsumed,
   planMode = false,
   buildMode = false,
+  agentMode,
   onSettingsChange,
 }: UseAgentLoopProps) {
+
+  const resolvedAgentMode: AgentMode =
+    agentMode ||
+    settings.agentMode ||
+    (planMode ? 'plan' : buildMode ? 'agent' : 'agent');
+  const isPlanMode = resolvedAgentMode === 'plan';
+  const isAskMode = resolvedAgentMode === 'ask';
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [hiddenPrefix, setHiddenPrefix] = useState(0);
@@ -417,10 +447,11 @@ export function useAgentLoop({
   const [grokById, setGrokById] = useState<Record<string, GrokApplyResult[]>>({});
   const [latestGrok, setLatestGrok] = useState<GrokApplyResult[] | undefined>(undefined);
   const [grokEmptyHint, setGrokEmptyHint] = useState<string | undefined>(undefined);
+  const hasAutoCheckpointedRef = useRef(false);
   const maxTurns = Math.min(MAX_AGENT_TURNS_CLAMP, clampMaxAgentTurns(settings.maxAgentTurns));
   const effectiveTools = useMemo(
-    () => (planMode ? filterPlanModeTools(thread.enabledTools) : thread.enabledTools),
-    [planMode, thread.enabledTools],
+    () => filterModeTools(thread.enabledTools, resolvedAgentMode),
+    [resolvedAgentMode, thread.enabledTools],
   );
   const agentProfile = useMemo(() => {
     const active = resolveActiveSettings(settings);
@@ -429,18 +460,25 @@ export function useAgentLoop({
       model: active.defaultModel || thread.model,
       provider: active.provider,
       reasoning: settings.reasoning,
-      planMode,
-      buildMode,
+      planMode: isPlanMode,
+      buildMode: resolvedAgentMode === 'agent',
       toolUse: peek?.toolUse,
       contextLength: peek?.contextLength,
       enabledTools: effectiveTools,
+      workspaceRoot: connectedBridgeWriteRoot({
+        workspaceRoot,
+        appRoot,
+        bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
+      }),
     });
   }, [
     settings,
-    planMode,
-    buildMode,
+    isPlanMode,
+    resolvedAgentMode,
     thread.model,
     effectiveTools,
+    workspaceRoot,
+    appRoot,
   ]);
   const [planChecklist, setPlanChecklist] = useState<string[]>([]);
   const [skillsRecords, setSkillsRecords] = useState<SkillRecord[]>([]);
@@ -584,16 +622,19 @@ export function useAgentLoop({
   }, [thread.id]);
 
   useEffect(() => {
-    if (!planMode) setPlanChecklist([]);
-  }, [planMode]);
+    if (!isPlanMode) setPlanChecklist([]);
+  }, [isPlanMode]);
 
   useEffect(() => {
-    if (!planMode || busy) return;
-    const last = [...messages].reverse().find((m) => m.role === 'assistant' && m.content.trim());
-    if (!last) return;
-    const items = parseTodoBullets(last.content);
-    if (items.length) setPlanChecklist(items);
-  }, [planMode, busy, messages]);
+    if (!isPlanMode || busy) return;
+    const latest = messages[messages.length - 1];
+    if (latest && latest.role === 'assistant' && latest.content) {
+      const items = parseTodoItems(latest.content);
+      if (items.length) {
+        setPlanChecklist(items.map((t) => (t.done ? `[x] ${t.text}` : t.text)));
+      }
+    }
+  }, [isPlanMode, busy, messages]);
 
   // Keep an open thread on the currently active Models/API model.
   useEffect(() => {
@@ -793,44 +834,63 @@ export function useAgentLoop({
     bridgeStatus,
   ]);
 
-  const buildCapabilityPlan = (queryText: string): CapabilityPlan =>
-    planCapabilities({
+  const buildCapabilityPlan = (queryText: string, cache?: { plan: CapabilityPlan | null, turn: number }): CapabilityPlan => {
+    // Cache capability plan for 2 turns to avoid redundant string matching
+    if (cache && cache.plan && cache.turn >= loopTurnRef.current - 1) {
+      return cache.plan;
+    }
+    const plan = planCapabilities({
       queryText,
       skills: skillsRecords,
       mcpTools: listConnectedMcpTools(),
       skillsEnabled: settingsRef.current.skillsEnabled !== false,
-      allowAllMcp: agentProfile.allowMcp && !planMode,
-      canWriteSkill: !planMode && autoAcceptEdits && agentProfile.toolTier === 'full',
+      allowAllMcp: agentProfile.allowMcp && !isPlanMode && !isAskMode,
+      canWriteSkill: !isPlanMode && !isAskMode && autoAcceptEdits && agentProfile.toolTier === 'full',
       excludeSkillIds:
         settingsRef.current.skillsEnabled !== false && settingsRef.current.verifyStrictProfile === true
           ? ['verify-strict']
           : [],
     });
+    if (cache) {
+      cache.plan = plan;
+      cache.turn = loopTurnRef.current;
+    }
+    return plan;
+  };
 
-  const toApiMessages = (list: Message[], extraSystem: string[] = []): ChatOpenAiMessage[] => {
+  const toApiMessages = (list: Message[], extraSystem: string[] = [], cache?: { plan: CapabilityPlan | null; turn: number }): ChatOpenAiMessage[] => {
     const out: ChatOpenAiMessage[] = [];
     let sys = thread.systemPrompt || settingsRef.current.systemPrompt || '';
     const lastUser = [...list].reverse().find((m) => m.role === 'user');
     const buildProcess =
-      !planMode &&
+      !isPlanMode &&
+      !isAskMode &&
       lastUser &&
-      shouldApplyBuildProcess(lastUser.content, { buildMode: !!buildMode, planMode: !!planMode });
+      shouldApplyBuildProcess(lastUser.content, { buildMode: resolvedAgentMode === 'agent', planMode: isPlanMode });
     const largeNudge =
-      !buildProcess && !planMode && lastUser && looksLargeJob(lastUser.content)
+      !buildProcess && !isPlanMode && !isAskMode && lastUser && looksLargeJob(lastUser.content)
         ? buildLargeJobNudge()
         : '';
     const thoughtOn = agentProfile.useThoughtLock;
     const thoughtNudge = thoughtOn ? buildThoughtModeNudge() : '';
-    const buildNudge = planMode
+    const toolsOff = !agentProfile.sendTools;
+    const writeRoot = connectedBridgeWriteRoot({
+      workspaceRoot,
+      appRoot,
+      bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
+    });
+    const modeSection = buildModePromptSection(resolvedAgentMode);
+    const modeNudge = buildModeNudge(resolvedAgentMode);
+    const buildNudge = isPlanMode || isAskMode
       ? ''
       : buildProcess
-        ? buildReasoningThenBuildNudge()
-        : buildMode
-          ? buildBuildModeAlwaysNudge()
+        ? buildReasoningThenBuildNudge({ toolsOff })
+        : resolvedAgentMode === 'agent'
+          ? buildBuildModeAlwaysNudge({ toolsOff })
           : '';
-    const planNudge = planMode ? buildPlanModeNudge() : '';
+    const planNudge = isPlanMode ? buildPlanModeNudge() : '';
     const planBuildNudge =
-      planMode && lastUser && /\b(build|implement|apply|write|code)\b/i.test(lastUser.content)
+      isPlanMode && lastUser && /\b(build|implement|apply|write|code)\b/i.test(lastUser.content)
         ? 'Plan mode is still on; only checklist allowed — operator must Approve to write. Do not emit diffs.'
         : '';
     const lockedGoal = extractLockedGoal(list);
@@ -849,28 +909,31 @@ export function useAgentLoop({
     const verifyStrictBlock = injectVerifyStrict
       ? formatVerifyStrictSkillPrompt(skillsRecords, { force: true })
       : '';
-    const capPlan = buildCapabilityPlan(`${lockedGoal}\n${lastOperatorPrompt(list) || lastUser?.content || ''}`);
+    const capPlan = buildCapabilityPlan(`${lockedGoal}\n${lastOperatorPrompt(list) || lastUser?.content || ''}`, cache);
     const showSkills = !agentProfile.compactPrompt && settings.skillsEnabled !== false;
     // Steering directives first, bulk context last: fitChatPayload clips an oversized
     // system message from the tail, so the tail must hold the most droppable text.
     sys = assembleSystemPrompt(
       [
         { text: sys, essential: true },
+        { text: modeSection, essential: true },
         { text: lockedGoalSystemBlock(lockedGoal), essential: true },
         { text: thoughtNudge, essential: true },
-        { text: planNudge, essential: true },
+        { text: modeNudge, essential: true },
+        { text: isPlanMode ? planNudge : '', essential: true },
         { text: planBuildNudge, essential: true },
         { text: buildNudge, essential: true },
         { text: largeNudge, essential: true },
-        { text: LIVE_WORKSPACE_SUFFIX, essential: true },
+        { text: liveWorkspaceSuffix(writeRoot, toolsOff), essential: true },
         {
           text: shouldWriteWorkspaceFiles({
-            planMode,
+            planMode: isPlanMode || isAskMode,
             workspaceRoot,
             appRoot,
             connected: bridgeStatus === 'connected',
+            bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
           })
-            ? grokAutoAcceptSuffix(workspaceRoot)
+            ? grokAutoAcceptSuffix(writeRoot)
             : '',
           essential: true,
         },
@@ -887,12 +950,42 @@ export function useAgentLoop({
       { maxChars: agentProfile.compactPrompt ? COMPACT_SYSTEM_MAX_CHARS : undefined },
     );
     if (sys) out.push({ role: 'system', content: sys });
-    for (const m of list) {
+
+    // PROGRESSIVE CONTEXT PACKING:
+    // 1. Always keep original user request
+    // 2. Always keep last 12 messages
+    // 3. Truncate long tool outputs before dropping messages
+    // 4. Drop from the middle first, oldest tool outputs first
+    const firstUserIndex = list.findIndex(m => m.role === 'user' && !isMidRunMessageContent(m.content));
+    const keepFirst = firstUserIndex >= 0 ? [list[firstUserIndex]] : [];
+    const keepLast = list.slice(-12);
+    const middleStart = firstUserIndex >= 0 ? firstUserIndex + 1 : 0;
+    const middleEnd = Math.max(middleStart, list.length - 12);
+    const middle = list.slice(middleStart, middleEnd);
+
+    // Sort middle messages: tool messages first (oldest first), then others
+    const sortedMiddle = [...middle].sort((a, b) => {
+      if (a.role === 'tool' && b.role !== 'tool') return -1;
+      if (b.role === 'tool' && a.role !== 'tool') return 1;
+      return 0;
+    });
+
+    // Build message list with aggressive truncation for middle tools
+    const allMessages = [...keepFirst, ...sortedMiddle, ...keepLast];
+
+    for (const m of allMessages) {
       if (m.role === 'system') continue;
       if (m.role === 'tool') {
+        // More aggressive truncation for middle tool messages
+        const isMiddle = middle.includes(m);
+        const maxChars = isMiddle ? 2000 : MAX_API_TOOL_CHARS;
+        const content = m.content.length > maxChars
+          ? `${m.content.slice(0, maxChars)}\n/* truncated (middle context) */`
+          : truncateForApi(m.content);
+
         out.push({
           role: 'tool',
-          content: truncateForApi(m.content),
+          content,
           tool_call_id: m.toolCallId || m.toolCall?.id || '',
         });
         continue;
@@ -921,8 +1014,13 @@ export function useAgentLoop({
   };
 
   const runGrokLayer = async (msg: Message) => {
-    const source = grokSource(msg.content, msg.reasoning, workspaceRoot);
-    if (planMode) {
+    const writeRoot = connectedBridgeWriteRoot({
+      workspaceRoot,
+      appRoot,
+      bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
+    });
+    const source = grokSource(msg.content, msg.reasoning, writeRoot || workspaceRoot);
+    if (isPlanMode || isAskMode) {
       setLatestGrok([]);
       setGrokEmptyHint(undefined);
       return [] as GrokApplyResult[];
@@ -933,25 +1031,47 @@ export function useAgentLoop({
       setGrokEmptyHint(undefined);
       return [] as GrokApplyResult[];
     }
-    const parsed = parseGrokEdits(source, workspaceRoot);
+    const parsed = parseGrokEdits(source, writeRoot || workspaceRoot);
     // Prefer the structured tool channel: if this turn also calls write_file /
     // apply_patch for a file, let the tool write it and skip the content fence.
     const toolTargets = (msg.toolCalls || [])
       .filter((tc) => tc.name === 'write_file' || tc.name === 'apply_patch')
       .map((tc) => toolArgString(tc.arguments, ['path', 'file', 'target']));
-    const edits = dedupeEditsByToolTargets(parsed, toolTargets, workspaceRoot);
+    const edits = dedupeEditsByToolTargets(parsed, toolTargets, writeRoot || workspaceRoot);
     const dedupedAny = edits.length !== parsed.length;
     const writeToWorkspace = shouldWriteWorkspaceFiles({
       planMode: false,
       workspaceRoot,
       appRoot,
       connected: bridge.connected,
+      bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
     });
     const results = await applyGrokEdits(edits, {
       autoAccept: autoAcceptRef.current,
       writeToWorkspace,
-      root: workspaceRoot,
+      root: writeRoot || workspaceRoot,
     });
+    if (results.some((r) => r.status === 'ok') && !hasAutoCheckpointedRef.current && bridge.connected) {
+      hasAutoCheckpointedRef.current = true;
+      try {
+        const label = `auto: turn ${loopTurnRef.current} - grok diff`;
+        const ckpt = await bridge.checkpointSave(label);
+        if (ckpt) {
+          msg.checkpointId = ckpt;
+          msg.checkpointLabel = label;
+          flushStreamPersist({ ...msg });
+        }
+      } catch (e) {
+        console.warn('Auto-checkpoint failed:', e);
+      }
+      if (settingsRef.current.postEditDiagnostics) {
+        const diags = await runWorkspaceDiagnostics(workspaceRoot);
+        if (diags.length > 0) {
+          msg.diagnostics = diags;
+          flushStreamPersist({ ...msg });
+        }
+      }
+    }
     const pending = edits.filter((_, i) => results[i]?.status === 'pending');
     if (pending.length) enqueuePendingEdits(pending, msg.id);
     setGrokById((prev) => ({ ...prev, [msg.id]: results }));
@@ -977,22 +1097,28 @@ export function useAgentLoop({
 
 
   const executeTool = async (tool: ToolCallPayload): Promise<{ msg: Message; executed: boolean }> => {
-    if (planMode && isMcpToolName(tool.name)) {
-      const denied = {
-        ...tool,
-        status: 'denied' as const,
-        result: 'Plan mode: MCP tools locked until you approve the plan.',
-      };
-      return {
-        msg: makeToolMessage(denied, denied.result || ''),
-        executed: false,
-      };
+    if ((isPlanMode || isAskMode) && isMcpToolName(tool.name)) {
+      const isReadOnlyMcp = /search|status|list|query|get|read|check|wake/i.test(tool.name);
+      if (!isReadOnlyMcp) {
+        const denied = {
+          ...tool,
+          status: 'denied' as const,
+          result: isAskMode
+            ? 'Ask mode: Mutating MCP tools are blocked in read-only mode.'
+            : 'Plan mode: Mutating MCP tools locked until you approve the plan.',
+        };
+        return {
+          msg: makeToolMessage(denied, denied.result || ''),
+          executed: false,
+        };
+      }
     }
-    const tools = planMode ? effectiveTools : thread.enabledTools;
+    const tools = effectiveTools;
     const result = await executeAgentTool(tool, {
       enabledTools: tools,
-      autoAcceptEdits: planMode ? false : autoAcceptRef.current,
-      autoRunShell: planMode ? false : autoRunRef.current,
+      agentMode: resolvedAgentMode,
+      autoAcceptEdits: isPlanMode || isAskMode ? false : autoAcceptRef.current,
+      autoRunShell: isPlanMode || isAskMode ? false : autoRunRef.current,
       settings,
       workspaceRoot,
       mode: 'interactive',
@@ -1081,7 +1207,12 @@ export function useAgentLoop({
         persist({ ...message, content: msg, toolCall: { ...tool, status: 'error', result: msg } });
         return;
       }
-      if (!isPathInsideRoot(file, workspaceRoot || bridge.currentRoot)) {
+      const writeRoot = connectedBridgeWriteRoot({
+        workspaceRoot,
+        appRoot,
+        bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
+      });
+      if (!isPathInsideRoot(file, writeRoot || workspaceRoot || bridge.currentRoot)) {
         const msg = 'path escape blocked';
         persist({ ...message, content: msg, toolCall: { ...tool, status: 'error', result: msg } });
         return;
@@ -1092,7 +1223,7 @@ export function useAgentLoop({
         return;
       }
       try {
-        const ok = await bridge.writeFile(file, content, { root: workspaceRoot || undefined });
+        const ok = await bridge.writeFile(file, content, { root: writeRoot || workspaceRoot || undefined });
         if (!ok) {
           const msg = 'write failed';
           persist({ ...message, content: msg, toolCall: { ...tool, status: 'error', result: msg } });
@@ -1180,6 +1311,7 @@ export function useAgentLoop({
     setQueuedMidRun(0);
     queuedMidRunRef.current = 0;
     setShowIdleMonitor(false);
+    hasAutoCheckpointedRef.current = false;
     let current = history;
     const startedAt = Date.now();
     runStartedAtRef.current = startedAt;
@@ -1217,7 +1349,15 @@ export function useAgentLoop({
         grokResults: grokAcc,
         toolCalls: [...writeCalls, ...(host.toolCalls || [])],
       });
-      if (!host.planApproved) host.planApproved = planMode ? 'awaiting' : 'approved';
+      const audit = auditTurnChanges({
+        content: host.content || '',
+        toolCalls: [...writeCalls, ...(host.toolCalls || [])],
+        grokResults: grokAcc,
+      });
+      if (audit.hasModifications || audit.summaryItems.length || audit.verificationItems.length) {
+        host.changeSummary = audit.changeSummary;
+      }
+      if (!host.planApproved) host.planApproved = isPlanMode ? 'awaiting' : 'approved';
     };
     const attachWorkflow = (msg: Message) => {
       if (workflowHostId && workflowHostId !== msg.id) {
@@ -1241,10 +1381,18 @@ export function useAgentLoop({
     let buildImplementNudgeUsed = false;
     let proveImproveNudgeUsed = false;
     let buildVerifyNudgeUsed = false;
+    let changeVerifyNudgeUsed = false;
     let reasoningExecNudgeUsed = false;
+    let placeholderNudgeUsed = false;
     let stopReason: AgentStopReason = 'no_tools';
     let turnCap = clampMaxAgentTurns(settingsRef.current.maxAgentTurns);
     const deepenCap = clampSelfDeepenPasses(settingsRef.current.selfDeepenPasses);
+
+    // Loop detection: track fingerprints of last 3 turns
+    const lastThreeFingerprints: string[] = [];
+
+    // Capability plan cache - valid for 2 turns
+    const capabilityCache = { plan: null as CapabilityPlan | null, turn: -1 };
 
     const drainMidRunMessages = (): boolean => {
       const pending = pendingMidRunRef.current.splice(0, pendingMidRunRef.current.length);
@@ -1271,10 +1419,10 @@ export function useAgentLoop({
         return prompt ? { role: 'user' as const, content: prompt } : [...history].reverse().find((m) => m.role === 'user');
       })();
       const grokBuildProcess =
-        !planMode &&
+        !isPlanMode &&
         !!(
           lastUser &&
-          shouldApplyBuildProcess(lastUser.content, { buildMode: !!buildMode, planMode: !!planMode })
+          shouldApplyBuildProcess(lastUser.content, { buildMode: !!buildMode, planMode: !!isPlanMode })
         );
       const exploreIntent = !!(lastUser && looksExploreIntent(lastUser.content));
       promptOnly = !!(lastUser && looksPromptOnlyRequest(lastUser.content));
@@ -1309,6 +1457,50 @@ export function useAgentLoop({
         }
         // Safe boundary: before next stream — integrate any mid-run operator notes.
         if (turn > 1) drainMidRunMessages();
+
+        // Loop detection: check if we're repeating the same turn
+        if (turn > 2) {
+          const lastContent = current.length >= 2 ? current[current.length - 2]?.content || '' : '';
+          const lastTools = toolsUsed.slice(-5).join(',');
+          const fingerprint = `${lastContent.slice(0, 200)}|${lastTools}`;
+
+          if (lastThreeFingerprints.includes(fingerprint)) {
+            // We're looping - inject break nudge or stop
+            if (lastThreeFingerprints.filter(f => f === fingerprint).length >= 2) {
+              stopReason = 'loop_detected';
+              break;
+            }
+            const nudge: Message = {
+              id: uid('msg'),
+              threadId: thread.id,
+              role: 'user',
+              content: 'You appear to be repeating the same action. Break out of the loop with a different approach, or use [ANSWER_COMPLETE] if you are done.',
+              createdAt: Date.now(),
+              status: 'complete',
+            };
+            current = persist(nudge);
+          }
+
+          lastThreeFingerprints.push(fingerprint);
+          if (lastThreeFingerprints.length > 3) lastThreeFingerprints.shift();
+        }
+
+        // Post-edit diagnostics nudge if previous turn produced diagnostics
+        const prevAssistant = current.length >= 1 ? current[current.length - 1] : undefined;
+        if (prevAssistant?.diagnostics && prevAssistant.diagnostics.length > 0) {
+          const diagNudge: Message = {
+            id: uid('msg'),
+            threadId: thread.id,
+            role: 'user',
+            content: `Post-edit diagnostics detected ${prevAssistant.diagnostics.length} issue(s):\n` +
+              prevAssistant.diagnostics.map((d) => `- ${d.file}${d.line ? `:${d.line}` : ''} [${d.severity || 'error'}]: ${d.message}`).join('\n') +
+              '\nPlease review and resolve these issues.',
+            createdAt: Date.now(),
+            status: 'complete',
+          };
+          current = persist(diagNudge);
+        }
+
         setLoopTurn(turn);
         loopTurnRef.current = turn;
         turnsDone = turn;
@@ -1332,6 +1524,7 @@ export function useAgentLoop({
           content: '',
           createdAt: Date.now(),
           status: 'streaming',
+          mode: resolvedAgentMode,
         };
         attachWorkflow(assistant);
         persist(assistant);
@@ -1340,6 +1533,7 @@ export function useAgentLoop({
           const active = resolveActiveSettings(live);
           const capNow = buildCapabilityPlan(
             `${extractLockedGoal(current)}\n${lastOperatorPrompt(current) || lastUser?.content || ''}`,
+            capabilityCache,
           );
           const extraMcpTools = capNow.extraMcp.length
             ? mcpToolsToOpenAi(capNow.extraMcp)
@@ -1349,9 +1543,9 @@ export function useAgentLoop({
           const result = await streamChatCompletion({
             settings: live,
             model: active.defaultModel || thread.model,
-            messages: toApiMessages(current, turn === 1 ? prefetched : []),
+            messages: toApiMessages(current, turn === 1 ? prefetched : [], capabilityCache),
             abortSignal: ac.signal,
-            enabledTools: planMode ? effectiveTools : thread.enabledTools,
+            enabledTools: effectiveTools,
             extraTools: extraMcpTools.length
               ? (extraMcpTools as Parameters<typeof streamChatCompletion>[0]['extraTools'])
               : undefined,
@@ -1382,6 +1576,16 @@ export function useAgentLoop({
                 }
               }
               persistStream({ ...assistant });
+
+              // MID-TURN PREFETCH: extract file paths and prefetch in background
+              // Only run every 1024 chars to avoid overhead
+              if (bridge.connected && assistant.content.length % 1024 < text.length) {
+                const mentionedPaths = extractMentionedPaths(assistant.content);
+                if (mentionedPaths.length > 0) {
+                  // Fire and forget - don't block streaming
+                  prefetchPinnedPaths(mentionedPaths.join(' '), workspaceRoot).catch(() => {});
+                }
+              }
             },
             onReasoningDelta: (text) => {
               assistant.reasoning = (assistant.reasoning || '') + text;
@@ -1428,11 +1632,12 @@ export function useAgentLoop({
           assistant.status = 'complete';
           const finalizeAssistant = async () => {
             const coalesceOn = settingsRef.current.coalesceReasoningToContent !== false;
-            enforceThoughtNoCode(assistant, { liftToContent: !planMode });
-            if (planMode) applyPlanReasoningGuard(assistant);
-            finalizeReasoningChannel(assistant, coalesceOn && !planMode);
+            enforceThoughtNoCode(assistant, { liftToContent: !isPlanMode });
+            if (isPlanMode) applyPlanReasoningGuard(assistant);
+            finalizeReasoningChannel(assistant, coalesceOn && !isPlanMode);
+            if (isPlanMode) applyPlanReasoningGuard(assistant);
             assistant.content = liftTodoListToContent(assistant.content || '', assistant.reasoning || '');
-            if (planMode) applyPlanReasoningGuard(assistant);
+            if (isPlanMode) applyPlanReasoningGuard(assistant);
             else enforceThoughtNoCode(assistant, { liftToContent: true });
             grokAcc.push(...((await runGrokLayer(assistant)) || []));
             paintWorkflow(assistant);
@@ -1562,7 +1767,7 @@ export function useAgentLoop({
                     id: uid('msg'),
                     threadId: thread.id,
                     role: 'user',
-                    content: buildBuildModeImplementNudge(),
+                    content: buildBuildModeImplementNudge({ toolsOff: !agentProfile.sendTools }),
                     createdAt: Date.now(),
                     status: 'complete',
                   };
@@ -1580,7 +1785,7 @@ export function useAgentLoop({
                     id: uid('msg'),
                     threadId: thread.id,
                     role: 'user',
-                    content: buildBuildModeTodoNudge(),
+                    content: buildBuildModeTodoNudge({ toolsOff: !agentProfile.sendTools }),
                     createdAt: Date.now(),
                     status: 'complete',
                   };
@@ -1625,7 +1830,8 @@ export function useAgentLoop({
               // — placed ABOVE the footerDone/shouldEvidenceDeepen block so a text-only
               // Done footer cannot short-circuit it. One-shot flag bounds the loop.
               if (
-                !planMode &&
+                !isPlanMode &&
+                !isAskMode &&
                 !reasoningExecNudgeUsed &&
                 settingsRef.current.selfDeepenEnabled !== false &&
                 !isAnswerCompleteMarker(content) &&
@@ -1656,13 +1862,62 @@ export function useAgentLoop({
               const deepenPasses = clampSelfDeepenPasses(liveDeepen.selfDeepenPasses);
               const deepenOn =
                 liveDeepen.selfDeepenEnabled !== false && deepenPasses > 0 && deepensUsed < deepenPasses;
+              const filesLanded =
+                grokAcc.some((r) => r.status === 'ok') || hasBuildFileWrites(toolsUsed);
+              const missingFiles =
+                !!grokBuildProcess &&
+                !filesLanded &&
+                !looksLikeBuildOutput(detectContent, toolsUsed);
               // Already shipped a valid Done/Continue footer — treat as complete; skip an extra deepen turn.
+              // A footer without landed files on a build is still a fragment.
               const footerDone =
-                liveDeepen.completionFooterEnabled !== false && hasValidCompletionFooter(content);
+                liveDeepen.completionFooterEnabled !== false &&
+                hasValidCompletionFooter(content) &&
+                (filesLanded || !grokBuildProcess);
               // Junk / error / truncated / network-error turns never deepen.
               const junkTurn = shouldSkipSelfDeepen(detectContent, { status: assistant.status });
               const openTodos =
                 hasOpenTodos(todosRef.current) || parseTodoItems(detectContent).some((t) => !t.done);
+
+              // EARLY COMPLETION FAST-PATH: If answer is clearly complete, skip all deepen checks
+              const isClearlyComplete =
+                isAnswerCompleteMarker(content) &&
+                toolsUsed.length > 0 &&
+                !looksLikePlaceholderOutput(content) &&
+                looksLikeVerifyEvidence(`${detectContent}\n${current.filter(m => m.role === 'tool').map(m => m.content || '').join('\n')}`, toolsUsed) &&
+                filesLanded;
+
+              if (isClearlyComplete) {
+                setPhase('finishing', {}, turn);
+                paintWorkflow(assistant);
+                flushStreamPersist({ ...assistant });
+                stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
+                break;
+              }
+              if (
+                grokBuildProcess &&
+                !placeholderNudgeUsed &&
+                looksLikePlaceholderOutput(detectContent) &&
+                !shouldSkipSelfDeepen(detectContent, { status: assistant.status }) &&
+                !isAnswerCompleteMarker(content)
+              ) {
+                placeholderNudgeUsed = true;
+                setPhase(
+                  'self_deepen',
+                  { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+                  turn,
+                );
+                const nudge: Message = {
+                  id: uid('msg'),
+                  threadId: thread.id,
+                  role: 'user',
+                  content: buildPlaceholderCodeNudge(),
+                  createdAt: Date.now(),
+                  status: 'complete',
+                };
+                current = persist(nudge);
+                continue;
+              }
               if (
                 shouldEvidenceDeepen({
                   content,
@@ -1671,6 +1926,8 @@ export function useAgentLoop({
                   footerDone,
                   answerComplete: isAnswerCompleteMarker(content),
                   openTodos,
+                  filesLanded,
+                  missingFiles,
                 })
               ) {
                 deepensUsed += 1;
@@ -1679,12 +1936,20 @@ export function useAgentLoop({
                   { deepenPass: deepensUsed, deepenMax: deepenPasses || deepenCap },
                   turn,
                 );
+                const writeRoot = connectedBridgeWriteRoot({
+                  workspaceRoot,
+                  appRoot,
+                  bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
+                });
                 const nudge: Message = {
                   id: uid('msg'),
                   threadId: thread.id,
                   role: 'user',
                   content: buildSelfDeepenNudge({
                     completeness: liveDeepen.deepenCompleteness !== false,
+                    landFiles: missingFiles || (grokBuildProcess && !filesLanded),
+                    toolsOff: !agentProfile.sendTools,
+                    workspaceRoot: writeRoot,
                   }),
                   createdAt: Date.now(),
                   status: 'complete',
@@ -1730,6 +1995,7 @@ export function useAgentLoop({
               }
               const capStop = buildCapabilityPlan(
                 `${extractLockedGoal(current)}\n${lastOperatorPrompt(current) || lastUser?.content || ''}`,
+                capabilityCache,
               );
               if (!planMode && !mcpFollowNudgeUsed && needsMcpFollowNudge(capStop, toolsUsed) && !isAnswerCompleteMarker(content)) {
                 mcpFollowNudgeUsed = true;
@@ -1796,6 +2062,37 @@ export function useAgentLoop({
                 current = persist(nudge);
                 continue;
               }
+              if (
+                !planMode &&
+                !changeVerifyNudgeUsed &&
+                settingsRef.current.completionFooterEnabled !== false &&
+                !shouldSkipSelfDeepen(detectContent, { status: assistant.status }) &&
+                !isAnswerCompleteMarker(content)
+              ) {
+                const audit = auditTurnChanges({
+                  content: detectContent,
+                  toolCalls: [...writeCalls, ...(assistant.toolCalls || [])],
+                  grokResults: grokAcc,
+                });
+                if (audit.needsVerificationNudge && audit.nudgePrompt) {
+                  changeVerifyNudgeUsed = true;
+                  setPhase(
+                    'self_deepen',
+                    { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+                    turn,
+                  );
+                  const nudge: Message = {
+                    id: uid('msg'),
+                    threadId: thread.id,
+                    role: 'user',
+                    content: audit.nudgePrompt,
+                    createdAt: Date.now(),
+                    status: 'complete',
+                  };
+                  current = persist(nudge);
+                  continue;
+                }
+              }
               // Content is non-empty here (coalesce / empty handling above).
               setPhase('finishing', {}, turn);
               paintWorkflow(assistant);
@@ -1806,7 +2103,8 @@ export function useAgentLoop({
           }
 
           if (
-            !planMode &&
+            !isPlanMode &&
+            !isAskMode &&
             !inspectBeforeWriteUsed &&
             lastUser?.content &&
             needsInspectBeforeWrite({
@@ -1840,47 +2138,89 @@ export function useAgentLoop({
           let executedAny = false;
           let latest = getMessages(thread.id);
 
-          // Split tools into safe parallel tools and gated sequential tools
-          const gatedToolNames = new Set(['git_commit', 'create_pr', 'checkpoint_restore', 'shell', 'verify']);
-          const parallelTools: ToolCallPayload[] = [];
-          const sequentialTools: ToolCallPayload[] = [];
+          // TOOL DAG SCHEDULING: Reads → Writes → Gated/Shell
+          // All reads run first in parallel, never blocked by writes
+          const READ_TOOLS = new Set(['read_file', 'grep', 'list_dir', 'glob', 'semantic_search', 'file_outline', 'web_fetch', 'web_search']);
+          const WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'edit_file', 'search_replace', 'str_replace']);
+
+          const readTools: ToolCallPayload[] = [];
+          const writeTools: ToolCallPayload[] = [];
+          const gatedTools: ToolCallPayload[] = [];
 
           for (const tool of toolCalls) {
             toolsUsed.push(tool.name);
             writeCalls.push(tool);
-            if (gatedToolNames.has(tool.name)) {
-              sequentialTools.push(tool);
+            if (READ_TOOLS.has(tool.name)) {
+              readTools.push(tool);
+            } else if (WRITE_TOOLS.has(tool.name)) {
+              writeTools.push(tool);
             } else {
-              parallelTools.push(tool);
+              gatedTools.push(tool);
             }
           }
 
-          // Execute safe tools in parallel first
-          if (parallelTools.length > 0) {
-            setPhase('tool_exec', { toolName: parallelTools.length > 1 ? `${parallelTools.length} tools` : parallelTools[0].name }, turn);
+          // Execute READ tools first in parallel (never blocked)
+          if (readTools.length > 0) {
+            setPhase('tool_exec', { toolName: readTools.length > 1 ? `${readTools.length} reads` : readTools[0].name }, turn);
 
             const results = await Promise.all(
-              parallelTools.map(async (tool) => {
+              readTools.map(async (tool) => {
                 const abortedResult = () => ({
                   msg: makeToolMessage({ ...tool, status: 'error' as const, result: 'aborted' }, 'aborted'),
                   executed: false,
                 });
                 if (ac.signal.aborted) return { tool, ...abortedResult() };
-                // Bridge calls take no signal: stop waiting on abort, let the call finish unread.
                 const result = await raceAbort(executeTool(tool), ac.signal, abortedResult);
                 return { tool, ...result };
               })
             );
 
-            // Persist all results in batch
             for (const { msg, executed } of results) {
               if (executed) executedAny = true;
               latest = persist(msg);
             }
           }
 
-          // Execute gated tools sequentially
-          for (const tool of sequentialTools) {
+          // Execute WRITE tools sequentially (order matters)
+          for (const tool of writeTools) {
+            setPhase('tool_exec', { toolName: tool.name }, turn);
+            if (ac.signal.aborted) {
+              latest = persist(makeToolMessage({ ...tool, status: 'error', result: 'aborted' }, 'aborted'));
+              continue;
+            }
+            const { msg, executed } = await raceAbort(executeTool(tool), ac.signal, () => ({
+              msg: makeToolMessage({ ...tool, status: 'error' as const, result: 'aborted' }, 'aborted'),
+              executed: false,
+            }));
+            if (executed) {
+              executedAny = true;
+              if (!hasAutoCheckpointedRef.current && bridge.connected) {
+                hasAutoCheckpointedRef.current = true;
+                try {
+                  const label = `auto: turn ${turn} - ${tool.name}`;
+                  const ckpt = await bridge.checkpointSave(label);
+                  if (ckpt) {
+                    assistant.checkpointId = ckpt;
+                    assistant.checkpointLabel = label;
+                    flushStreamPersist({ ...assistant });
+                  }
+                } catch (e) {
+                  console.warn('Auto-checkpoint failed:', e);
+                }
+              }
+              if (settingsRef.current.postEditDiagnostics) {
+                const diags = await runWorkspaceDiagnostics(workspaceRoot);
+                if (diags.length > 0) {
+                  assistant.diagnostics = diags;
+                  flushStreamPersist({ ...assistant });
+                }
+              }
+            }
+            latest = persist(msg);
+          }
+
+          // Execute GATED tools last (sequential, potentially interactive)
+          for (const tool of gatedTools) {
             setPhase('tool_exec', { toolName: tool.name }, turn);
             if (ac.signal.aborted) {
               latest = persist(makeToolMessage({ ...tool, status: 'error', result: 'aborted' }, 'aborted'));
@@ -1915,10 +2255,10 @@ export function useAgentLoop({
             setPhase('stopped', {}, turn);
             assistant.status = 'complete';
             const coalesceOnAbort = settingsRef.current.coalesceReasoningToContent !== false;
-            enforceThoughtNoCode(assistant, { liftToContent: !planMode });
-            if (planMode) applyPlanReasoningGuard(assistant);
-            finalizeReasoningChannel(assistant, coalesceOnAbort && !planMode);
-            if (planMode) applyPlanReasoningGuard(assistant);
+            enforceThoughtNoCode(assistant, { liftToContent: !isPlanMode });
+            if (isPlanMode) applyPlanReasoningGuard(assistant);
+            finalizeReasoningChannel(assistant, coalesceOnAbort && !isPlanMode);
+            if (isPlanMode) applyPlanReasoningGuard(assistant);
             else enforceThoughtNoCode(assistant, { liftToContent: true });
             if (!assistant.content.trim() && !assistant.reasoning?.trim()) assistant.content = '(stopped)';
             // Apply diffs from coalesced reasoning even on abort (no-op if planMode).
@@ -2147,6 +2487,19 @@ export function useAgentLoop({
     },
     [runCheckpointRestoreClick],
   );
+
+  const restoreCheckpointById = useCallback(
+    async (checkpointId: string) => {
+      if (busyRef.current) return;
+      try {
+        await bridge.checkpointRestore(checkpointId);
+        onGitMaybeChangedRef.current?.();
+      } catch (err) {
+        console.error('Failed to restore checkpoint:', err);
+      }
+    },
+    [],
+  );
   const handleWriteFile = useCallback(
     (msg: Message) => {
       void runWriteFileClick(msg);
@@ -2244,11 +2597,13 @@ export function useAgentLoop({
     handleGitCommit,
     handleCreatePr,
     handleCheckpointRestore,
+    restoreCheckpointById,
     handleWriteFile,
     handleShellExecuted,
     handleContinuePrompt,
     patchDeepenCompleteness,
     deepenThisAnswerNow,
+    agentMode: resolvedAgentMode,
   };
 }
 

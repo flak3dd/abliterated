@@ -123,14 +123,37 @@ export function workspaceGate(root: string, appRoot = ''): WorkspaceGate {
   return { ok: true, reason: 'ok', message: '' };
 }
 
+/**
+ * Directory the localhost bridge will actually write into.
+ * Prefer the connected daemon root over a stale UI path; never the install folder.
+ */
+export function connectedBridgeWriteRoot(opts: {
+  workspaceRoot?: string;
+  appRoot?: string;
+  bridgeRoot?: string;
+}): string {
+  const app = opts.appRoot || '';
+  for (const cand of [opts.bridgeRoot, opts.workspaceRoot]) {
+    const p = (cand || '').trim();
+    if (p && workspaceGate(p, app).ok) return p;
+  }
+  return '';
+}
+
 /** File writes land in the connected working directory. Plan mode and install-dir stay blocked. Shell stays gated. */
 export function shouldWriteWorkspaceFiles(opts: {
   planMode?: boolean;
   workspaceRoot?: string;
   appRoot?: string;
   connected?: boolean;
+  bridgeRoot?: string;
 }): boolean {
   if (opts.planMode) return false;
   if (opts.connected === false) return false;
-  return workspaceGate(opts.workspaceRoot || '', opts.appRoot || '').ok;
+  const root = connectedBridgeWriteRoot({
+    workspaceRoot: opts.workspaceRoot,
+    appRoot: opts.appRoot,
+    bridgeRoot: opts.bridgeRoot,
+  });
+  return workspaceGate(root, opts.appRoot || '').ok;
 }

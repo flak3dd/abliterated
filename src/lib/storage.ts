@@ -126,6 +126,8 @@ export const DEFAULT_SETTINGS: ClientSettings = {
   mempalaceAutoRecall: true,
   mempalaceAutoSave: true,
   verifyStrictProfile: true,
+  agentMode: 'agent',
+  postEditDiagnostics: false,
 };
 
 export function isPlaceholderRoot(path: string): boolean {
@@ -305,6 +307,16 @@ export function getSettings(): ClientSettings {
     verifyStrictProfile: stored.verifyStrictProfile !== false,
     planModeEnabled: stored.planModeEnabled === true,
     buildModeEnabled: stored.buildModeEnabled !== false,
+    // Auto-migrate: derive agentMode from legacy planModeEnabled / buildModeEnabled booleans.
+    agentMode: (() => {
+      if (stored.agentMode === 'ask' || stored.agentMode === 'plan' || stored.agentMode === 'debug' || stored.agentMode === 'agent') {
+        return stored.agentMode;
+      }
+      // Legacy migration
+      if (stored.planModeEnabled === true) return 'plan' as const;
+      return 'agent' as const;
+    })(),
+    postEditDiagnostics: stored.postEditDiagnostics === true,
     fastModel: stored.fastModel?.trim() || '',
     maxConcurrentJobs: clampMaxConcurrentJobs(
       stored.maxConcurrentJobs != null ? stored.maxConcurrentJobs : DEFAULT_MAX_CONCURRENT_JOBS,

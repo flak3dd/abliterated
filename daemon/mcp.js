@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { extraBinDirs, withExtraPath, resolveUvBin, uvxFromUv } from './mempalace.js';
 
 /** @type {Map<string, any>} */
 const sessions = new Map();
@@ -235,20 +236,82 @@ function tryResolveNpxCacheEntry(pkgSpec) {
   return null;
 }
 
-function resolveCmd(command, args) {
-  if (!isNpxCommand(command)) {
-    return { command: command, args: args, viaNpx: false };
+function resolveCmd(command, args, serverName = '') {
+  const normName = String(serverName || '').toLowerCase();
+  const cmdStr = String(command || '').trim();
+  const argList = Array.isArray(args) ? args.map(String) : [];
+
+  // 1. MemPalace MCP resolution (handles mempalace-mcp, uvx, and legacy python -m mempalace)
+  const isMempalace =
+    normName === 'mempalace' ||
+    cmdStr === 'mempalace-mcp' ||
+    cmdStr.endsWith('/mempalace-mcp') ||
+    cmdStr.endsWith('\\mempalace-mcp.exe') ||
+    argList.some((a) => a.includes('mempalace'));
+
+  if (isMempalace) {
+    // Check if local mempalace-mcp binary is available in extraBinDirs or PATH
+    for (const dir of extraBinDirs()) {
+      for (const binName of process.platform === 'win32' ? ['mempalace-mcp.exe', 'mempalace-mcp.cmd', 'mempalace-mcp'] : ['mempalace-mcp']) {
+        const p = path.join(dir, binName);
+        if (fs.existsSync(p)) {
+          // Filter out broken uvx / python flags if passed from older configs
+          const cleanArgs = argList.filter(
+            (a) => !['python', '-m', 'mempalace.mcp_server', 'mempalace.mcp_proxy', '--from', 'mempalace'].includes(a),
+          );
+          return { command: p, args: cleanArgs, viaNpx: false };
+        }
+      }
+    }
+
+    // If direct mempalace-mcp binary not found, fallback to uvx / uv
+    const uvBin = resolveUvBin();
+    const uvxBin = uvxFromUv(uvBin);
+    if (fs.existsSync(uvxBin) || uvxBin === 'uvx') {
+      return {
+        command: fs.existsSync(uvxBin) ? uvxBin : 'uvx',
+        args: ['--from', 'mempalace', 'mempalace-mcp'],
+        viaNpx: false,
+      };
+    }
+    if (fs.existsSync(uvBin) || uvBin === 'uv') {
+      return {
+        command: fs.existsSync(uvBin) ? uvBin : 'uv',
+        args: ['tool', 'run', '--from', 'mempalace', 'mempalace-mcp'],
+        viaNpx: false,
+      };
+    }
   }
-  const parsed = parseNpxPackageArgs(args);
-  if (!parsed) {
-    return { command: command, args: args, viaNpx: true };
+
+  // 2. npx package caching optimization
+  if (isNpxCommand(cmdStr)) {
+    const parsed = parseNpxPackageArgs(argList);
+    if (!parsed) {
+      return { command: cmdStr, args: argList, viaNpx: true };
+    }
+    const script = tryResolveNpxCacheEntry(parsed.pkg);
+    if (script) {
+      const nodeBin = process.execPath || 'node';
+      return { command: nodeBin, args: [script].concat(parsed.rest), viaNpx: false };
+    }
+    return { command: cmdStr, args: argList, viaNpx: true };
   }
-  const script = tryResolveNpxCacheEntry(parsed.pkg);
-  if (script) {
-    const nodeBin = process.execPath || 'node';
-    return { command: nodeBin, args: [script].concat(parsed.rest), viaNpx: false };
+
+  // 3. Command resolution from extraBinDirs if not an absolute path
+  if (!path.isAbsolute(cmdStr)) {
+    for (const dir of extraBinDirs()) {
+      const p = path.join(dir, cmdStr);
+      if (fs.existsSync(p)) {
+        return { command: p, args: argList, viaNpx: false };
+      }
+      if (process.platform === 'win32') {
+        if (fs.existsSync(p + '.exe')) return { command: p + '.exe', args: argList, viaNpx: false };
+        if (fs.existsSync(p + '.cmd')) return { command: p + '.cmd', args: argList, viaNpx: false };
+      }
+    }
   }
-  return { command: command, args: args, viaNpx: true };
+
+  return { command: cmdStr, args: argList, viaNpx: false };
 }
 
 function failConnect(id, session, err) {
@@ -280,11 +343,12 @@ export async function connect(cfg, cwd) {
   const rawCommand = String(cfg.command || '').trim();
   if (!rawCommand) throw new Error('mcp command required');
   const rawArgs = Array.isArray(cfg.args) ? cfg.args.map(String) : [];
-  const resolved = resolveCmd(rawCommand, rawArgs);
-  const env = {
+  const serverName = String(cfg.name || id);
+  const resolved = resolveCmd(rawCommand, rawArgs, serverName);
+  const env = withExtraPath({
     ...process.env,
     ...(cfg.env && typeof cfg.env === 'object' ? cfg.env : {}),
-  };
+  });
   if (resolved.viaNpx) {
     env.npm_config_loglevel = 'silent';
     env.npm_config_progress = 'false';

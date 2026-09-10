@@ -836,6 +836,16 @@ export class BridgeClient {
       return { root, port, appRoot, workspaceOk };
     });
   }
+
+  bridgeRestart(): void {
+    if (this.ws && this.connected) {
+      try {
+        this.ws.send(JSON.stringify({ type: 'bridge_restart' }));
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 }
 
 export const bridge = new BridgeClient();

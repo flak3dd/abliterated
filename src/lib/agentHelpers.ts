@@ -1,6 +1,7 @@
 export { looksLikeVerifyEvidence, buildVerifyBeforeDoneNudge, buildIncompleteCapNote } from './verifyDone';
-import type { ToolType } from '../types';
-import { PLAN_MODE_TOOLS } from '../types';
+export { auditTurnChanges, buildVerifySummaryNudge } from './changeAudit';
+import type { ToolType, AgentMode } from '../types';
+import { PLAN_MODE_TOOLS, ASK_MODE_TOOLS, DEBUG_MODE_TOOLS } from '../types';
 import { withCompletenessChecklist } from './deepenComplete';
 import { looksLikeStubAnswer, looksLikeTokenCollapse } from './tokenCollapse';
 
@@ -10,7 +11,7 @@ export const DEFAULT_MAX_AGENT_TURNS = 24;
 export const MAX_AGENT_TURNS_HARD_CAP = 50;
 export const AGENT_RUNS_KEEP = 50;
 
-export type AgentStopReason = 'no_tools' | 'cap' | 'abort' | 'error' | 'pending_gate' | 'deepened';
+export type AgentStopReason = 'no_tools' | 'cap' | 'abort' | 'error' | 'pending_gate' | 'deepened' | 'loop_detected';
 
 export type AgentRunRecord = {
   threadId: string;
@@ -65,7 +66,35 @@ export function stripAnswerCompleteMarker(content: string): string {
   return content.replace(/\s*\[ANSWER_COMPLETE\]\s*/g, '').trim();
 }
 
-export function buildSelfDeepenNudge(opts?: { completeness?: boolean }): string {
+export type SelfDeepenNudgeOpts = {
+  completeness?: boolean;
+  /** Build/scaffold turn produced fragments — land complete files, do not essay. */
+  landFiles?: boolean;
+  toolsOff?: boolean;
+  workspaceRoot?: string;
+};
+
+export function buildLandCompleteFilesNudge(opts: SelfDeepenNudgeOpts = {}): string {
+  const dest = (opts.workspaceRoot || '').trim();
+  const where = dest
+    ? `the connected bridge filepath ${dest}`
+    : 'the connected bridge workspace (ws://127.0.0.1:17322)';
+  const how = opts.toolsOff
+    ? 'Do NOT call `todo` or write_file. Put FULL working files in CONTENT as ```diff or // relative/path fences (first line // path).'
+    : 'Call write_file, or put FULL working files in CONTENT as ```diff or // relative/path fences.';
+  return (
+    '↻ Self-review: previous turn was a fragment (ToDo, sketch, or stub) and did not land complete files. ' +
+    `${how} The client writes them to ${where} this turn. ` +
+    'Every file the product needs, full-length, no placeholders. Do not list gaps. Do not emit another ToDo-only reply. ' +
+    '[ANSWER_COMPLETE] only after those files are in content as applyable fences (or write_file already ran).'
+  );
+}
+
+export function buildSelfDeepenNudge(opts?: SelfDeepenNudgeOpts): string {
+  if (opts?.landFiles) {
+    const land = buildLandCompleteFilesNudge(opts);
+    return opts.completeness ? withCompletenessChecklist(land) : land;
+  }
   const base =
     '↻ Self-review: Re-read your last answer. Expand thin/missing parts with concrete detail ' +
     '(and tools if needed). If the answer already fully solves the user request, reply with ONLY ' +
@@ -217,7 +246,9 @@ export function canonicalizeToolName(name: string): string {
   if (WEB_SEARCH_ALIASES.has(lower)) return 'web_search';
   if (lower === 'writefile' || lower === 'write-file' || lower === 'create_file') return 'write_file';
   if (lower === 'taskread' || lower === 'read_task') return 'task_read';
-  if (lower === 'taskupdate' || lower === 'update_task') return 'task_update';
+  if (lower === 'codebase_search' || lower === 'search_code' || lower === 'find_in_files') return 'semantic_search';
+  if (lower === 'run_terminal_cmd' || lower === 'terminal' || lower === 'run_command' || lower === 'exec' || lower === 'execute_command') return 'shell';
+  if (lower === 'edit_file' || lower === 'modify_file' || lower === 'patch_file') return 'write_file';
   if (lower === 'run_verify') return 'verify';
   if (
     lower === 'mempalace_search' ||
@@ -400,6 +431,8 @@ export function needsBuildProtocol(userText: string): boolean {
   return looksBuildIntent(t) || looksLargeJob(t) || looksMultiStep(t);
 }
 
+export type BuildNudgeOpts = { toolsOff?: boolean };
+
 /** Short reminder; full Work rules live in SYSTEM_PROMPT. */
 export const BUILD_PROCESS_SECTION =
   '## Build scope — LOCKED (staged implementation run)\n' +
@@ -409,6 +442,17 @@ export const BUILD_PROCESS_SECTION =
   'PHASE 3 — VERIFY (proven results): after the buildout, run one scoped verify — the `verify` tool or a ```bash fence with tsc/lint/tests — confirm it passes, then report the verified result.\n' +
   'A ToDo or essay with no scaffolded files + diffs is a FAILED build. Do not stop at the list. Do not spawn other coding CLIs.\n' +
   'HARD LOCK: never write placeholder/stub/"implement here" scripts. Full-length working code only. Write every file into the connected working directory. Do not stop until the structure is complete, every file is built out, and verification has run.';
+
+/** Same lock when native function tools are not on the wire. */
+export const BUILD_PROCESS_SECTION_NO_TOOLS =
+  '## Build scope — LOCKED (staged implementation run, tools OFF)\n' +
+  'Native function tools are OFF. Do not emit tool-call JSON, fake todo/write_file/list_dir calls, or ```json tool_calls fences. Ignore any instruction to "call `todo`".\n' +
+  'A "build" request runs three ORDERED phases in CONTENT. Reasoning is outline only; CONTENT executes.\n' +
+  'PHASE 1 — SCAFFOLD: put a markdown ToDo (3–12 items) in CONTENT, then create EVERY file and directory as `// relative/path` or ```diff fences. The client writes those fences to the connected bridge workspace (ws://127.0.0.1:17322). Relative paths only. Land the whole structure before filling any file. Do not invent listings you have not been given.\n' +
+  'PHASE 2 — BUILD OUT: implement every scaffolded file with full working code via ```diff or `// relative/path` in CONTENT. Tick markdown ToDo items as files finish. Never leave a scaffolded file empty or stubbed.\n' +
+  'PHASE 3 — VERIFY: emit a scoped ```bash fence (tsc/lint/tests). Do not call the verify tool.\n' +
+  'A ToDo or essay with no scaffolded files + diffs is a FAILED build. Do not stop at the list. Do not spawn other coding CLIs.\n' +
+  'HARD LOCK: never write placeholder/stub/"implement here" scripts. Full-length working code only. Write every file into the connected working directory.';
 
 export function buildThoughtModeNudge(): string {
   return (
@@ -423,7 +467,13 @@ export function buildThoughtModeNudge(): string {
   );
 }
 
-export function buildBuildModeAlwaysNudge(): string {
+export function buildBuildModeAlwaysNudge(opts: BuildNudgeOpts = {}): string {
+  if (opts.toolsOff) {
+    return (
+      '## Build mode — ON (tools OFF)\n' +
+      'Prefer shipping the change over advice. Native function tools are unavailable: markdown ToDo in CONTENT → real ```diff / // path fences this turn. Do not call `todo` or write_file. Skip the full ToDo only for a trivial one-shot (typo, single read).'
+    );
+  }
   return (
     '## Build mode — ON\n' +
     'Prefer shipping the change over advice. If this request touches files, run the Build lock: todo → explore tools → real diffs in content this turn. Skip the full ToDo only for a trivial one-shot (typo, single read).'
@@ -539,15 +589,23 @@ export function shouldApplyBuildProcess(
   return false;
 }
 
-export function buildReasoningThenBuildNudge(): string {
-  return BUILD_PROCESS_SECTION;
+export function buildReasoningThenBuildNudge(opts: BuildNudgeOpts = {}): string {
+  return opts.toolsOff ? BUILD_PROCESS_SECTION_NO_TOOLS : BUILD_PROCESS_SECTION;
 }
 
-export function buildBuildModeNudge(): string {
-  return buildReasoningThenBuildNudge();
+export function buildBuildModeNudge(opts: BuildNudgeOpts = {}): string {
+  return buildReasoningThenBuildNudge(opts);
 }
 
-export function buildBuildModeTodoNudge(): string {
+export function buildBuildModeTodoNudge(opts: BuildNudgeOpts = {}): string {
+  if (opts.toolsOff) {
+    return (
+      'Build scope Phase 1 (scaffold, tools OFF): do NOT call `todo` or write_file as function tools. ' +
+      'Put a markdown ToDo (3–12 items) in CONTENT, then create the COMPLETE file/folder skeleton as ' +
+      '`// relative/path` or ```diff fences. The client writes them to the connected bridge filepath. Relative paths only. ' +
+      'Land the whole structure before filling any file. Do not only reason or only list tasks.'
+    );
+  }
   return (
     'Build scope Phase 1 (scaffold): call `todo` with 3–12 items, then create the COMPLETE file/folder skeleton first — ' +
     'every file and directory the product needs, as real paths (write_file or // relative/path fences). ' +
@@ -555,7 +613,16 @@ export function buildBuildModeTodoNudge(): string {
   );
 }
 
-export function buildBuildModeImplementNudge(): string {
+export function buildBuildModeImplementNudge(opts: BuildNudgeOpts = {}): string {
+  if (opts.toolsOff) {
+    return (
+      'Build scope Phase 2 (build out, tools OFF): you listed tasks but did not emit a real ```diff / // path fence. ' +
+      'Do not call write_file or `todo`. Now: (1) if the file skeleton is not complete, finish scaffolding every needed file as `// relative/path` or ```diff; ' +
+      '(2) comprehensively implement each scaffolded file with full working code in those fences; ' +
+      '(3) tick markdown ToDo items in content as files finish. Do not reply with another list only. ' +
+      'NEVER emit placeholder/stub/"implement here" code. Write the full working implementation, then a ```bash verify fence (Phase 3).'
+    );
+  }
   return (
     'Build scope Phase 2 (build out): you scaffolded or listed but did not emit a real ```diff / // path fence OR call write_file. ' +
     'That is not a build. Now: (1) if the file skeleton is not complete, finish scaffolding every needed file first; ' +
@@ -710,9 +777,49 @@ export function buildMidRunIntegrateNudge(texts: string[]): string {
   );
 }
 
+export function filterModeTools(enabled: readonly ToolType[], mode: AgentMode): ToolType[] {
+  switch (mode) {
+    case 'ask': {
+      const allow = new Set<ToolType>(ASK_MODE_TOOLS);
+      return enabled.filter((t) => allow.has(t));
+    }
+    case 'plan': {
+      const allow = new Set<ToolType>(PLAN_MODE_TOOLS);
+      return enabled.filter((t) => allow.has(t));
+    }
+    case 'debug': {
+      const allow = new Set<ToolType>(DEBUG_MODE_TOOLS);
+      return enabled.filter((t) => allow.has(t));
+    }
+    case 'agent':
+    default: {
+      return [...enabled];
+    }
+  }
+}
+
+export function buildModeNudge(mode: AgentMode): string {
+  switch (mode) {
+    case 'ask':
+      return (
+        '## Ask mode — READ ONLY. Writes and execution are blocked.\n' +
+        'You may explore, search, and answer questions. No file modifications or destructive shell actions.'
+      );
+    case 'plan':
+      return buildPlanModeNudge();
+    case 'debug':
+      return (
+        '## Debug mode — SYSTEMATIC REPRODUCE & FIX.\n' +
+        'Reproduce the issue, isolate the cause, formulate a targeted fix, verify with tests/checks, report findings.'
+      );
+    case 'agent':
+    default:
+      return '';
+  }
+}
+
 export function filterPlanModeTools(enabled: readonly ToolType[]): ToolType[] {
-  const allow = new Set<ToolType>(PLAN_MODE_TOOLS);
-  return enabled.filter((t) => allow.has(t));
+  return filterModeTools(enabled, 'plan');
 }
 
 export function buildPlanModeNudge(): string {

@@ -96,7 +96,7 @@ export function resolveUvBin() {
   return 'uv';
 }
 
-function uvxFromUv(uvBin) {
+export function uvxFromUv(uvBin) {
   if (uvBin.endsWith('uv.exe')) return uvBin.replace(/uv\.exe$/i, 'uvx.exe');
   if (uvBin.endsWith('uv')) return uvBin.replace(/uv$/, 'uvx');
   return 'uvx';
@@ -195,14 +195,15 @@ export async function mempalaceStatus(opts = {}) {
 }
 
 export async function mempalaceWake(opts = {}) {
-  const args = ['wake-up'];
   const wing = String(opts.wing || '').trim();
+  const args = ['wake-up'];
   if (wing) args.push('--wing', sanitizePalaceName(wing));
-  const { combined } = await runCli(args, {
+  const { stdout, combined } = await runCli(args, {
     palacePath: opts.palacePath,
     timeoutMs: WAKE_TIMEOUT_MS,
   });
-  return combined || '';
+  const body = (stdout || combined || '').trim();
+  return formatWakePrompt(body);
 }
 
 export async function mempalaceSearch(query, opts = {}) {
@@ -228,42 +229,42 @@ export async function mempalaceSave(content, opts = {}) {
   const wing = sanitizePalaceName(opts.wing || 'workspace');
   const room = sanitizePalaceName(opts.room || DEFAULT_ROOM, DEFAULT_ROOM);
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'ablit-mempalace-'));
+  const file = path.join(tmp, 'entry.txt');
+  await writeFile(file, body, 'utf8');
   try {
-    const file = path.join(tmp, `${room}.md`);
-    const md = `# ${wing} / ${room}\n\n${body}\n`;
-    await writeFile(file, md, 'utf8');
-    const args = ['mine', tmp, '--wing', wing, '--limit', '8'];
-    const { combined } = await runCli(args, {
-      palacePath: opts.palacePath,
-      timeoutMs: SAVE_TIMEOUT_MS,
-    });
-    return combined || `filed into ${wing}/${room}`;
+    const { combined } = await runCli(
+      ['mine', file, '--wing', wing, '--room', room],
+      { palacePath: opts.palacePath, timeoutMs: SAVE_TIMEOUT_MS },
+    );
+    return combined || 'saved';
   } finally {
-    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    try {
+      await unlink(file);
+      await rmdir(tmp);
+    } catch {
+      /* ignore cleanup */
+    }
   }
 }
 
 export async function mempalaceInit(projectDir, opts = {}) {
-  const dir = String(projectDir || '').trim();
-  if (!dir) throw new Error('missing project directory');
-  const args = ['init', dir, '--yes', '--no-llm'];
+  const dir = projectDir ? path.resolve(projectDir) : os.homedir();
+  const args = ['init', dir];
   const { combined } = await runCli(args, {
     palacePath: opts.palacePath,
-    timeoutMs: INIT_TIMEOUT_MS,
-    cwd: dir,
+    timeoutMs: 30_000,
   });
-  return combined || `initialized palace from ${dir}`;
+  return combined || 'initialized';
 }
 
 export async function mempalaceInstall() {
-  resetLauncherCache();
+  const uv = resolveUvBin();
   try {
-    const uv = resolveUvBin();
     const { stdout, stderr } = await execFileAsync(uv, ['tool', 'install', 'mempalace'], execOpts({
-      timeout: INSTALL_TIMEOUT_MS,
+      timeout: 120_000,
       maxBuffer: MAX_BUFFER,
     }));
-    resetLauncherCache();
+    cachedLauncher = undefined;
     const which = await mempalaceWhich();
     return {
       ok: which.ok,
@@ -280,11 +281,24 @@ export function mcpServerSpec(palacePath) {
   const env = {};
   const palace = String(palacePath || '').trim();
   if (palace) env.MEMPALACE_PALACE_PATH = palace;
+
+  for (const dir of extraBinDirs()) {
+    const mpMcp = path.join(dir, process.platform === 'win32' ? 'mempalace-mcp.exe' : 'mempalace-mcp');
+    if (existsSync(mpMcp)) {
+      return {
+        name: 'mempalace',
+        command: mpMcp,
+        args: [],
+        env,
+      };
+    }
+  }
+
   const uvx = uvxFromUv(resolveUvBin());
   return {
     name: 'mempalace',
     command: existsSync(uvx) ? uvx : 'uvx',
-    args: ['--from', 'mempalace', 'python', '-m', 'mempalace.mcp_server'],
+    args: ['--from', 'mempalace', 'mempalace-mcp'],
     env,
   };
 }

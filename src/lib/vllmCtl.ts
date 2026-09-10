@@ -1,0 +1,105 @@
+export type VllmRecipeId = 'qwen' | 'gpt-oss';
+
+export type VllmConfig = {
+  recipe: VllmRecipeId;
+  servedName: string;
+  port: number;
+  gpuMemoryUtilization: number;
+  maxModelLen: number;
+  kvCacheDtype: 'fp8' | 'auto' | 'fp16';
+  quantization: string;
+  reasoningParser: string;
+  toolCallParser: string;
+};
+
+export type VllmRecipe = {
+  id: VllmRecipeId;
+  label: string;
+  servedName: string;
+  compose: string;
+  container: string;
+  pull: string;
+  modelDir: string;
+  gpuMemoryUtilization: number;
+  maxModelLen: number;
+  kvCacheDtype: string;
+  quantization: string;
+  reasoningParser: string;
+  toolCallParser: string;
+  hf: string;
+};
+
+export type VllmStatus = {
+  ok: boolean;
+  error?: string;
+  alias: string;
+  remoteDir: string;
+  sshOk: boolean;
+  sshError: string;
+  docker: { name: string; status: string; ports: string; running: boolean }[];
+  models: { name: string; bytes: number; shards: number; config: boolean }[];
+  pull: { running: boolean; bytes: number; log: string };
+  saved: VllmConfig;
+  recipes: VllmRecipe[];
+  live: {
+    port: number;
+    health: boolean;
+    healthError: string;
+    version: string | null;
+    models: { id: string; max_model_len?: number; root?: string }[];
+  };
+};
+
+export const VLLM_RECIPE_PRESETS: Pick<VllmRecipe, 'id' | 'label' | 'servedName' | 'hf' | 'gpuMemoryUtilization' | 'maxModelLen' | 'kvCacheDtype' | 'quantization' | 'reasoningParser' | 'toolCallParser'>[] = [
+  {
+    id: 'qwen',
+    label: 'Qwen 3.6 35B-A3B NVFP4+MTP',
+    servedName: 'qwen-abliterated',
+    hf: 'THe-Plague/Qwen3.6-35B-A3B-abliterated-NVFP4-MTP',
+    gpuMemoryUtilization: 0.6,
+    maxModelLen: 65536,
+    kvCacheDtype: 'fp8',
+    quantization: 'nvfp4',
+    reasoningParser: 'qwen3',
+    toolCallParser: 'qwen3_coder',
+  },
+  {
+    id: 'gpt-oss',
+    label: 'GPT-OSS 120B MXFP4 abliterated',
+    servedName: 'gpt-oss-120b-abliterated',
+    hf: 'batsclamp/Huihui-gpt-oss-120b-mxfp4-abliterated',
+    gpuMemoryUtilization: 0.7,
+    maxModelLen: 131072,
+    kvCacheDtype: 'fp8',
+    quantization: 'mxfp4',
+    reasoningParser: 'openai_gptoss',
+    toolCallParser: 'openai',
+  },
+];
+
+async function viaFetch(op: string, payload: Record<string, unknown>): Promise<VllmStatus & Record<string, unknown>> {
+  const r = await fetch('/vllm-ctl/' + op, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = (await r.json()) as VllmStatus & { error?: string };
+  if (!r.ok || json.ok === false) throw new Error(json.error || `vLLM control HTTP ${r.status}`);
+  return json;
+}
+
+export async function vllmCtl(op: string, payload: Record<string, unknown> = {}): Promise<VllmStatus & Record<string, unknown>> {
+  return viaFetch(op, payload);
+}
+
+export function formatBytes(n: number): string {
+  if (!n) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < u.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v >= 10 || i === 0 ? v.toFixed(0) : v.toFixed(1)} ${u[i]}`;
+}

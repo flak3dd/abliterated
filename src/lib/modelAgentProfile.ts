@@ -94,6 +94,8 @@ export type ModelAgentProfileInput = {
   toolUse?: boolean;
   contextLength?: number;
   enabledTools?: readonly string[];
+  /** Connected localhost-bridge workspace; fences/writes land here. */
+  workspaceRoot?: string;
 };
 
 function likelySmallContext(model: string, contextLength?: number): boolean {
@@ -141,25 +143,31 @@ function addendum(opts: {
   planMode: boolean;
   buildMode: boolean;
   contextLength?: number;
+  workspaceRoot?: string;
 }): string {
   const ctx = opts.contextLength ? `${opts.contextLength} tok` : opts.small ? 'small window' : 'wide window';
+  const dest = (opts.workspaceRoot || '').trim();
+  const land = dest
+    ? `the connected bridge workspace ${dest} (ws://127.0.0.1:17322)`
+    : 'the connected bridge workspace (ws://127.0.0.1:17322)';
   const lines = [`## Model profile — ${opts.model}`, `Family: ${opts.family}. Context: ${ctx}.`];
   if (opts.tier === 'none') {
     lines.push(
       'Native function tools are OFF for this checkpoint. Do not emit tool-call JSON, ```json tool_calls fences, or fake tool results.',
-      'Write every file this turn as ```diff or a // relative/path fence in CONTENT — the client applies them. Thought is prose only.',
+      'OVERRIDE: ignore any instruction to call `todo`, write_file, list_dir, grep, glob, verify, or other function tools — they are unavailable.',
+      `Put a markdown ToDo (3–12 items) in CONTENT, then write every file this turn as \`\`\`diff or a // relative/path fence. The client writes them to ${land}. Relative paths only. Thought is prose only.`,
       'If you need a file you do not have, name the path instead of inventing its contents. Chat-only source is a failed build.',
     );
   } else if (opts.tier === 'core') {
     lines.push(
       'Compact tool set only: ' + CORE_AGENT_TOOLS.join(', ') + '.',
       'One tool at a time via the API tools channel. Never paste tool JSON in markdown fences.',
-      'CODE ONLY IN CONTENT via write_file or ```diff / // path. Both land in the working directory this turn. Never in thought.',
+      `CODE ONLY IN CONTENT via write_file or \`\`\`diff / // path. Both land on ${land} this turn. Never in thought.`,
     );
   } else {
     lines.push(
       'Full native tools are available. Call write_file or emit path-headed diffs via the API tools channel — never paste tool JSON in markdown.',
-      'CODE ONLY IN CONTENT via write_file or ```diff / // path. Both land in the working directory this turn. Never in thought.',
+      `CODE ONLY IN CONTENT via write_file or \`\`\`diff / // path. Both land on ${land} this turn. Never in thought.`,
     );
   }
   if (opts.thinking) {
@@ -170,7 +178,9 @@ function addendum(opts: {
   } else if (opts.buildMode && opts.tier !== 'none') {
     lines.push('Build lock (Abliterated Loop): classify → gather → act → verify → ship → stop; todo → tools → diffs in content this turn.');
   } else if (opts.buildMode && opts.tier === 'none') {
-    lines.push('Build lock without tools: emit real diffs in content this turn; do not paste a directory sketch twice.');
+    lines.push(
+      'Build lock without tools: markdown ToDo in content → every scaffold file as // path or ```diff this turn → ```bash verify. Do not call todo/write_file.',
+    );
   }
   return lines.join('\n');
 }
@@ -217,6 +227,7 @@ export function buildModelAgentProfile(opts: ModelAgentProfileInput): ModelAgent
       planMode: !!opts.planMode,
       buildMode: !!opts.buildMode && !opts.planMode,
       contextLength: opts.contextLength,
+      workspaceRoot: opts.workspaceRoot,
     }),
   };
 }

@@ -60,6 +60,14 @@ import {
 import { generatePairingCode, getWorkspace, setSettings, uid, wipeAll } from '../lib/storage';
 import { MEMPALACE_CATALOG_ENTRY, withMempalaceMcpServer } from '../lib/mempalace';
 import { skillRootHints, toCatalogEntries, type SkillCatalogEntry } from '../lib/skills';
+import {
+  AGENT_SETUP_PROFILES,
+  applyAgentSetup,
+  detectActiveSetup,
+  getToggleGuidance,
+  type AgentSetupId,
+} from '../lib/agentPresets';
+import { ToggleSwitch } from '../components/ui/ToggleSwitch';
 import type { ClientSettings, McpServerConfig } from '../types';
 
 interface Props {
@@ -134,26 +142,176 @@ function Section({
   );
 }
 
-function SwitchRow({
-  label,
-  help,
-  checked,
-  onChange,
-  danger,
+
+function AgentSetupSelector({
+  selectedSetupId,
+  onSelectSetup,
+  setupAnalysis,
+  toast,
+  filter,
+  onFilterChange,
 }: {
-  label: string;
-  help?: string;
-  checked: boolean;
-  onChange: (next: boolean) => void;
-  danger?: boolean;
+  settings: ClientSettings;
+  selectedSetupId: AgentSetupId;
+  onSelectSetup: (id: AgentSetupId) => void;
+  onPatch: (partial: Partial<ClientSettings>) => void;
+  setupAnalysis: ReturnType<typeof detectActiveSetup>;
+  toast: string;
+  filter: 'all' | 'workflow' | 'safety' | 'memory' | 'advanced' | 'divergent';
+  onFilterChange: (f: 'all' | 'workflow' | 'safety' | 'memory' | 'advanced' | 'divergent') => void;
 }) {
+  const activeProfile = setupAnalysis.activeSetup;
+
   return (
-    <div className={`switch-row${danger ? ' switch-row--danger' : ''}`}>
-      <label className="switch-row-main">
-        <span>{label}</span>
-        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      </label>
-      {help ? <p className="switch-row-help">{help}</p> : null}
+    <div className="rounded-xl border border-zinc-800/90 bg-zinc-950/80 p-4 shadow-xl backdrop-blur">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-base">⚡</span>
+            <span className="font-mono text-[14px] font-bold tracking-tight text-white">
+              Agent Setup & Workflow Profiles
+            </span>
+          </div>
+          <p className="mt-0.5 font-mono text-[11px] text-zinc-400">
+            Pick an operational setup to automatically configure all switches, or fine-tune individual toggles below.
+          </p>
+        </div>
+
+        {/* Live Match Badge */}
+        <div className="flex items-center gap-2">
+          {setupAnalysis.isExactMatch ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-800/70 bg-emerald-950/60 px-3 py-1 font-mono text-[11px] font-semibold text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.15)]">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              {activeProfile.name} (100% Aligned)
+            </span>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-800/70 bg-amber-950/60 px-2.5 py-1 font-mono text-[11px] font-semibold text-amber-300">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                {activeProfile.name} ({setupAnalysis.matchScore}% · {setupAnalysis.divergentCount} Divergent)
+              </span>
+              <button
+                type="button"
+                onClick={() => onSelectSetup(selectedSetupId)}
+                className="rounded-md border border-amber-600/50 bg-amber-500/15 px-2.5 py-1 font-mono text-[10px] font-bold text-amber-200 transition-colors hover:bg-amber-500/25 hover:text-white"
+                title={`Reset all toggles to the official ${activeProfile.name} defaults`}
+              >
+                Re-align All
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {toast ? (
+        <div className="mt-3 flex items-center gap-2 rounded-md border border-emerald-700/60 bg-emerald-950/80 px-3 py-1.5 font-mono text-[11px] text-emerald-200 animate-in fade-in duration-150">
+          <span>✓</span>
+          <span>{toast}</span>
+        </div>
+      ) : null}
+
+      {/* 5 Setup Cards */}
+      <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
+        {AGENT_SETUP_PROFILES.map((p) => {
+          const isSelected = p.id === activeProfile.id;
+          const isExact = isSelected && setupAnalysis.isExactMatch;
+          return (
+            <div
+              key={p.id}
+              onClick={() => onSelectSetup(p.id)}
+              className={`group relative flex cursor-pointer flex-col justify-between rounded-lg border p-3 transition-all duration-200 ${
+                isSelected
+                  ? 'border-emerald-500/70 bg-emerald-950/25 shadow-[0_0_20px_rgba(16,185,129,0.12)] ring-1 ring-emerald-500/40'
+                  : 'border-zinc-800/80 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-900/80'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between gap-1.5">
+                  <span className="text-xl">{p.icon}</span>
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider ${
+                      isSelected
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : 'bg-zinc-800/90 text-zinc-400 border border-zinc-700/60'
+                    }`}
+                  >
+                    {p.badge}
+                  </span>
+                </div>
+
+                <div className="mt-2 font-mono text-[12px] font-bold text-white group-hover:text-emerald-300 transition-colors">
+                  {p.name}
+                </div>
+
+                <p className="mt-1 font-mono text-[10px] leading-snug text-zinc-400 line-clamp-2">
+                  {p.tagline}
+                </p>
+              </div>
+
+              <div className="mt-3 pt-2 border-t border-zinc-800/60">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectSetup(p.id);
+                  }}
+                  className={`w-full py-1 text-center font-mono text-[10px] font-bold rounded transition-colors ${
+                    isExact
+                      ? 'bg-emerald-600 text-white shadow-[0_0_10px_rgba(16,185,129,0.4)]'
+                      : isSelected
+                        ? 'bg-amber-500/20 text-amber-200 border border-amber-500/40 hover:bg-amber-500/30'
+                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+                  }`}
+                >
+                  {isExact ? '✓ Active' : isSelected ? '● Active (Custom)' : 'Apply Setup'}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Category Filter Pills */}
+      <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-zinc-800/80 pt-3">
+        <span className="font-mono text-[10px] uppercase tracking-wider text-zinc-500 mr-1">
+          Filter Toggles:
+        </span>
+        {[
+          { id: 'all', label: 'All Toggles' },
+          { id: 'workflow', label: 'Workflow & Logic' },
+          { id: 'safety', label: 'Safety & Permissions' },
+          { id: 'memory', label: 'Knowledge & Memory' },
+          { id: 'advanced', label: 'Advanced & Fleets' },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => onFilterChange(tab.id as any)}
+            className={`rounded-full px-2.5 py-0.5 font-mono text-[11px] transition-colors ${
+              filter === tab.id
+                ? 'bg-zinc-200 text-zinc-950 font-bold'
+                : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 border border-zinc-800'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+
+        {setupAnalysis.divergentCount > 0 ? (
+          <button
+            type="button"
+            onClick={() => onFilterChange('divergent')}
+            className={`ml-auto rounded-full px-2.5 py-0.5 font-mono text-[11px] font-semibold transition-colors flex items-center gap-1.5 ${
+              filter === 'divergent'
+                ? 'bg-amber-400 text-zinc-950 shadow-[0_0_10px_rgba(251,191,36,0.4)]'
+                : 'bg-amber-950/60 text-amber-300 border border-amber-800/60 hover:bg-amber-900/50'
+            }`}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+            Divergent from Setup ({setupAnalysis.divergentCount})
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -1108,6 +1266,32 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
 
   const license = getLicenseState(settings);
   const enabledMcp = countEnabledMcp(servers);
+  const [selectedSetupId, setSelectedSetupId] = useState<AgentSetupId>(
+    () => detectActiveSetup(settings).activeSetup.id,
+  );
+  const [settingsFilter, setSettingsFilter] = useState<
+    'all' | 'workflow' | 'safety' | 'memory' | 'advanced' | 'divergent'
+  >('all');
+  const [presetToast, setPresetToast] = useState('');
+  const setupAnalysis = detectActiveSetup(settings);
+
+  const handleSelectSetup = (setupId: AgentSetupId) => {
+    setSelectedSetupId(setupId);
+    const patched = applyAgentSetup(settings, setupId);
+    patch(patched);
+    const prof = AGENT_SETUP_PROFILES.find((p) => p.id === setupId);
+    setPresetToast(`Configured all switches for ${prof?.name || setupId}`);
+    setTimeout(() => setPresetToast(''), 4000);
+  };
+
+  const showWorkflow = settingsFilter === 'all' || settingsFilter === 'workflow';
+  const showSafety = settingsFilter === 'all' || settingsFilter === 'safety';
+  const showMemory = settingsFilter === 'all' || settingsFilter === 'memory';
+  const showAdvanced = settingsFilter === 'all' || settingsFilter === 'advanced';
+  const showDivergent = settingsFilter === 'divergent';
+
+  const planModeOn = settings.planModeEnabled === true;
+  const buildModeOn = settings.buildModeEnabled !== false && !planModeOn;
 
   return (
     <div className="h-full overflow-auto p-4">
@@ -1116,388 +1300,838 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
         <p className="page-header-sub">Agent loop, safety, pairing, and MCP — saved locally.</p>
       </header>
 
-      <div className="grid max-w-2xl gap-4">
-        <Section title="System prompt" hint="Default system prompt for new sessions.">
-          <textarea
-            value={settings.systemPrompt}
-            onChange={(e) => patch({ systemPrompt: e.target.value })}
-            rows={5}
-            className="field resize-y"
-          />
-        </Section>
+      <div className="grid max-w-4xl gap-4">
+        {/* Agent Setup & Presets Bar */}
+        <AgentSetupSelector
+          settings={settings}
+          selectedSetupId={selectedSetupId}
+          onSelectSetup={handleSelectSetup}
+          onPatch={patch}
+          setupAnalysis={setupAnalysis}
+          toast={presetToast}
+          filter={settingsFilter}
+          onFilterChange={setSettingsFilter}
+        />
 
-        <Section title="Agent loop" hint="Turn budget, deepen, mid-run inject, and completion chips.">
-          <FieldLabel label="Max agent turns (1–50)" hint="Hard stop for tool/agent loops per run.">
-            <input
-              type="number"
-              min={1}
-              max={50}
-              value={settings.maxAgentTurns ?? 24}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                const clamped = Number.isFinite(n) ? Math.min(50, Math.max(1, Math.floor(n))) : 24;
-                patch({ maxAgentTurns: clamped });
-              }}
-              className="field field-num"
-            />
-          </FieldLabel>
-
-
-          <FieldLabel
-            label={`Max concurrent Jobs (1–${Number.isFinite(license.features.maxConcurrentJobs) ? license.features.maxConcurrentJobs : 4})`}
-            hint={
-              license.isFree
-                ? 'Free tier: single-flight Jobs. Pro unlocks up to 4 parallel.'
-                : 'How many background Jobs may run at once.'
-            }
+        {/* Dedicated Divergent View */}
+        {showDivergent && setupAnalysis.divergentCount > 0 ? (
+          <Section
+            title={`Divergent Toggles (${setupAnalysis.divergentCount})`}
+            hint={`These toggles differ from the ${setupAnalysis.activeSetup.name} setup profile. Click Align to match recommendations.`}
           >
-            <input
-              type="number"
-              min={1}
-              max={Number.isFinite(license.features.maxConcurrentJobs) ? license.features.maxConcurrentJobs : 16}
-              value={Math.min(
-                settings.maxConcurrentJobs ?? 1,
-                Number.isFinite(license.features.maxConcurrentJobs) ? license.features.maxConcurrentJobs : 16,
-              )}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                const max = Number.isFinite(license.features.maxConcurrentJobs)
-                  ? license.features.maxConcurrentJobs
-                  : 4;
-                const clamped = Number.isFinite(n) ? Math.min(max, Math.max(1, Math.floor(n))) : 1;
-                patch({ maxConcurrentJobs: clamped });
-              }}
-              className="field field-num"
-            />
-          </FieldLabel>
-
-          <SwitchRow
-            label="Self-deepen answers"
-            checked={settings.selfDeepenEnabled !== false}
-            onChange={(v) => patch({ selfDeepenEnabled: v })}
-            help="After a text-only answer, nudge the model to expand thin/missing spots. Stops early on [ANSWER_COMPLETE]. Pair with Completeness below for the Abliterated-only checklist (does not call Grok)."
-          />
-
-          <SwitchRow
-            label="Deepen for completeness (Abliterated-only)"
-            checked={settings.deepenCompleteness !== false}
-            onChange={(v) => patch({ deepenCompleteness: v })}
-            help="When self-deepen runs (or Jobs enqueue with the Completeness chip), inject the completeness checklist from deepenComplete.ts. Chat header/composer toggle stays in sync. No Grok/censored CLI path."
-          />
-
-          <FieldLabel label="Self-deepen passes (0–5)" hint="0 turns deepen off even if the toggle is on.">
-            <input
-              type="number"
-              min={0}
-              max={5}
-              value={settings.selfDeepenPasses ?? 2}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                const clamped = Number.isFinite(n) ? Math.min(5, Math.max(0, Math.floor(n))) : 2;
-                patch({ selfDeepenPasses: clamped });
-              }}
-              className="field field-num"
-            />
-          </FieldLabel>
-
-          <SwitchRow
-            label="Mid-run message inject"
-            checked={settings.midRunInjectEnabled !== false}
-            onChange={(v) => patch({ midRunInjectEnabled: v })}
-            help="Send further messages while the agent is busy. It finishes the current step, then integrates your note."
-          />
-
-
-          <SwitchRow
-            label="Verify-strict profile"
-            checked={settings.verifyStrictProfile === true}
-            onChange={(v) =>
-              patch(
-                v
-                  ? { ...settings, verifyStrictProfile: true, buildModeEnabled: true, skillsEnabled: true, deepenCompleteness: true, selfDeepenEnabled: true, planModeEnabled: false }
-                  : { verifyStrictProfile: false },
-              )
-            }
-            help="Preset: Build mode + skills + deepen completeness. Auto-injects the verify-strict skill on Build/large Jobs and Chat."
-          />
-          <SwitchRow
-            label="Job worktrees (experimental)"
-            checked={settings.jobWorktreesEnabled === true}
-            onChange={(v) => patch({ jobWorktreesEnabled: v })}
-            help="When on, Jobs create a real git worktree under .ablit/worktrees/<jobId> and set the bridge workspace root to that tree."
-          />
-
-          <SwitchRow
-            label="Multi-agent fleets (experimental)"
-            checked={settings.multiAgentEnabled === true}
-            onChange={(v) => patch({ multiAgentEnabled: v })}
-            help="Orchestrator + coder/tester/verifier over .ablit/task.json blackboard. Default off. Pair with Job worktrees for isolation."
-          />
-
-          <SwitchRow
-            label="Completion footer chips"
-            checked={settings.completionFooterEnabled !== false}
-            onChange={(v) => patch({ completionFooterEnabled: v })}
-            help="Finished answers with a Done/Continue footer show three one-click continue prompts."
-          />
-
-          <SwitchRow
-            label="Use reasoning as answer when content is empty"
-            checked={settings.coalesceReasoningToContent !== false}
-            onChange={(v) => patch({ coalesceReasoningToContent: v })}
-            help="R1-style models sometimes fill reasoning only. Promote that text into the main answer locally — no extra API call. Off = show reasoning panel only."
-          />
-        </Section>
-
-
-        <Section
-          title="Skills"
-          hint="Reusable SKILL.md recipes. Workspace .ablit/skills and AGENTS.md auto-load into chat on session start."
-        >
-          <SwitchRow
-            label="Enable skills"
-            checked={settings.skillsEnabled !== false}
-            onChange={(v) => patch({ skillsEnabled: v })}
-            help="Inject the skills catalog. Workspace .ablit/skills bodies auto-load. AGENTS.md conventions load even when this is off."
-          />
-          <div className="mt-2 space-y-1 font-mono text-[11px] text-zinc-400">
-            <div>Bundled: {roots.bundled}</div>
-            <div>User: {roots.global}</div>
-            <div>Workspace: {roots.workspace}</div>
-            <div>
-              Loaded: {skillRows.length} skill{skillRows.length === 1 ? '' : 's'}
-              {skillsBusy ? ' (refreshing…)' : ''}
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-800/50 bg-amber-950/20 p-3">
+              <span className="font-mono text-[12px] text-amber-200">
+                {setupAnalysis.divergentCount} switch{setupAnalysis.divergentCount === 1 ? '' : 'es'} customized away from {setupAnalysis.activeSetup.name}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleSelectSetup(setupAnalysis.activeSetup.id)}
+                className="btn-primary h-7 px-3 font-mono text-[11px]"
+              >
+                Re-align All to {setupAnalysis.activeSetup.name}
+              </button>
             </div>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <button type="button" className="chip" onClick={() => void refreshSkills()} disabled={skillsBusy}>
-              Refresh
-            </button>
-            <span className="font-mono text-[10px] text-muted">
-              Add skills under ~/.abliterated/skills/&lt;slug&gt;/SKILL.md or .ablit/skills/ in the workspace. See docs/SKILLS.md.
-            </span>
-          </div>
-        </Section>
 
-        <Section
-          title="Web search"
-          hint="Built-in web_search is keyless (Brave HTML, then Bing, then Wikipedia). Optional backends override when set."
-        >
-          <FieldLabel
-            label="Brave Search API key"
-            hint="Optional. If set, web_search uses api.search.brave.com first. Leave empty for keyless search."
+            <div className="grid gap-2">
+              {setupAnalysis.divergentKeys.map((key) => {
+                const guidance = getToggleGuidance(key, settings, selectedSetupId);
+                const alignFn = () => patch({ [key]: guidance.recommendedValue });
+
+                switch (key) {
+                  case 'buildModeEnabled':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Build mode (Scaffold -> Build -> Verify)"
+                        help="After reasoning, plan ToDo steps, scaffold structure, then implement."
+                        checked={buildModeOn}
+                        onChange={(v) => patch({ buildModeEnabled: v, planModeEnabled: v ? false : settings.planModeEnabled })}
+                        disabled={planModeOn}
+                        disabledReason="Disabled while Plan mode is active."
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'planModeEnabled':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Plan mode (Read-only specification)"
+                        help="Zero code file writes. Explores and drafts plans without mutation."
+                        checked={planModeOn}
+                        onChange={(v) => patch({ planModeEnabled: v, buildModeEnabled: v ? false : true })}
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'autoAcceptEdits':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Auto-accept file edits"
+                        help="Applies diffs into the connected workspace without an extra Apply click."
+                        checked={settings.autoAcceptEdits}
+                        onChange={(v) => patch({ autoAcceptEdits: v })}
+                        disabled={planModeOn}
+                        disabledReason="Writes are blocked in Plan mode."
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'autoRunShell':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Auto-run shell commands"
+                        danger
+                        help="Runs model shell tool calls on the localhost daemon without a Run click."
+                        checked={settings.autoRunShell}
+                        onChange={(v) => patch({ autoRunShell: v })}
+                        disabled={planModeOn || settings.remoteHostEnabled === false}
+                        disabledReason={planModeOn ? "Shell blocked in Plan mode." : "Requires Remote host bridge."}
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'verifyStrictProfile':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Verify-strict quality loop"
+                        help="Build mode + skills + deepen completeness. Mandates verification before done."
+                        checked={settings.verifyStrictProfile === true}
+                        onChange={(v) =>
+                          patch(
+                            v
+                              ? { verifyStrictProfile: true, buildModeEnabled: true, skillsEnabled: true, deepenCompleteness: true, selfDeepenEnabled: true, planModeEnabled: false }
+                              : { verifyStrictProfile: false },
+                          )
+                        }
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'selfDeepenEnabled':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Self-deepen answers"
+                        help="Nudge model to expand thin/missing spots after text answers."
+                        checked={settings.selfDeepenEnabled !== false}
+                        onChange={(v) => patch({ selfDeepenEnabled: v })}
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'deepenCompleteness':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Deepen for completeness"
+                        help="Inject completeness checklist on self-deepen loops."
+                        checked={settings.deepenCompleteness !== false}
+                        onChange={(v) => patch({ deepenCompleteness: v })}
+                        disabled={settings.selfDeepenEnabled === false}
+                        disabledReason="Requires 'Self-deepen answers' to be ON."
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'skillsEnabled':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Discover & inject SKILL.md recipes"
+                        help="Inject skills catalog into session context."
+                        checked={settings.skillsEnabled !== false}
+                        onChange={(v) => patch({ skillsEnabled: v })}
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'projectRulesPinned':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Pin project rules into system prompt"
+                        help="Auto-inject .ablit/rules.md and AGENTS.md conventions."
+                        checked={settings.projectRulesPinned !== false}
+                        onChange={(v) => patch({ projectRulesPinned: v })}
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'midRunInjectEnabled':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Mid-run message inject"
+                        help="Send further messages while the agent is busy."
+                        checked={settings.midRunInjectEnabled !== false}
+                        onChange={(v) => patch({ midRunInjectEnabled: v })}
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'coalesceReasoningToContent':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Use reasoning as answer when content is empty"
+                        help="Promote reasoning text into main answer when content is empty."
+                        checked={settings.coalesceReasoningToContent !== false}
+                        onChange={(v) => patch({ coalesceReasoningToContent: v })}
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'completionFooterEnabled':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Completion footer chips"
+                        help="Show one-click continue prompt suggestions."
+                        checked={settings.completionFooterEnabled !== false}
+                        onChange={(v) => patch({ completionFooterEnabled: v })}
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'mempalaceEnabled':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Enable MemPalace long-term memory"
+                        help="Local verbatim memory palace (memory_search, memory_save, memory_wake)."
+                        checked={settings.mempalaceEnabled !== false}
+                        onChange={(v) =>
+                          patch({
+                            mempalaceEnabled: v,
+                            mcpServers: withMempalaceMcpServer(settings.mcpServers, v, settings.mempalacePalacePath),
+                          })
+                        }
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'mempalaceAutoRecall':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Auto-recall wake-up context"
+                        help="Inject L0+L1 wake-up into prompt when connected."
+                        checked={settings.mempalaceAutoRecall !== false}
+                        onChange={(v) => patch({ mempalaceAutoRecall: v })}
+                        disabled={settings.mempalaceEnabled === false}
+                        disabledReason="Requires MemPalace to be enabled."
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'mempalaceAutoSave':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Auto-save sessions"
+                        help="File last turn into palace wing after each run."
+                        checked={settings.mempalaceAutoSave !== false}
+                        onChange={(v) => patch({ mempalaceAutoSave: v })}
+                        disabled={settings.mempalaceEnabled === false}
+                        disabledReason="Requires MemPalace to be enabled."
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'jobWorktreesEnabled':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Job git worktrees"
+                        help="Jobs create real git worktrees under .ablit/worktrees/<jobId>."
+                        checked={settings.jobWorktreesEnabled === true}
+                        onChange={(v) => patch({ jobWorktreesEnabled: v })}
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'multiAgentEnabled':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Multi-agent fleets"
+                        help="Orchestrator + workers over .ablit/task.json blackboard."
+                        checked={settings.multiAgentEnabled === true}
+                        onChange={(v) => patch({ multiAgentEnabled: v })}
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  case 'remoteHostEnabled':
+                    return (
+                      <ToggleSwitch
+                        key={key}
+                        label="Remote host enabled"
+                        help="Allow localhost bridge / remote host features."
+                        checked={settings.remoteHostEnabled}
+                        onChange={(v) => patch({ remoteHostEnabled: v })}
+                        guidance={guidance}
+                        onAlign={alignFn}
+                      />
+                    );
+                  default:
+                    return null;
+                }
+              })}
+            </div>
+          </Section>
+        ) : null}
+
+        {/* 1. Agent Workflow & Execution */}
+        {showWorkflow && !showDivergent ? (
+          <Section
+            title="Agent workflow & execution"
+            hint="Turn budget, execution protocols, deepen loops, and reasoning behavior."
           >
-            <input
-              type="password"
-              autoComplete="off"
-              value={settings.webSearchBraveKey}
-              onChange={(e) => patch({ webSearchBraveKey: e.target.value })}
-              placeholder="BSA..."
-              className="field"
-            />
-          </FieldLabel>
-          <FieldLabel
-            label="SearxNG URL"
-            hint="Optional. Example: http://127.0.0.1:8080 — must allow format=json."
+            <div className="grid gap-2">
+              <ToggleSwitch
+                label="Build mode (Scaffold -> Build -> Verify)"
+                help="After reasoning, the agent maps ToDo steps, scaffolds required folder/file structure first, then implements. Write tools are unlocked."
+                checked={buildModeOn}
+                onChange={(v) => {
+                  patch({
+                    buildModeEnabled: v,
+                    planModeEnabled: v ? false : settings.planModeEnabled,
+                  });
+                }}
+                disabled={planModeOn}
+                disabledReason="Disabled while Plan mode is active. Plan mode is strictly read-only."
+                guidance={getToggleGuidance('buildModeEnabled', settings, selectedSetupId)}
+                onAlign={() => {
+                  patch({
+                    buildModeEnabled: true,
+                    planModeEnabled: false,
+                  });
+                }}
+              />
+
+              <ToggleSwitch
+                label="Plan mode (Read-only specification)"
+                help="Zero code file writes or terminal mutations. The agent investigates, audits, and drafts comprehensive plans. Requires explicit operator approval to unlock writes."
+                checked={planModeOn}
+                onChange={(v) => {
+                  patch({
+                    planModeEnabled: v,
+                    buildModeEnabled: v ? false : true,
+                  });
+                }}
+                guidance={getToggleGuidance('planModeEnabled', settings, selectedSetupId)}
+                onAlign={() => {
+                  const rec = getToggleGuidance('planModeEnabled', settings, selectedSetupId).recommendedValue;
+                  patch({
+                    planModeEnabled: rec,
+                    buildModeEnabled: rec ? false : true,
+                  });
+                }}
+              />
+
+              <ToggleSwitch
+                label="Self-deepen answers"
+                checked={settings.selfDeepenEnabled !== false}
+                onChange={(v) => patch({ selfDeepenEnabled: v })}
+                help="After a text-only answer, nudge the model to expand thin/missing spots. Stops early on [ANSWER_COMPLETE]. Pair with Completeness below."
+                guidance={getToggleGuidance('selfDeepenEnabled', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    selfDeepenEnabled: getToggleGuidance('selfDeepenEnabled', settings, selectedSetupId).recommendedValue,
+                  })
+                }
+              />
+
+              <ToggleSwitch
+                label="Deepen for completeness (Abliterated-only)"
+                checked={settings.deepenCompleteness !== false}
+                onChange={(v) => patch({ deepenCompleteness: v })}
+                disabled={settings.selfDeepenEnabled === false}
+                disabledReason="Requires 'Self-deepen answers' to be enabled above."
+                help="When self-deepen runs (or Jobs enqueue with the Completeness chip), inject the completeness checklist from deepenComplete.ts. No Grok/censored CLI path."
+                guidance={getToggleGuidance('deepenCompleteness', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    deepenCompleteness: getToggleGuidance('deepenCompleteness', settings, selectedSetupId).recommendedValue,
+                  })
+                }
+              />
+            </div>
+
+            {/* Numerical settings grid */}
+            <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <FieldLabel label="Max agent turns (1–50)" hint="Hard stop for tool loops per run.">
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={settings.maxAgentTurns ?? 24}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    const clamped = Number.isFinite(n) ? Math.min(50, Math.max(1, Math.floor(n))) : 24;
+                    patch({ maxAgentTurns: clamped });
+                  }}
+                  className="field field-num w-full"
+                />
+              </FieldLabel>
+
+              <FieldLabel
+                label={`Max concurrent Jobs (1–${Number.isFinite(license.features.maxConcurrentJobs) ? license.features.maxConcurrentJobs : 4})`}
+                hint={license.isFree ? 'Free tier: 1 job. Pro: up to 4.' : 'Parallel background Jobs limit.'}
+              >
+                <input
+                  type="number"
+                  min={1}
+                  max={Number.isFinite(license.features.maxConcurrentJobs) ? license.features.maxConcurrentJobs : 16}
+                  value={Math.min(
+                    settings.maxConcurrentJobs ?? 1,
+                    Number.isFinite(license.features.maxConcurrentJobs) ? license.features.maxConcurrentJobs : 16,
+                  )}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    const max = Number.isFinite(license.features.maxConcurrentJobs) ? license.features.maxConcurrentJobs : 4;
+                    const clamped = Number.isFinite(n) ? Math.min(max, Math.max(1, Math.floor(n))) : 1;
+                    patch({ maxConcurrentJobs: clamped });
+                  }}
+                  className="field field-num w-full"
+                />
+              </FieldLabel>
+
+              <FieldLabel label="Self-deepen passes (0–5)" hint="0 disables deepen even if toggle is ON.">
+                <input
+                  type="number"
+                  min={0}
+                  max={5}
+                  disabled={settings.selfDeepenEnabled === false}
+                  value={settings.selfDeepenEnabled === false ? 0 : settings.selfDeepenPasses ?? 2}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    const clamped = Number.isFinite(n) ? Math.min(5, Math.max(0, Math.floor(n))) : 2;
+                    patch({ selfDeepenPasses: clamped });
+                  }}
+                  className="field field-num w-full"
+                />
+              </FieldLabel>
+            </div>
+
+            <div className="mt-2 grid gap-2">
+              <ToggleSwitch
+                label="Use reasoning as answer when content is empty"
+                checked={settings.coalesceReasoningToContent !== false}
+                onChange={(v) => patch({ coalesceReasoningToContent: v })}
+                help="R1-style models sometimes fill reasoning only. Promote that text into the main answer locally — zero extra API costs."
+                guidance={getToggleGuidance('coalesceReasoningToContent', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    coalesceReasoningToContent: getToggleGuidance('coalesceReasoningToContent', settings, selectedSetupId).recommendedValue,
+                  })
+                }
+              />
+
+              <ToggleSwitch
+                label="Mid-run message inject (Barge-in)"
+                checked={settings.midRunInjectEnabled !== false}
+                onChange={(v) => patch({ midRunInjectEnabled: v })}
+                help="Send further messages while the agent is busy. It finishes the current step, then integrates your instruction."
+                guidance={getToggleGuidance('midRunInjectEnabled', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    midRunInjectEnabled: getToggleGuidance('midRunInjectEnabled', settings, selectedSetupId).recommendedValue,
+                  })
+                }
+              />
+
+              <ToggleSwitch
+                label="Completion footer continue chips"
+                checked={settings.completionFooterEnabled !== false}
+                onChange={(v) => patch({ completionFooterEnabled: v })}
+                help="Finished answers with a Done/Continue summary display three one-click continuation prompts."
+                guidance={getToggleGuidance('completionFooterEnabled', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    completionFooterEnabled: getToggleGuidance('completionFooterEnabled', settings, selectedSetupId).recommendedValue,
+                  })
+                }
+              />
+            </div>
+          </Section>
+        ) : null}
+
+        {/* 2. Safety & Machine Permissions */}
+        {showSafety && !showDivergent ? (
+          <Section title="Safety & machine permissions" hint="What the agent may write, execute, or access on your local machine.">
+            <div className="grid gap-2">
+              <ToggleSwitch
+                label="Remote host & bridge connection"
+                checked={settings.remoteHostEnabled}
+                onChange={(v) => patch({ remoteHostEnabled: v })}
+                help="Allow the localhost WebSocket daemon (ws://127.0.0.1:17322) to inspect files, git, and processes."
+                guidance={getToggleGuidance('remoteHostEnabled', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    remoteHostEnabled: getToggleGuidance('remoteHostEnabled', settings, selectedSetupId).recommendedValue,
+                  })
+                }
+              />
+
+              <ToggleSwitch
+                label="Auto-accept file edits"
+                checked={settings.autoAcceptEdits}
+                onChange={(v) => patch({ autoAcceptEdits: v })}
+                disabled={planModeOn}
+                disabledReason="File edits cannot be auto-accepted while Plan mode is active (writes prohibited)."
+                help="When a working directory is connected, agent code files write there. This automatically applies diffs without waiting for an extra Apply click."
+                guidance={getToggleGuidance('autoAcceptEdits', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    autoAcceptEdits: getToggleGuidance('autoAcceptEdits', settings, selectedSetupId).recommendedValue,
+                  })
+                }
+              />
+
+              <ToggleSwitch
+                label="Auto-run shell commands"
+                danger
+                checked={settings.autoRunShell}
+                onChange={(v) => patch({ autoRunShell: v })}
+                disabled={planModeOn || settings.remoteHostEnabled === false}
+                disabledReason={
+                  planModeOn
+                    ? 'Shell execution is strictly barred in Plan mode.'
+                    : 'Requires Remote host & bridge to be enabled above.'
+                }
+                help="HIGH CAUTION: Runs model shell tool calls on the localhost daemon without requiring a manual Run click. Deadly commands are still refused."
+                guidance={getToggleGuidance('autoRunShell', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    autoRunShell: getToggleGuidance('autoRunShell', settings, selectedSetupId).recommendedValue,
+                  })
+                }
+              />
+            </div>
+          </Section>
+        ) : null}
+
+        {/* 3. Knowledge, Skills & Rules */}
+        {showMemory && !showDivergent ? (
+          <Section
+            title="Skills & Project rules"
+            hint="Reusable SKILL.md recipes and project steering conventions auto-loaded into chat."
           >
-            <input
-              value={settings.webSearchSearxUrl}
-              onChange={(e) => patch({ webSearchSearxUrl: e.target.value })}
-              placeholder="https://searx.example/search"
-              className="field"
-            />
-          </FieldLabel>
-        </Section>
+            <div className="grid gap-2">
+              <ToggleSwitch
+                label="Discover & inject SKILL.md recipes"
+                checked={settings.skillsEnabled !== false}
+                onChange={(v) => patch({ skillsEnabled: v })}
+                help="Inject the skills catalog. Workspace .ablit/skills bodies auto-load. AGENTS.md conventions load even when this is off."
+                guidance={getToggleGuidance('skillsEnabled', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    skillsEnabled: getToggleGuidance('skillsEnabled', settings, selectedSetupId).recommendedValue,
+                  })
+                }
+              />
 
-        <Section title="Safety" hint="What the agent may write or execute on your machine.">
-          <SwitchRow
-            label="Remote host enabled"
-            checked={settings.remoteHostEnabled}
-            onChange={(v) => patch({ remoteHostEnabled: v })}
-            help="Allow the localhost bridge / remote host features."
-          />
+              <ToggleSwitch
+                label="Pin project rules into system prompt"
+                checked={settings.projectRulesPinned !== false}
+                onChange={(v) => patch({ projectRulesPinned: v })}
+                help="Automatically prepends .ablit/rules.md and AGENTS.md project conventions into the agent steering prompt."
+                guidance={getToggleGuidance('projectRulesPinned', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    projectRulesPinned: getToggleGuidance('projectRulesPinned', settings, selectedSetupId).recommendedValue,
+                  })
+                }
+              />
+            </div>
 
-          <SwitchRow
-            label="Auto-accept file edits"
-            checked={settings.autoAcceptEdits}
-            onChange={(v) => patch({ autoAcceptEdits: v })}
-            help="When a working directory is connected, agent code files already write there. This also applies diffs without an extra Apply click. Shell still needs Run unless Auto-run is on."
-          />
+            <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 font-mono text-[11px] text-zinc-400">
+              <div className="font-semibold text-zinc-300">Discovered Skill Locations:</div>
+              <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-3">
+                <div>Bundled: <span className="text-zinc-200">{roots.bundled}</span></div>
+                <div>User: <span className="text-zinc-200">{roots.global}</span></div>
+                <div>Workspace: <span className="text-zinc-200">{roots.workspace}</span></div>
+              </div>
+              <div className="mt-2 flex items-center justify-between border-t border-zinc-800/80 pt-2">
+                <span>
+                  Loaded: <strong className="text-emerald-400">{skillRows.length}</strong> skill{skillRows.length === 1 ? '' : 's'}
+                  {skillsBusy ? ' (refreshing…)' : ''}
+                </span>
+                <button type="button" className="chip" onClick={() => void refreshSkills()} disabled={skillsBusy}>
+                  Refresh Skills
+                </button>
+              </div>
+            </div>
+          </Section>
+        ) : null}
 
-          <SwitchRow
-            label="Auto-run shell"
-            danger
-            checked={settings.autoRunShell}
-            onChange={(v) => patch({ autoRunShell: v })}
-            help="Danger: runs model shell tool calls on the localhost daemon without a Run click. Deadly commands are still refused."
-          />
-        </Section>
-
-        <Section
-          title="MemPalace"
-          hint="Local-first verbatim memory (wings / rooms / drawers). Official CLI: uv tool install mempalace — docs at mempalaceofficial.com. First-class tools: memory_search, memory_save, memory_status, memory_wake."
-        >
-          <SwitchRow
-            label="Enable MemPalace"
-            checked={settings.mempalaceEnabled !== false}
-            onChange={(v) =>
-              patch({
-                mempalaceEnabled: v,
-                mcpServers: withMempalaceMcpServer(
-                  settings.mcpServers,
-                  v,
-                  settings.mempalacePalacePath,
-                ),
-              })
-            }
-            help="When on, chat/jobs get wake-up context and memory_* tools. MCP server is added as mcp__mempalace__* if uvx is available."
-          />
-          <SwitchRow
-            label="Auto-recall (wake-up)"
-            checked={settings.mempalaceAutoRecall !== false}
-            onChange={(v) => patch({ mempalaceAutoRecall: v })}
-            help="Inject L0+L1 wake-up into the system prompt when the bridge is connected."
-          />
-          <SwitchRow
-            label="Auto-save sessions"
-            checked={settings.mempalaceAutoSave !== false}
-            onChange={(v) => patch({ mempalaceAutoSave: v })}
-            help="After each chat/job run, file the last user/assistant turn into the palace (wing = workspace name)."
-          />
-          <FieldLabel
-            label="Palace path"
-            hint="Empty = MemPalace default (~/.mempalace/palace). Sets MEMPALACE_PALACE_PATH for CLI and MCP."
+        {/* 4. MemPalace Long-Term Memory */}
+        {showMemory && !showDivergent ? (
+          <Section
+            title="MemPalace"
+            hint="Local-first verbatim memory (wings / rooms / drawers). Official CLI: uv tool install mempalace. First-class tools: memory_search, memory_save, memory_status, memory_wake."
           >
-            <input
-              value={settings.mempalacePalacePath}
-              onChange={(e) => patch({ mempalacePalacePath: e.target.value })}
-              placeholder="~/.mempalace/palace"
-              className="field"
-            />
-          </FieldLabel>
-          <FieldLabel
-            label="Wing"
-            hint="Empty = basename of the connected workspace. Used to scope search / save."
+            <div className="grid gap-2">
+              <ToggleSwitch
+                label="Enable MemPalace long-term memory"
+                checked={settings.mempalaceEnabled !== false}
+                onChange={(v) =>
+                  patch({
+                    mempalaceEnabled: v,
+                    mcpServers: withMempalaceMcpServer(
+                      settings.mcpServers,
+                      v,
+                      settings.mempalacePalacePath,
+                    ),
+                  })
+                }
+                help="When on, chat/jobs get wake-up context and memory_* tools. MCP server is added as mcp__mempalace__* if uvx is available."
+                guidance={getToggleGuidance('mempalaceEnabled', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    mempalaceEnabled: getToggleGuidance('mempalaceEnabled', settings, selectedSetupId).recommendedValue,
+                  })
+                }
+              />
+
+              <ToggleSwitch
+                label="Auto-recall wake-up context"
+                checked={settings.mempalaceAutoRecall !== false}
+                onChange={(v) => patch({ mempalaceAutoRecall: v })}
+                disabled={settings.mempalaceEnabled === false}
+                disabledReason="Requires MemPalace to be enabled above."
+                help="Inject L0+L1 wake-up memory into the system prompt when the bridge is connected."
+                guidance={getToggleGuidance('mempalaceAutoRecall', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    mempalaceAutoRecall: getToggleGuidance('mempalaceAutoRecall', settings, selectedSetupId).recommendedValue,
+                  })
+                }
+              />
+
+              <ToggleSwitch
+                label="Auto-save completed sessions"
+                checked={settings.mempalaceAutoSave !== false}
+                onChange={(v) => patch({ mempalaceAutoSave: v })}
+                disabled={settings.mempalaceEnabled === false}
+                disabledReason="Requires MemPalace to be enabled above."
+                help="After each chat/job run, file the last user/assistant turn into the palace (wing = workspace name)."
+                guidance={getToggleGuidance('mempalaceAutoSave', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    mempalaceAutoSave: getToggleGuidance('mempalaceAutoSave', settings, selectedSetupId).recommendedValue,
+                  })
+                }
+              />
+            </div>
+
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <FieldLabel
+                label="Palace path"
+                hint="Empty = MemPalace default (~/.mempalace/palace)."
+              >
+                <input
+                  value={settings.mempalacePalacePath}
+                  onChange={(e) => patch({ mempalacePalacePath: e.target.value })}
+                  placeholder="~/.mempalace/palace"
+                  className="field"
+                />
+              </FieldLabel>
+              <FieldLabel
+                label="Wing"
+                hint="Empty = basename of workspace. Scopes search / save."
+              >
+                <input
+                  value={settings.mempalaceWing}
+                  onChange={(e) => patch({ mempalaceWing: e.target.value })}
+                  placeholder="workspace folder name"
+                  className="field"
+                />
+              </FieldLabel>
+            </div>
+
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn-ghost h-7 px-2 text-[10px]"
+                disabled={mpBusy !== null}
+                onClick={() => {
+                  setMpBusy('which');
+                  setMpHint('');
+                  void bridge
+                    .waitUntilConnected(4000)
+                    .then((ok) => {
+                      if (!ok) throw new Error('Bridge disconnected — npm run bridge');
+                      return bridge.mempalaceWhich();
+                    })
+                    .then((w) => setMpHint(w.ok ? `CLI: ${w.display}` : w.error || w.text || 'not found'))
+                    .catch((e) => setMpHint(e instanceof Error ? e.message : String(e)))
+                    .finally(() => setMpBusy(null));
+                }}
+              >
+                Detect CLI
+              </button>
+              <button
+                type="button"
+                className="btn-primary h-7 px-2 text-[10px]"
+                disabled={mpBusy !== null}
+                onClick={() => {
+                  setMpBusy('install');
+                  setMpHint('Installing via uv tool install mempalace…');
+                  void bridge
+                    .waitUntilConnected(4000)
+                    .then((ok) => {
+                      if (!ok) throw new Error('Bridge disconnected — npm run bridge');
+                      return bridge.mempalaceInstall();
+                    })
+                    .then((t) => setMpHint(t || 'installed'))
+                    .catch((e) => setMpHint(e instanceof Error ? e.message : String(e)))
+                    .finally(() => setMpBusy(null));
+                }}
+              >
+                Install
+              </button>
+              <button
+                type="button"
+                className="btn-ghost h-7 px-2 text-[10px]"
+                disabled={mpBusy !== null}
+                onClick={() => {
+                  setMpBusy('init');
+                  setMpHint('Initializing palace from the connected workspace…');
+                  void bridge
+                    .waitUntilConnected(4000)
+                    .then((ok) => {
+                      if (!ok) throw new Error('Bridge disconnected — npm run bridge');
+                      return bridge.mempalaceInit(wsRoot || undefined, {
+                        palacePath: settings.mempalacePalacePath,
+                      });
+                    })
+                    .then((t) => setMpHint(t || 'initialized'))
+                    .catch((e) => setMpHint(e instanceof Error ? e.message : String(e)))
+                    .finally(() => setMpBusy(null));
+                }}
+              >
+                Init workspace
+              </button>
+              <button
+                type="button"
+                className="btn-ghost h-7 px-2 text-[10px]"
+                disabled={mpBusy !== null}
+                onClick={() => {
+                  setMpBusy('status');
+                  setMpHint('');
+                  void bridge
+                    .waitUntilConnected(4000)
+                    .then((ok) => {
+                      if (!ok) throw new Error('Bridge disconnected — npm run bridge');
+                      return bridge.mempalaceStatus({
+                        palacePath: settings.mempalacePalacePath,
+                        wing: settings.mempalaceWing,
+                      });
+                    })
+                    .then((t) => setMpHint(t || '(empty)'))
+                    .catch((e) => setMpHint(e instanceof Error ? e.message : String(e)))
+                    .finally(() => setMpBusy(null));
+                }}
+              >
+                Status
+              </button>
+              <button
+                type="button"
+                className="btn-ghost h-7 px-2 text-[10px]"
+                onClick={() => {
+                  patch({
+                    mempalaceEnabled: true,
+                    mcpServers: withMempalaceMcpServer(
+                      settings.mcpServers,
+                      true,
+                      settings.mempalacePalacePath,
+                    ),
+                  });
+                  setMpHint(
+                    `Added MCP ${MEMPALACE_CATALOG_ENTRY.command} ${MEMPALACE_CATALOG_ENTRY.args.join(' ')} — Connect it under MCP servers.`,
+                  );
+                }}
+              >
+                Add MCP server
+              </button>
+            </div>
+            {mpHint ? (
+              <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-border bg-background px-2 py-1.5 font-mono text-[10px] text-zinc-300">
+                {mpHint}
+              </pre>
+            ) : null}
+          </Section>
+        ) : null}
+
+        {/* 5. Advanced & Fleets (Experimental) */}
+        {showAdvanced && !showDivergent ? (
+          <Section
+            title="Advanced & fleet orchestration (experimental)"
+            hint="Strict quality loops, isolated branch worktrees, and blackboard multi-agent teams."
           >
-            <input
-              value={settings.mempalaceWing}
-              onChange={(e) => patch({ mempalaceWing: e.target.value })}
-              placeholder="workspace folder name"
-              className="field"
-            />
-          </FieldLabel>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="btn-ghost h-7 px-2 text-[10px]"
-              disabled={mpBusy !== null}
-              onClick={() => {
-                setMpBusy('which');
-                setMpHint('');
-                void bridge
-                  .waitUntilConnected(4000)
-                  .then((ok) => {
-                    if (!ok) throw new Error('Bridge disconnected — npm run bridge');
-                    return bridge.mempalaceWhich();
+            <div className="grid gap-2">
+              <ToggleSwitch
+                label="Verify-strict quality loop profile"
+                checked={settings.verifyStrictProfile === true}
+                onChange={(v) =>
+                  patch(
+                    v
+                      ? {
+                          ...settings,
+                          verifyStrictProfile: true,
+                          buildModeEnabled: true,
+                          skillsEnabled: true,
+                          deepenCompleteness: true,
+                          selfDeepenEnabled: true,
+                          planModeEnabled: false,
+                        }
+                      : { verifyStrictProfile: false },
+                  )
+                }
+                help="Preset: Build mode + skills + deepen completeness. Auto-injects the verify-strict skill on Build/large Jobs and Chat."
+                guidance={getToggleGuidance('verifyStrictProfile', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    verifyStrictProfile: getToggleGuidance('verifyStrictProfile', settings, selectedSetupId).recommendedValue,
                   })
-                  .then((w) => setMpHint(w.ok ? `CLI: ${w.display}` : w.error || w.text || 'not found'))
-                  .catch((e) => setMpHint(e instanceof Error ? e.message : String(e)))
-                  .finally(() => setMpBusy(null));
-              }}
-            >
-              Detect CLI
-            </button>
-            <button
-              type="button"
-              className="btn-primary h-7 px-2 text-[10px]"
-              disabled={mpBusy !== null}
-              onClick={() => {
-                setMpBusy('install');
-                setMpHint('Installing via uv tool install mempalace…');
-                void bridge
-                  .waitUntilConnected(4000)
-                  .then((ok) => {
-                    if (!ok) throw new Error('Bridge disconnected — npm run bridge');
-                    return bridge.mempalaceInstall();
+                }
+              />
+
+              <ToggleSwitch
+                label="Job git worktrees (isolated branch environments)"
+                checked={settings.jobWorktreesEnabled === true}
+                onChange={(v) => patch({ jobWorktreesEnabled: v })}
+                help="When on, Jobs create a real git worktree under .ablit/worktrees/<jobId> and set the bridge workspace root to that isolated tree."
+                guidance={getToggleGuidance('jobWorktreesEnabled', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    jobWorktreesEnabled: getToggleGuidance('jobWorktreesEnabled', settings, selectedSetupId).recommendedValue,
                   })
-                  .then((t) => setMpHint(t || 'installed'))
-                  .catch((e) => setMpHint(e instanceof Error ? e.message : String(e)))
-                  .finally(() => setMpBusy(null));
-              }}
-            >
-              Install
-            </button>
-            <button
-              type="button"
-              className="btn-ghost h-7 px-2 text-[10px]"
-              disabled={mpBusy !== null}
-              onClick={() => {
-                setMpBusy('init');
-                setMpHint('Initializing palace from the connected workspace…');
-                void bridge
-                  .waitUntilConnected(4000)
-                  .then((ok) => {
-                    if (!ok) throw new Error('Bridge disconnected — npm run bridge');
-                    return bridge.mempalaceInit(wsRoot || undefined, {
-                      palacePath: settings.mempalacePalacePath,
-                    });
+                }
+              />
+
+              <ToggleSwitch
+                label="Multi-agent fleets (orchestrator + workers)"
+                checked={settings.multiAgentEnabled === true}
+                onChange={(v) => patch({ multiAgentEnabled: v })}
+                help="Orchestrator + coder/tester/verifier over .ablit/task.json blackboard. Default off. Pair with Job worktrees for clean isolation."
+                guidance={getToggleGuidance('multiAgentEnabled', settings, selectedSetupId)}
+                onAlign={() =>
+                  patch({
+                    multiAgentEnabled: getToggleGuidance('multiAgentEnabled', settings, selectedSetupId).recommendedValue,
                   })
-                  .then((t) => setMpHint(t || 'initialized'))
-                  .catch((e) => setMpHint(e instanceof Error ? e.message : String(e)))
-                  .finally(() => setMpBusy(null));
-              }}
-            >
-              Init workspace
-            </button>
-            <button
-              type="button"
-              className="btn-ghost h-7 px-2 text-[10px]"
-              disabled={mpBusy !== null}
-              onClick={() => {
-                setMpBusy('status');
-                setMpHint('');
-                void bridge
-                  .waitUntilConnected(4000)
-                  .then((ok) => {
-                    if (!ok) throw new Error('Bridge disconnected — npm run bridge');
-                    return bridge.mempalaceStatus({
-                      palacePath: settings.mempalacePalacePath,
-                      wing: settings.mempalaceWing,
-                    });
-                  })
-                  .then((t) => setMpHint(t || '(empty)'))
-                  .catch((e) => setMpHint(e instanceof Error ? e.message : String(e)))
-                  .finally(() => setMpBusy(null));
-              }}
-            >
-              Status
-            </button>
-            <button
-              type="button"
-              className="btn-ghost h-7 px-2 text-[10px]"
-              onClick={() => {
-                patch({
-                  mempalaceEnabled: true,
-                  mcpServers: withMempalaceMcpServer(
-                    settings.mcpServers,
-                    true,
-                    settings.mempalacePalacePath,
-                  ),
-                });
-                setMpHint(
-                  `Added MCP ${MEMPALACE_CATALOG_ENTRY.command} ${MEMPALACE_CATALOG_ENTRY.args.join(' ')} — Connect it under MCP servers.`,
-                );
-              }}
-            >
-              Add MCP server
-            </button>
-          </div>
-          {mpHint ? (
-            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-border bg-background px-2 py-1.5 font-mono text-[10px] text-zinc-300">
-              {mpHint}
-            </pre>
-          ) : null}
-        </Section>
+                }
+              />
+            </div>
+          </Section>
+        ) : null}
 
         <Section title="Inference / pairing" hint="Pairing code for the localhost bridge. Inference endpoints live under API.">
           <div className="rounded border border-border bg-background px-3 py-2">

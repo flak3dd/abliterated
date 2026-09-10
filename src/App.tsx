@@ -13,6 +13,7 @@ import {
   KLEIN_IMAGE_MODEL,
   UNCENSORED_IMAGE_MODEL,
   sparkChatSettingsPatch,
+  sparkGptOssSettingsPatch,
   sparkImageSettingsPatch,
   sparkPushCommand,
 } from './lib/sparkInstall';
@@ -42,8 +43,9 @@ import { JobsScreen } from './screens/JobsScreen';
 import { ModelsScreen } from './screens/ModelsScreen';
 import { ImagesScreen } from './screens/ImagesScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
+import { VllmScreen } from './screens/VllmScreen';
 import { WorkspaceScreen } from './screens/WorkspaceScreen';
-import { DEFAULT_ENABLED_TOOLS, type ClientSettings, type InferenceProvider, type Job, type Tab, type Thread, type WorkspaceContext } from './types';
+import { DEFAULT_ENABLED_TOOLS, type ClientSettings, type InferenceProvider, type Job, type Tab, type Thread, type WorkspaceContext, type AgentMode } from './types';
 
 const TAB_BY_DIGIT: Record<string, Tab> = {
   '1': 'home',
@@ -51,8 +53,9 @@ const TAB_BY_DIGIT: Record<string, Tab> = {
   '3': 'models',
   '4': 'jobs',
   '5': 'api',
-  '6': 'images',
-  '7': 'settings',
+  '6': 'vllm',
+  '7': 'images',
+  '8': 'settings',
 };
 
 function isTypingTarget(el: EventTarget | null): boolean {
@@ -91,8 +94,9 @@ export default function App() {
   const [composerSeed, setComposerSeed] = useState<string | null>(null);
   const [chatFilePanel, setChatFilePanel] = useState(false);
   const license = getLicenseState(settings);
-  const planMode = settings.planModeEnabled === true;
-  const buildMode = settings.buildModeEnabled !== false && !planMode;
+  const agentMode: AgentMode = settings.agentMode || (settings.planModeEnabled ? 'plan' : 'agent');
+  const planMode = agentMode === 'plan';
+  const buildMode = agentMode === 'agent';
 
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
@@ -422,15 +426,21 @@ export default function App() {
         run: () => setTab('api'),
       },
       {
+        id: 'tab-vllm',
+        label: 'Go to vLLM',
+        hint: k('⌘6', 'Ctrl+6'),
+        run: () => setTab('vllm'),
+      },
+      {
         id: 'tab-images',
         label: 'Go to Images',
-        hint: k('⌘6', 'Ctrl+6'),
+        hint: k('⌘7', 'Ctrl+7'),
         run: () => setTab('images'),
       },
       {
         id: 'tab-settings',
         label: 'Go to Settings',
-        hint: k('⌘7', 'Ctrl+7'),
+        hint: k('⌘8', 'Ctrl+8'),
         run: () => setTab('settings'),
       },
       {
@@ -446,23 +456,28 @@ export default function App() {
         run: () => patchSettings({ autoRunShell: !settingsRef.current.autoRunShell }),
       },
       {
-        id: 'toggle-build-mode',
-        label: settings.buildModeEnabled !== false ? 'Disable build mode' : 'Enable build mode',
-        keywords: 'todo scaffold skeleton implement',
-        run: () => {
-          const on = settingsRef.current.buildModeEnabled === false;
-          patchSettings({ buildModeEnabled: on, planModeEnabled: on ? false : settingsRef.current.planModeEnabled });
-        },
+        id: 'set-mode-agent',
+        label: 'Mode: Agent (full write/verify)',
+        keywords: 'agent build implement write execute',
+        run: () => patchSettings({ agentMode: 'agent', planModeEnabled: false, buildModeEnabled: true }),
       },
       {
-        id: 'toggle-plan-mode',
-        label: settings.planModeEnabled ? 'Disable plan mode' : 'Enable plan mode',
-        keywords: 'checklist readonly',
-        run: () => {
-          const cur = settingsRef.current;
-          const on = !cur.planModeEnabled;
-          patchSettings({ planModeEnabled: on, buildModeEnabled: on ? false : true });
-        },
+        id: 'set-mode-ask',
+        label: 'Mode: Ask (read-only explore/search)',
+        keywords: 'ask question readonly explore research',
+        run: () => patchSettings({ agentMode: 'ask', planModeEnabled: false, buildModeEnabled: false }),
+      },
+      {
+        id: 'set-mode-plan',
+        label: 'Mode: Plan (research → approve checklist)',
+        keywords: 'plan checklist readonly gate',
+        run: () => patchSettings({ agentMode: 'plan', planModeEnabled: true, buildModeEnabled: false }),
+      },
+      {
+        id: 'set-mode-debug',
+        label: 'Mode: Debug (systematic reproduce & fix)',
+        keywords: 'debug fix test error bug troubleshoot',
+        run: () => patchSettings({ agentMode: 'debug', planModeEnabled: false, buildModeEnabled: false }),
       },
       {
         id: 'focus-workspace',
@@ -558,6 +573,12 @@ export default function App() {
         label: 'Use Qwen on Spark',
         keywords: 'provider qwen abliterated spark vllm 8000',
         run: () => applySettings({ ...settingsRef.current, ...sparkChatSettingsPatch(settingsRef.current) }),
+      },
+      {
+        id: 'use-gpt-oss-spark',
+        label: 'Use GPT-OSS 120B on Spark',
+        keywords: 'provider gpt-oss 120b abliterated mxfp4 spark vllm agent',
+        run: () => applySettings({ ...settingsRef.current, ...sparkGptOssSettingsPatch(settingsRef.current) }),
       },
       {
         id: 'use-spark-image-gen',
@@ -668,6 +689,12 @@ export default function App() {
 
       if (typing) return;
       if (paletteOpen) return;
+
+      if (mod && (e.key === 'i' || e.key === 'I')) {
+        e.preventDefault();
+        chatRef.current?.focusInput();
+        return;
+      }
 
       if (mod && (e.key === 'n' || e.key === 'N')) {
         e.preventDefault();
@@ -790,34 +817,46 @@ export default function App() {
                         onGitMaybeChanged={() => void refreshGitStatus()}
                         composerSeed={composerSeed}
                         onComposerSeedConsumed={() => setComposerSeed(null)}
+                        agentMode={agentMode}
                         planMode={planMode}
                         buildMode={buildMode}
+                        onSelectAgentMode={(mode) => {
+                          applySettings({
+                            ...settingsRef.current,
+                            agentMode: mode,
+                            planModeEnabled: mode === 'plan',
+                            buildModeEnabled: mode === 'agent',
+                          });
+                        }}
                         onTogglePlanMode={() => {
                           const cur = settingsRef.current;
-                          const next = !cur.planModeEnabled;
+                          const next = cur.agentMode === 'plan' ? 'agent' : 'plan';
                           applySettings({
                             ...cur,
-                            planModeEnabled: next,
-                            buildModeEnabled: next ? false : true,
+                            agentMode: next,
+                            planModeEnabled: next === 'plan',
+                            buildModeEnabled: next === 'agent',
                           });
                         }}
                         onToggleBuildMode={() => {
                           const cur = settingsRef.current;
-                          const next = cur.buildModeEnabled === false;
+                          const next = cur.agentMode === 'agent' ? 'ask' : 'agent';
                           applySettings({
                             ...cur,
-                            buildModeEnabled: next,
-                            planModeEnabled: next ? false : cur.planModeEnabled,
+                            agentMode: next,
+                            buildModeEnabled: next === 'agent',
+                            planModeEnabled: false,
                           });
                         }}
                         onApprovePlan={() => {
                           applySettings({
                             ...settingsRef.current,
+                            agentMode: 'agent',
                             planModeEnabled: false,
                             buildModeEnabled: true,
                           });
                           setComposerSeed(
-                            'Plan approved. Build mode is on. After reasoning emit ToDo: steps. If new file/folder structure is required, scaffold it first, then work the list. Write tools are unlocked.',
+                            'Plan approved. Agent mode is on. After reasoning emit ToDo: steps. If new file/folder structure is required, scaffold it first, then work the list. Write tools are unlocked.',
                           );
                         }}
                         onSettingsChange={applySettings}
@@ -872,6 +911,11 @@ export default function App() {
             {visitedTabs.has('api') ? (
               <div className={panelClass('api')}>
                 <ApiScreen settings={settings} onSettingsChange={applySettings} onOpenTab={setTab} />
+              </div>
+            ) : null}
+            {visitedTabs.has('vllm') ? (
+              <div className={panelClass('vllm')}>
+                <VllmScreen settings={settings} onSettingsChange={applySettings} />
               </div>
             ) : null}
             {visitedTabs.has('images') ? (

@@ -34,8 +34,8 @@ assert.match(MISSING_CLI, /uv tool install mempalace/);
 
 const spec = mcpServerSpec('/tmp/palace');
 assert.equal(spec.name, 'mempalace');
-assert.match(spec.command, /uvx/);
-assert.ok(spec.args.includes('mempalace.mcp_server'));
+assert.ok(spec.command.includes('mempalace-mcp') || spec.command.includes('uvx'));
+assert.ok(spec.args.length === 0 || spec.args.includes('mempalace-mcp'));
 assert.equal(spec.env.MEMPALACE_PALACE_PATH, '/tmp/palace');
 
 const dirs = extraBinDirs();

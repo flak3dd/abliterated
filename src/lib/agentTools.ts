@@ -1,11 +1,11 @@
 import { bridge } from './bridgeClient';
 import { isPathLocked, type WriteLockTable } from './writeLocks';
-import { workspaceGate } from './workspaceGuard';
+import { connectedBridgeWriteRoot, workspaceGate } from './workspaceGuard';
 import { generateImage, imageResultToMarkdown } from './imageGen';
 import { isXaiImageBackend, resolveXaiImageModel, XAI_IMAGE_MODEL } from './xaiImage';
 import { saveGeneratedImage } from './imageLibrary';
 import { isDeadlyCommand } from './grokLayer';
-import { isMcpToolName } from './mcpClient';
+import { isMcpToolName, listConnectedMcpTools } from './mcpClient';
 import {
   applyTodoToolArgs,
   canonicalizeToolName,
@@ -26,7 +26,8 @@ import {
   parseTaskGraph,
   stringifyHierarchicalTaskGraph,
 } from './taskGraph';
-import type { ClientSettings, ToolCallPayload, ToolCallStatus, ToolType } from '../types';
+import type { ClientSettings, ToolCallPayload, ToolCallStatus, ToolType, DiagnosticItem, AgentMode } from '../types';
+import { ASK_MODE_TOOLS } from '../types';
 
 export function toolArgString(args: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
@@ -118,6 +119,8 @@ export type ExecuteAgentToolOpts = {
   writeLocks?: WriteLockTable;
   /** Owner id for lock checks (job/node id). */
   writeLockOwner?: string;
+  /** Active interaction mode (agent, ask, plan, debug). */
+  agentMode?: AgentMode;
 };
 
 export type ExecuteAgentToolResult = {
@@ -183,12 +186,17 @@ export async function executeAgentTool(
 ): Promise<ExecuteAgentToolResult> {
   const { mode, autoAcceptEdits, autoRunShell, settings, enabledTools } = opts;
 
-  if (isMcpToolName(tool.name)) {
+  const matchingMcpTool = opts.executeMcpTool
+    ? listConnectedMcpTools().find((t) => t.name === tool.name || t.namespaced === tool.name)
+    : undefined;
+
+  if (isMcpToolName(tool.name) || matchingMcpTool) {
     if (!opts.executeMcpTool) {
       return err(tool, 'MCP not available');
     }
     try {
-      const content = await opts.executeMcpTool(tool.name, tool.arguments);
+      const targetName = matchingMcpTool?.namespaced || tool.name;
+      const content = await opts.executeMcpTool(targetName, tool.arguments);
       return ok(tool, content);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -201,7 +209,15 @@ export async function executeAgentTool(
   if (canonical !== tool.name) {
     tool = { ...tool, name: canonical };
   }
-  const allowed = enabledTools.includes(name) || name === 'todo' || name === 'task_read' || name === 'task_update';
+  const activeMode: AgentMode = opts.agentMode || settings.agentMode || 'agent';
+  if (activeMode === 'ask') {
+    const askAllow = new Set<string>(ASK_MODE_TOOLS);
+    if (!askAllow.has(name)) {
+      return denied(tool, `tool ${tool.name} is not allowed in Ask (read-only) mode`);
+    }
+  }
+
+  const allowed = enabledTools.includes(name) || (name === 'todo' || name === 'task_read' || (name === 'task_update' && activeMode !== 'ask'));
   if (!allowed) {
     return denied(tool, `tool ${tool.name} is not enabled`);
   }
@@ -262,7 +278,14 @@ export async function executeAgentTool(
     const preview = file + '\n---\n' + content.slice(0, 4000);
     if (!bridge.connected) return disconnected(tool, preview, autoAcceptEdits, mode);
     try {
-      await bridge.writeFile(file, content, { root: opts.workspaceRoot || undefined });
+      await bridge.writeFile(file, content, {
+        root:
+          connectedBridgeWriteRoot({
+            workspaceRoot: opts.workspaceRoot,
+            appRoot: bridge.currentAppRoot,
+            bridgeRoot: bridge.validWorkspaceRoot || bridge.currentRoot,
+          }) || opts.workspaceRoot || undefined,
+      });
       return ok(tool, 'wrote ' + file + ' (' + content.length + ' chars)');
     } catch (e) {
       return err(tool, e instanceof Error ? e.message : String(e));
@@ -763,4 +786,50 @@ export async function executeAgentTool(
     return softSkip(tool, `unsupported or gated tool ${tool.name}`);
   }
   return gated(tool, JSON.stringify(tool.arguments, null, 2));
+}
+
+/**
+ * Post-edit workspace diagnostics runner.
+ * Runs `tsc --noEmit --pretty false` via bridge and parses output into DiagnosticItem array.
+ */
+export async function runWorkspaceDiagnostics(_root?: string): Promise<DiagnosticItem[]> {
+  if (!bridge.connected) return [];
+  let stdout = '';
+  let stderr = '';
+  try {
+    await bridge.runCommand('npx tsc --noEmit --pretty false', (chunk, stream) => {
+      if (stream === 'stderr') stderr += chunk;
+      else stdout += chunk;
+    });
+  } catch {
+    return [];
+  }
+  const combined = stdout + '\n' + stderr;
+  const diagnostics: DiagnosticItem[] = [];
+  const lines = combined.split('\n');
+  for (const line of lines) {
+    const m1 = line.match(/^([^(]+)\((\d+),(\d+)\):\s*(error|warning)\s*(TS\d+:\s*.*)$/);
+    if (m1) {
+      diagnostics.push({
+        file: m1[1].trim(),
+        line: parseInt(m1[2], 10),
+        col: parseInt(m1[3], 10),
+        severity: m1[4] as 'error' | 'warning',
+        message: m1[5].trim(),
+      });
+      continue;
+    }
+    const m2 = line.match(/^([^:]+):(\d+):(\d+)\s*-\s*(error|warning)\s*(TS\d+:\s*.*)$/);
+    if (m2) {
+      diagnostics.push({
+        file: m2[1].trim(),
+        line: parseInt(m2[2], 10),
+        col: parseInt(m2[3], 10),
+        severity: m2[4] as 'error' | 'warning',
+        message: m2[5].trim(),
+      });
+      continue;
+    }
+  }
+  return diagnostics.slice(0, 20);
 }

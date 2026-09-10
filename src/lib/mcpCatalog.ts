@@ -11,7 +11,7 @@ export type McpCatalogEntry = {
   command: string;
   args: string[];
   /** How the process is launched. uvx needs `uv` on PATH. */
-  runner: 'npx' | 'uvx';
+  runner: 'npx' | 'uvx' | 'mempalace-mcp' | 'direct';
 };
 
 export const MCP_ONE_CLICK_CATALOG: readonly McpCatalogEntry[] = [
@@ -92,9 +92,9 @@ export const MCP_ONE_CLICK_CATALOG: readonly McpCatalogEntry[] = [
     name: 'mempalace',
     title: 'MemPalace',
     blurb: 'Local-first verbatim AI memory (wings / rooms / drawers). uv tool install mempalace.',
-    command: 'uvx',
-    args: ['--from', 'mempalace', 'python', '-m', 'mempalace.mcp_server'],
-    runner: 'uvx',
+    command: 'mempalace-mcp',
+    args: [],
+    runner: 'mempalace-mcp',
   },
 ];
 
