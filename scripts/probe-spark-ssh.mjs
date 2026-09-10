@@ -30,3 +30,10 @@ try {
 } catch (err) {
   console.log('GPU query error:', err.message);
 }
+
+try {
+  const logs = execSync("ssh flak3dd 'docker logs --tail 25 gpt-oss-120b-abliterated 2>&1 || true'", { encoding: 'utf8' });
+  console.log('Recent container logs:\n' + logs);
+} catch (err) {
+  console.log('Logs error:', err.message);
+}

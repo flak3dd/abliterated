@@ -20,5 +20,25 @@ async function checkHost(base) {
 }
 
 for (const h of hosts) {
-  await checkHost(h);
+  const ok = await checkHost(h);
+  if (ok) {
+    try {
+      console.log(`Testing POST ${h}/v1/chat/completions with qwen-abliterated...`);
+      const chatRes = await fetch(`${h}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'qwen-abliterated',
+          messages: [{ role: 'user', content: 'Say hello in 5 words.' }],
+          max_tokens: 30,
+        }),
+      });
+      console.log(`Chat status: ${chatRes.status}`);
+      const chatJson = await chatRes.json();
+      console.log('Response content:', chatJson.choices?.[0]?.message?.content);
+    } catch (e) {
+      console.error('Chat test error:', e.message);
+    }
+  }
 }
+

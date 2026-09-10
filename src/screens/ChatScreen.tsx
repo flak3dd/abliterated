@@ -1,5 +1,5 @@
-import { forwardRef, useEffect, useImperativeHandle } from 'react';
-import { ArrowLeft, ArrowDown, RotateCcw, Send, Square, ListChecks, PanelRight, Play } from 'lucide-react';
+import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
+import { ArrowLeft, ArrowDown, RotateCcw, Send, Square, PanelRight, Play, Zap, ChevronDown } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { DEEPEN_COMPLETENESS_CHAT_LABEL, DEEPEN_COMPLETENESS_TOOLTIP } from '../lib/deepenComplete';
 import { MessageBubble } from '../components/chat/MessageBubble';
@@ -10,7 +10,7 @@ import { ProofChip } from '../components/chat/ProofChip';
 import { enqueueChatAsJob } from '../lib/jobRunner';
 import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
 import type { ClientSettings, Tab, Thread, AgentMode } from '../types';
-import { ALL_AGENT_MODES, PLAN_MODE_TOOLS } from '../types';
+import { ALL_AGENT_MODES } from '../types';
 import { MESSAGE_WINDOW, useAgentLoop } from '../hooks/useAgentLoop';
 
 export interface ChatScreenHandle {
@@ -95,6 +95,166 @@ function QuickChips({
   );
 }
 
+/** Compact toggle: shows a ⚡ button that reveals QuickChips inline on click. */
+function QuickChipsToggle({
+  onFill,
+  onSend,
+}: {
+  onFill: (text: string) => void;
+  onSend: (text: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex shrink-0 items-center gap-1 rounded border border-border bg-background px-2 py-0.5 font-mono text-[10px] text-zinc-400 transition-colors hover:border-primary/40 hover:text-zinc-200"
+        title="Quick actions"
+      >
+        <Zap size={10} /> Quick
+      </button>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        className="inline-flex shrink-0 items-center gap-1 rounded border border-primary/40 bg-primary/10 px-2 py-0.5 font-mono text-[10px] text-primary transition-colors hover:bg-primary/20"
+        title="Hide quick actions"
+      >
+        <Zap size={10} /> Quick
+      </button>
+      {QUICK_ACTIONS.map((a) => (
+        <button
+          key={a.id}
+          type="button"
+          onClick={() => {
+            if (a.send) onSend(a.send);
+            else if (a.fill) onFill(a.fill);
+            setOpen(false);
+          }}
+          className="chip"
+        >
+          {a.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Unified mode indicator — replaces 4 separate bars with a single compact strip. */
+function ModeIndicator({
+  mode,
+  planChecklist,
+  busy,
+  onApprovePlan,
+  onCancelPlan,
+}: {
+  mode: AgentMode;
+  planChecklist: string[];
+  busy: boolean;
+  onApprovePlan: () => void;
+  onCancelPlan: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (mode === 'plan') {
+    return (
+      <div className="border-t border-sky-800/40 bg-sky-950/20 px-3 py-1.5">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex w-full items-center gap-2 text-left font-mono text-[10px] text-sky-300"
+        >
+          <span>📋</span>
+          <span className="flex-1">
+            Plan mode{planChecklist.length ? ` · ${planChecklist.length} steps` : ''} · writes locked
+          </span>
+          <ChevronDown size={12} className={cn('transition-transform text-sky-400', expanded && 'rotate-180')} />
+        </button>
+        {expanded ? (
+          <div className="mt-1.5">
+            {planChecklist.length ? (
+              <ul className="max-h-28 space-y-0.5 overflow-auto font-mono text-[11px] text-zinc-300">
+                {planChecklist.map((item, i) => (
+                  <li key={i} className="flex gap-1.5">
+                    <span className="shrink-0 text-muted">{i + 1}.</span>
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="font-mono text-[10px] text-muted">
+                Waiting for a checklist…
+              </div>
+            )}
+            <div className="mt-1.5 flex gap-2">
+              <button
+                type="button"
+                disabled={!planChecklist.length || busy}
+                className="btn-primary font-mono text-[10px] disabled:opacity-40"
+                onClick={onApprovePlan}
+              >
+                Approve plan
+              </button>
+              <button type="button" className="btn-ghost font-mono text-[10px]" onClick={onCancelPlan}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (mode === 'ask') {
+    return (
+      <div className="border-t border-emerald-800/40 bg-emerald-950/15 px-3 py-1 font-mono text-[10px] text-emerald-300">
+        🔍 Ask mode — read-only
+      </div>
+    );
+  }
+
+  if (mode === 'debug') {
+    return (
+      <div className="border-t border-amber-800/40 bg-amber-950/15 px-3 py-1 font-mono text-[10px] text-amber-300">
+        🐛 Debug — reproduce → isolate → fix → verify
+      </div>
+    );
+  }
+
+  // Agent mode with optional ToDo checklist
+  if (planChecklist.length > 0) {
+    return (
+      <div className="border-t border-zinc-800/60 bg-zinc-950/40 px-3 py-1.5">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex w-full items-center gap-2 text-left font-mono text-[10px] text-zinc-400"
+        >
+          <span>📝</span>
+          <span className="flex-1">{planChecklist.length} todo items</span>
+          <ChevronDown size={12} className={cn('transition-transform text-zinc-500', expanded && 'rotate-180')} />
+        </button>
+        {expanded ? (
+          <ul className="mt-1 max-h-28 space-y-0.5 overflow-auto font-mono text-[11px] text-zinc-300">
+            {planChecklist.map((item, i) => (
+              <li key={i} className="flex gap-1.5">
+                <span className="shrink-0 text-muted">{i + 1}.</span>
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    );
+  }
+
+  return null;
+}
+
 export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScreen(
   {
     thread,
@@ -138,7 +298,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     setDirConfirmed,
     needsWorkingDir,
     grokById,
-    grokHeader,
+    grokHeader: _grokHeader,
     planChecklist,
     agentPhase,
     phaseMeta,
@@ -146,8 +306,8 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     queuedMidRun,
     showJump,
     statusLabel,
-    agentProfile,
-    effectiveTools,
+    agentProfile: _agentProfile,
+    effectiveTools: _effectiveTools,
     completenessOn,
     runStartedAtRef,
     scrollerRef,
@@ -168,7 +328,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     handleShellExecuted,
     handleContinuePrompt,
     patchDeepenCompleteness,
-    deepenThisAnswerNow,
+    deepenThisAnswerNow: _deepenThisAnswerNow,
   } = useAgentLoop({
     thread,
     settings,
@@ -256,42 +416,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         <div className="min-w-0 flex-1">
           <div className="truncate text-[20px] font-semibold tracking-tight text-foreground">{thread.title}</div>
           <div className="truncate font-mono text-[10.5px] text-muted-foreground">
-            {resolveActiveSettings(settings).label} · {agentProfile.label} · {currentMode.toUpperCase()} ·
-            {agentProfile.useThoughtLock ? 'THOUGHT · ' : ''}
-            {completenessOn ? 'COMPLETE · ' : ''}{statusLabel}
-            {grokHeader ? ` · ${grokHeader}` : ''}
-            {workspaceRoot ? ` · ${workspaceRoot}` : ''}
+            {resolveActiveSettings(settings).label} · {statusLabel}
           </div>
         </div>
-        <label
-          className={
-            'flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded border px-2 py-1 font-mono text-[10px] ' +
-            (completenessOn
-              ? 'border-emerald-600/70 bg-emerald-950/40 text-emerald-300'
-              : 'border-border bg-background text-muted')
-          }
-          title={DEEPEN_COMPLETENESS_TOOLTIP}
-        >
-          <input
-            type="checkbox"
-            role="switch"
-            aria-checked={completenessOn}
-            aria-label={DEEPEN_COMPLETENESS_CHAT_LABEL}
-            checked={completenessOn}
-            onChange={() => patchDeepenCompleteness(!completenessOn)}
-            className="h-3 w-3 accent-emerald-400"
-          />
-          {DEEPEN_COMPLETENESS_CHAT_LABEL}
-        </label>
-        <button
-          type="button"
-          onClick={deepenThisAnswerNow}
-          disabled={needsWorkingDir || (busy && !midRunOn) || messages.length === 0}
-          className="inline-flex shrink-0 items-center gap-1 rounded border border-border bg-background px-2 py-1 font-mono text-[10px] text-zinc-300 transition-colors hover:border-emerald-600/50 hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500 disabled:opacity-40"
-          title={`${DEEPEN_COMPLETENESS_TOOLTIP}. Queues mid-run inject when busy, otherwise sends a follow-up.`}
-        >
-          <ListChecks size={11} /> Deepen now
-        </button>
         <button type="button" onClick={() => void retry()} disabled={busy} className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40">
           <RotateCcw size={14} />
         </button>
@@ -319,24 +446,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           onOpenTab={onOpenTab}
         />
       ) : null}
-      <div className="flex border-b border-border bg-background px-4 py-2">
-        <div className="flex gap-1 rounded-lg bg-surface p-0.5">
-          {ALL_AGENT_MODES.map((m) => (
-            <button
-              key={m}
-              onClick={() => handleModeSelect(m)}
-              className={cn(
-                'rounded-md px-3 py-1 font-mono text-[11px] capitalize transition-colors',
-                currentMode === m
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {m}
-            </button>
-          ))}
-        </div>
-      </div>
+
 
       <div
         className={cn(
@@ -430,75 +540,16 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         ) : null}
       </div>
 
-      {currentMode !== 'plan' && planChecklist.length ? (
-        <div className="border-t border-zinc-800 bg-zinc-950/60 px-3 py-2">
-          <div className="font-mono text-[10px] uppercase tracking-wide text-zinc-400">ToDo</div>
-          <ul className="mt-1 max-h-28 space-y-0.5 overflow-auto font-mono text-[11px] text-zinc-300">
-            {planChecklist.map((item, i) => (
-              <li key={i} className="flex gap-1.5">
-                <span className="shrink-0 text-muted">{i + 1}.</span>
-                <span>{item}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {currentMode === 'plan' ? (
-        <div className="border-t border-sky-800/60 bg-sky-950/30 px-3 py-2">
-          <div className="font-mono text-[10px] uppercase tracking-wide text-sky-300">
-            Plan mode · tools {effectiveTools.join(', ') || PLAN_MODE_TOOLS.join(', ')}
-          </div>
-          <div className="mt-1 font-mono text-[10px] text-amber-300/90">
-            Writes locked — turn off Plan / Approve plan to apply diffs and write tools.
-          </div>
-          {planChecklist.length ? (
-            <ul className="mt-1 max-h-28 space-y-0.5 overflow-auto font-mono text-[11px] text-zinc-300">
-              {planChecklist.map((item, i) => (
-                <li key={i} className="flex gap-1.5">
-                  <span className="shrink-0 text-muted">{i + 1}.</span>
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="mt-1 font-mono text-[10px] text-muted">
-              Waiting for a checklist (bullets / numbered steps)…
-            </div>
-          )}
-          <div className="mt-2 flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={!planChecklist.length || busy}
-              className="btn-primary font-mono text-[10px] disabled:opacity-40"
-              title="Approve plan and unlock write tools"
-              onClick={() => {
-                onApprovePlan?.();
-                if (!onApprovePlan) onTogglePlanMode?.();
-              }}
-            >
-              Approve plan
-            </button>
-            <button
-              type="button"
-              className="btn-ghost font-mono text-[10px]"
-              onClick={() => onTogglePlanMode?.()}
-            >
-              Cancel plan
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {currentMode === 'ask' ? (
-        <div className="border-t border-emerald-800/60 bg-emerald-950/30 px-3 py-1.5 font-mono text-[10px] text-emerald-300">
-          Ask mode (read-only) — explore & search without writes.
-        </div>
-      ) : null}
-      {currentMode === 'debug' ? (
-        <div className="border-t border-amber-800/60 bg-amber-950/30 px-3 py-1.5 font-mono text-[10px] text-amber-300">
-          Debug mode — systematic protocol: reproduce → isolate → hypothesize → fix → verify.
-        </div>
-      ) : null}
+      <ModeIndicator
+        mode={currentMode}
+        planChecklist={planChecklist}
+        busy={busy}
+        onApprovePlan={() => {
+          onApprovePlan?.();
+          if (!onApprovePlan) onTogglePlanMode?.();
+        }}
+        onCancelPlan={() => onTogglePlanMode?.()}
+      />
       {needsWorkingDir && messages.length > 0 && onChooseWorkspace ? (
         <div className="border-t border-border bg-surface px-3 py-3">
           <WorkingDirPrompt
@@ -512,7 +563,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
         </div>
       ) : null}
       <form
-        className="border-t border-border bg-background p-3"
+        className="border-t border-border bg-background px-3 py-2"
         onSubmit={(e) => {
           e.preventDefault();
           void send();
@@ -531,13 +582,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
           />
         ) : null}
         {!busy && lastProof ? (
-          <ProofChip proof={lastProof} className="mb-1.5" />
+          <ProofChip proof={lastProof} className="mb-1" />
         ) : null}
-        {!busy && !needsWorkingDir ? (
-          <div className="mb-1.5">
-            <QuickChips onFill={fillInput} onSend={(t) => void sendText(t)} />
-          </div>
-        ) : busy ? (
+        {busy ? (
           <div className="mb-1 font-mono text-[10px] text-zinc-600">Esc stops</div>
         ) : null}
         <div className="mx-auto max-w-3xl rounded-2xl border border-border bg-panel shadow-[0_18px_40px_-32px_rgba(0,0,0,0.9)] transition-colors focus-within:border-primary/50">
@@ -557,10 +604,10 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
             disabled={needsWorkingDir}
             className="w-full resize-none bg-transparent px-4 pt-3.5 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground field max-h-32 border-0 focus-visible:ring-0"
           />
-        <div className="flex flex-wrap items-end gap-2 px-3 pb-3 pt-1.5">
+        <div className="flex flex-wrap items-end gap-2 px-3 pb-2.5 pt-1">
           <label
             className={
-              'flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded border px-2 py-1 font-mono text-[10px] ' +
+              'flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded border px-2 py-0.5 font-mono text-[10px] ' +
               (completenessOn
                 ? 'border-emerald-600/70 bg-emerald-950/40 text-emerald-300'
                 : 'border-border bg-background text-muted')
@@ -605,6 +652,9 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               );
             })}
           </div>
+          {!busy && !needsWorkingDir && messages.length > 0 ? (
+            <QuickChipsToggle onFill={fillInput} onSend={(t) => void sendText(t)} />
+          ) : null}
           {busy ? (
             <>
               <button type="button" onClick={stop} className="btn-danger shrink-0" title="Stop agent (Esc)">

@@ -43,14 +43,14 @@ export const BUILD_D = {
 } as const;
 
 export const SPARK_IMAGE_MODELS = [
-  { id: UNCENSORED_IMAGE_MODEL, label: "Quality — Krea 2 RAW + LoRA 0.75 (Build D hero)" },
-  { id: FAST_IMAGE_MODEL, label: "Fast — Krea 2 Turbo (demoted)" },
-  { id: DRAFT_IMAGE_MODEL, label: "Draft — Z-Image Turbo NSFW (sketches)" },
-  { id: QWEN_IMAGE_MODEL, label: "Instruction — Qwen-Image 2512 FP8" },
-  { id: QWEN_EDIT_IMAGE_MODEL, label: "Edit — Qwen-Edit 2511 FP8" },
-  { id: KLEIN_IMAGE_MODEL, label: "Klein 9B base + NSFW-unlock (after hero)" },
-  { id: ANIME_IMAGE_MODEL, label: "Anime/Adult — Illustrious WAI-NSFW (zoo)" },
-  { id: PONY_IMAGE_MODEL, label: "Anime/Adult — Pony V6 (zoo)" },
+  { id: UNCENSORED_IMAGE_MODEL, label: "Quality (Krea 2 RAW)" },
+  { id: FAST_IMAGE_MODEL, label: "Fast (Krea 2 Turbo)" },
+  { id: DRAFT_IMAGE_MODEL, label: "Draft (Z-Image Turbo)" },
+  { id: QWEN_IMAGE_MODEL, label: "Instruction (Qwen-Image)" },
+  { id: QWEN_EDIT_IMAGE_MODEL, label: "Edit / Inpaint (Qwen-Edit)" },
+  { id: KLEIN_IMAGE_MODEL, label: "FLUX.2 Klein 9B" },
+  { id: ANIME_IMAGE_MODEL, label: "Anime (Illustrious WAI)" },
+  { id: PONY_IMAGE_MODEL, label: "Anime (Pony V6)" },
 ] as const;
 
 const DRAFT_ALIASES = new Set([DRAFT_IMAGE_MODEL, 'z-image-turbo-6b', 'draft', 'sketch', 'z-image']);
@@ -100,15 +100,10 @@ export function sparkChatUrl(settings: Pick<ClientSettings, 'sparkLanHost'>): st
 }
 
 export const SPARK_CHAT_MODEL = 'qwen-abliterated';
-export const SPARK_GPT_OSS_MODEL = 'gpt-oss-120b-abliterated';
 
 export function sparkChatSettingsPatch(settings: Pick<ClientSettings, 'sparkLanHost'>): Partial<ClientSettings> {
   const loopback = sparkLanIsLoopback(settings);
   return { inferenceProvider: 'dgx-spark', sparkEnabled: true, remoteHostEnabled: true, sparkModel: SPARK_CHAT_MODEL, sparkBaseUrl: sparkChatUrl(settings), sparkViaProxy: loopback };
-}
-
-export function sparkGptOssSettingsPatch(settings: Pick<ClientSettings, 'sparkLanHost'>): Partial<ClientSettings> {
-  return { ...sparkChatSettingsPatch(settings), sparkModel: SPARK_GPT_OSS_MODEL };
 }
 
 export function sparkQwenPushCommand(alias: string): string {
@@ -133,7 +128,11 @@ export function sparkImageSettingsPatch(settings: Pick<ClientSettings, 'sparkLan
   };
 }
 
-export const IMAGE_MODEL_OPTIONS = [...SPARK_IMAGE_MODELS, { id: 'seedvr2-7b-fp8', label: 'Upscale — SeedVR2 (after RAW)' }, { id: 'flux2-dev', label: 'Max photoreal - FLUX.2 [dev] (gated)' }] as const;
+export const IMAGE_MODEL_OPTIONS = [
+  ...SPARK_IMAGE_MODELS,
+  { id: 'seedvr2-7b-fp8', label: 'Upscale (SeedVR2)' },
+  { id: 'flux2-dev', label: 'Photoreal (FLUX.2 [dev])' },
+] as const;
 
 export function sparkBridgeDownHint(_settings?: Pick<ClientSettings, 'sparkLanHost' | 'sparkSshAlias'>): string {
   return 'Bridge down on :7860.';

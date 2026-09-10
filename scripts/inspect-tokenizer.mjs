@@ -12,13 +12,10 @@ prompt_default = tok.apply_chat_template(messages, tokenize=False, add_generatio
 prompt_none = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, reasoning_effort="none")
 prompt_low = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, reasoning_effort="low")
 
-print("--- APPLY CHAT TEMPLATE TEST ---")
-messages = [
-    {"role": "system", "content": "You are an expert software engineer and systems architect."},
-    {"role": "user", "content": "Write a Python script that watches a folder."}
-]
-rendered = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-print(rendered)
+print("--- PROMPT NONE ---")
+print(tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, reasoning_effort="none"))
+print("--- PROMPT LOW ---")
+print(tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, reasoning_effort="low"))
 `;
 
 try {

@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Studio — Generative Diffusion & Photo Intelligence</title>
+  <meta name="description" content="Dedicated generative diffusion studio for NVIDIA DGX Spark and local pipelines: Krea 2, Z-Image, Qwen-Edit, Face Swap, and Grok Imagine.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="studio-app">
+    <!-- TOP HEADER -->
+    <header class="studio-header">
+      <div class="brand-container">
+        <div class="brand-logo">
+          <span class="logo-spark">✨</span>
+          <h1 class="logo-title">IMAGE STUDIO</h1>
+        </div>
+        <span class="badge-spark">DGX SPARK :7860</span>
+      </div>
+
+      <div class="header-status-area">
+        <div class="bridge-status-pill" id="bridgeStatusPill">
+          <span class="status-dot"></span>
+          <span class="status-label" id="bridgeStatusLabel">Probing Bridge…</span>
+        </div>
+
+        <div class="header-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="btnRestartBridge" title="Restart local spark_ctl.sh bridge">
+            <span>↺ Restart Bridge</span>
+          </button>
+          <a href="http://127.0.0.1:17325/" target="_blank" class="nav-link" title="Open Spark Controller">
+            <span>⚡ Controller (:17325)</span>
+          </a>
+          <a href="http://127.0.0.1:5173/" target="_blank" class="nav-link" title="Open Abliterated IDE">
+            <span>💻 IDE (:5173)</span>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <!-- WORKFLOW SELECTOR STRIP -->
+    <nav class="workflow-strip" role="tablist" aria-label="Workflow Selection">
+      <button type="button" class="workflow-chip active" data-workflow="quality" id="wfQuality">
+        <span class="chip-icon">💎</span>
+        <span class="chip-title">Quality (RAW)</span>
+        <span class="chip-model font-mono">krea2-raw</span>
+      </button>
+
+      <button type="button" class="workflow-chip" data-workflow="fast" id="wfFast">
+        <span class="chip-icon">⚡</span>
+        <span class="chip-title">Fast (Turbo)</span>
+        <span class="chip-model font-mono">krea-turbo</span>
+      </button>
+
+      <button type="button" class="workflow-chip" data-workflow="draft" id="wfDraft">
+        <span class="chip-icon">✏️</span>
+        <span class="chip-title">Draft (Sketch)</span>
+        <span class="chip-model font-mono">z-image</span>
+      </button>
+
+      <button type="button" class="workflow-chip" data-workflow="instruction" id="wfInstruction">
+        <span class="chip-icon">📝</span>
+        <span class="chip-title">Text-to-Image</span>
+        <span class="chip-model font-mono">qwen-image</span>
+      </button>
+
+      <button type="button" class="workflow-chip" data-workflow="edit" id="wfEdit">
+        <span class="chip-icon">🖌️</span>
+        <span class="chip-title">Photo Edit</span>
+        <span class="chip-model font-mono">qwen-edit</span>
+      </button>
+
+      <button type="button" class="workflow-chip" data-workflow="faceswap" id="wfFaceSwap">
+        <span class="chip-icon">👤</span>
+        <span class="chip-title">Face Swap</span>
+        <span class="chip-model font-mono">identity-swap</span>
+      </button>
+
+      <button type="button" class="workflow-chip" data-workflow="id" id="wfId">
+        <span class="chip-icon">🪪</span>
+        <span class="chip-title">ID Document</span>
+        <span class="chip-model font-mono">id-pipeline</span>
+      </button>
+
+      <button type="button" class="workflow-chip" data-workflow="klein" id="wfKlein">
+        <span class="chip-icon">🔬</span>
+        <span class="chip-title">FLUX.2 Klein</span>
+        <span class="chip-model font-mono">flux2-9b</span>
+      </button>
+
+      <button type="button" class="workflow-chip" data-workflow="anime" id="wfAnime">
+        <span class="chip-icon">🌸</span>
+        <span class="chip-title">Anime / Art</span>
+        <span class="chip-model font-mono">illustrious-pony</span>
+      </button>
+
+      <button type="button" class="workflow-chip" data-workflow="xai" id="wfXai">
+        <span class="chip-icon">🪐</span>
+        <span class="chip-title">Grok Imagine</span>
+        <span class="chip-model font-mono">xai-cloud</span>
+      </button>
+    </nav>
+
+    <!-- TOAST NOTIFICATION -->
+    <div id="toastNotification" class="toast hidden">
+      <span id="toastIcon">ℹ️</span>
+      <span id="toastMessage">Action completed</span>
+      <button type="button" class="toast-close" id="toastClose">&times;</button>
+    </div>
+
+    <!-- MAIN STUDIO WORKSPACE -->
+    <main class="studio-workspace">
+      
+      <!-- LEFT COLUMN: GENERATOR DECK -->
+      <section class="generator-deck">
+        <div class="deck-card">
+          <!-- Workflow Info Banner -->
+          <div class="workflow-banner" id="workflowBanner">
+            <div class="banner-title" id="workflowTitle">Photoreal Quality — Krea 2 RAW</div>
+            <p class="banner-desc" id="workflowDesc">Ultra-crisp photorealistic generation using Krea 2 RAW with LoRA 0.75 weight delta.</p>
+          </div>
+
+          <!-- Prompt Area -->
+          <div class="prompt-box">
+            <div class="prompt-header">
+              <label for="promptInput" class="field-label">Prompt</label>
+              <div class="prompt-tools">
+                <button type="button" class="tool-link" id="btnRandomPrompt">🎲 Surprise Me</button>
+                <button type="button" class="tool-link" id="btnClearPrompt">Clear</button>
+              </div>
+            </div>
+            <textarea
+              id="promptInput"
+              class="prompt-textarea"
+              rows="4"
+              placeholder="Describe your vision with rich detail, lighting, camera angles, and composition…"
+              spellcheck="false"
+            ></textarea>
+
+            <!-- Style Quick Tags -->
+            <div class="style-tags-row">
+              <span class="style-tags-label">Styles:</span>
+              <button type="button" class="tag-chip" data-tag="35mm street photography, soft natural lighting, high dynamic range">35mm Photo</button>
+              <button type="button" class="tag-chip" data-tag="studio portrait photography, rim light, 85mm lens, sharp focus">Studio Portrait</button>
+              <button type="button" class="tag-chip" data-tag="cyberpunk neon lighting, dark moody atmosphere, volumetric fog">Cyberpunk</button>
+              <button type="button" class="tag-chip" data-tag="architectural photography, brutalist concrete, golden hour sun">Architecture</button>
+              <button type="button" class="tag-chip" data-tag="macro lens closeup, detailed texture, depth of field">Macro</button>
+            </div>
+          </div>
+
+          <!-- Negative Prompt (Collapsible) -->
+          <details class="collapsible-section" id="negativePromptSection">
+            <summary class="collapsible-summary">
+              <span>Negative Prompt</span>
+              <span class="summary-arrow">▼</span>
+            </summary>
+            <div class="collapsible-content">
+              <textarea
+                id="negativePromptInput"
+                class="prompt-textarea"
+                rows="2"
+                placeholder="blurry, distorted, oversaturated, watermark, extra limbs, artifacts…"
+                spellcheck="false"
+              ></textarea>
+            </div>
+          </details>
+
+          <!-- DYNAMIC IMAGE DROPZONES (For Edit / FaceSwap / ID modes) -->
+          <div class="dropzones-container hidden" id="dropzonesContainer">
+            <!-- Source Reference Image (Edit Mode) -->
+            <div class="dropzone-box" id="dzSourceBox">
+              <span class="field-label">Reference / Source Image</span>
+              <div class="dropzone" id="dzSource">
+                <input type="file" id="fileSource" accept="image/*" class="file-input">
+                <div class="dropzone-content" id="dzSourcePlaceholder">
+                  <span class="dropzone-icon">📷</span>
+                  <span class="dropzone-text">Drop photo or click to browse</span>
+                </div>
+                <img id="previewSource" class="dropzone-preview hidden" alt="Source Preview">
+                <button type="button" class="btn-remove-image hidden" id="btnRemoveSource">&times;</button>
+              </div>
+            </div>
+
+            <!-- Identity Face Image (Face Swap Mode) -->
+            <div class="dropzone-box hidden" id="dzFaceBox">
+              <span class="field-label">Identity Face Image</span>
+              <div class="dropzone" id="dzFace">
+                <input type="file" id="fileFace" accept="image/*" class="file-input">
+                <div class="dropzone-content" id="dzFacePlaceholder">
+                  <span class="dropzone-icon">👤</span>
+                  <span class="dropzone-text">Drop identity face</span>
+                </div>
+                <img id="previewFace" class="dropzone-preview hidden" alt="Face Preview">
+                <button type="button" class="btn-remove-image hidden" id="btnRemoveFace">&times;</button>
+              </div>
+            </div>
+
+            <!-- Target Scene Image (Face Swap Mode) -->
+            <div class="dropzone-box hidden" id="dzTargetBox">
+              <span class="field-label">Target Scene Image</span>
+              <div class="dropzone" id="dzTarget">
+                <input type="file" id="fileTarget" accept="image/*" class="file-input">
+                <div class="dropzone-content" id="dzTargetPlaceholder">
+                  <span class="dropzone-icon">🖼️</span>
+                  <span class="dropzone-text">Drop target scene</span>
+                </div>
+                <img id="previewTarget" class="dropzone-preview hidden" alt="Target Preview">
+                <button type="button" class="btn-remove-image hidden" id="btnRemoveTarget">&times;</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Aspect Ratio Selection -->
+          <div class="aspect-ratio-section">
+            <span class="field-label">Aspect Ratio</span>
+            <div class="aspect-buttons-row">
+              <button type="button" class="aspect-btn active" data-ratio="1:1" data-size="1024x1024">
+                <span class="aspect-box sq"></span>
+                <span>1:1</span>
+              </button>
+              <button type="button" class="aspect-btn" data-ratio="16:9" data-size="1344x768">
+                <span class="aspect-box ls"></span>
+                <span>16:9</span>
+              </button>
+              <button type="button" class="aspect-btn" data-ratio="9:16" data-size="768x1344">
+                <span class="aspect-box pt"></span>
+                <span>9:16</span>
+              </button>
+              <button type="button" class="aspect-btn" data-ratio="4:3" data-size="1152x864">
+                <span class="aspect-box sd"></span>
+                <span>4:3</span>
+              </button>
+              <button type="button" class="aspect-btn" data-ratio="3:4" data-size="864x1152">
+                <span class="aspect-box vt"></span>
+                <span>3:4</span>
+              </button>
+              <button type="button" class="aspect-btn" data-ratio="21:9" data-size="1536x640">
+                <span class="aspect-box uw"></span>
+                <span>21:9</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Advanced Sampler Parameters (Collapsible) -->
+          <details class="collapsible-section">
+            <summary class="collapsible-summary">
+              <span>Sampler Parameters</span>
+              <span class="summary-arrow">▼</span>
+            </summary>
+            <div class="collapsible-content">
+              <div class="params-grid">
+                <div class="param-item">
+                  <div class="param-header">
+                    <label for="inputSteps" class="field-label">Sampling Steps</label>
+                    <span id="stepsVal" class="param-val font-mono">20</span>
+                  </div>
+                  <input type="range" id="inputSteps" min="4" max="50" step="1" value="20" class="slider">
+                </div>
+
+                <div class="param-item">
+                  <div class="param-header">
+                    <label for="inputCfg" class="field-label">CFG Guidance Scale</label>
+                    <span id="cfgVal" class="param-val font-mono">5.0</span>
+                  </div>
+                  <input type="range" id="inputCfg" min="1.0" max="15.0" step="0.5" value="5.0" class="slider">
+                </div>
+
+                <div class="param-item">
+                  <div class="param-header">
+                    <label for="inputSeed" class="field-label">Random Seed</label>
+                    <button type="button" class="tool-link" id="btnRandomSeed">🎲</button>
+                  </div>
+                  <input type="number" id="inputSeed" class="input-field font-mono" placeholder="Random (-1)">
+                </div>
+
+                <div class="param-item" id="xaiKeyContainer" style="display: none;">
+                  <label for="inputXaiKey" class="field-label">xAI API Key</label>
+                  <input type="password" id="inputXaiKey" class="input-field font-mono" placeholder="xai-…">
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <!-- Master Generate Button -->
+          <div class="generate-action-row">
+            <button type="button" class="btn btn-generate" id="btnGenerate">
+              <span class="generate-icon">✨</span>
+              <span class="generate-text" id="btnGenerateText">Generate Still</span>
+              <kbd class="shortcut-key font-mono">⌘Enter</kbd>
+            </button>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- RIGHT COLUMN: LIVE VIEWPORT & GALLERY -->
+      <section class="viewport-deck">
+        <!-- Live Viewport Card -->
+        <div class="deck-card viewport-card">
+          <div class="viewport-header">
+            <h3 class="viewport-title">Canvas Output</h3>
+            <div class="viewport-meta font-mono" id="viewportMeta">Ready</div>
+          </div>
+
+          <!-- Main Image Display Container -->
+          <div class="viewport-canvas-container" id="viewportCanvas">
+            <!-- Loading Indicator -->
+            <div class="generation-loader hidden" id="generationLoader">
+              <div class="spinner-ring"></div>
+              <div class="loader-text font-mono" id="loaderText">Synthesizing image on DGX Spark…</div>
+              <div class="loader-timer font-mono" id="loaderTimer">0.0s</div>
+            </div>
+
+            <!-- Empty State / Placeholder -->
+            <div class="canvas-placeholder" id="canvasPlaceholder">
+              <span class="placeholder-icon">🎨</span>
+              <span class="placeholder-text">Enter a prompt and hit Generate</span>
+              <span class="placeholder-sub">Outputs will render here in full resolution</span>
+            </div>
+
+            <!-- Rendered Output Image -->
+            <img id="canvasImage" class="canvas-image hidden" alt="Generated Output">
+          </div>
+
+          <!-- Canvas Action Bar -->
+          <div class="canvas-actions-bar hidden" id="canvasActionsBar">
+            <button type="button" class="btn btn-secondary btn-sm" id="btnDownloadImage">
+              <span>📥 Download</span>
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btnCopyImage">
+              <span>📋 Copy</span>
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btnSendToEdit">
+              <span>🖌️ Send to Edit</span>
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnZoomImage">
+              <span>🔍 Zoom</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Persistent Gallery Shelf -->
+        <div class="deck-card gallery-card">
+          <div class="gallery-header">
+            <div class="gallery-title-area">
+              <h3 class="viewport-title">Studio Gallery</h3>
+              <span class="gallery-count font-mono" id="galleryCount">0 saved</span>
+            </div>
+            <button type="button" class="tool-link" id="btnRefreshGallery">↻ Refresh</button>
+          </div>
+
+          <!-- Gallery Thumbnails Grid -->
+          <div class="gallery-grid" id="galleryGrid">
+            <div class="gallery-empty">No generated images recorded yet.</div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- FULLSCREEN IMAGE ZOOM MODAL -->
+    <div id="imageModal" class="image-modal hidden">
+      <div class="modal-backdrop" id="modalBackdrop"></div>
+      <div class="modal-body">
+        <button type="button" class="modal-close" id="modalClose">&times;</button>
+        <img id="modalImage" class="modal-img" alt="Zoomed view">
+        <div class="modal-caption font-mono" id="modalCaption"></div>
+      </div>
+    </div>
+
+    <!-- FOOTER -->
+    <footer class="studio-footer">
+      <span>Image Studio v1.0.0</span>
+      <span>•</span>
+      <span>NVIDIA DGX Spark Image Bridge</span>
+      <span>•</span>
+      <span>Persistence: .ablit/images/</span>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

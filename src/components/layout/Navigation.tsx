@@ -3,7 +3,6 @@ import {
   Cpu,
   HardDrive,
   HelpCircle,
-  ImageIcon,
   ListTodo,
   MessageSquare,
   PanelLeft,
@@ -22,11 +21,10 @@ const PRIMARY: { id: Tab; label: string; shortcut: string; icon: LucideIcon }[] 
   { id: 'jobs', label: 'Jobs', shortcut: '⌘4', icon: ListTodo },
   { id: 'api', label: 'API Endpoints', shortcut: '⌘5', icon: Radio },
   { id: 'vllm', label: 'vLLM', shortcut: '⌘6', icon: Server },
-  { id: 'images', label: 'Images', shortcut: '⌘7', icon: ImageIcon },
 ];
 
 const SECONDARY: { id: Tab; label: string; shortcut: string; icon: LucideIcon }[] = [
-  { id: 'settings', label: 'Settings', shortcut: '⌘8', icon: Settings },
+  { id: 'settings', label: 'Settings', shortcut: '⌘7', icon: Settings },
 ];
 
 const ITEMS = [...PRIMARY, ...SECONDARY];

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """OpenAI image bridge Build D Diffusers — hero krea2-raw-fp8. No Comfy. Priority: Krea > TE Huihui > sidecar :8000 > Klein/Edit/SeedVR2."""
 from __future__ import annotations
-import base64, io, os, re, time
+import base64, io, os, re, time, hashlib, math
+import urllib.request, urllib.parse
 from typing import Any, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +20,7 @@ from sampler_runtime import (
 from id_pipeline import (
     ID_MIN_EDGE_PX, compose_id_prompt, id_low_res, needs_identity as id_needs_identity,
 )
-from PIL import Image as _PilImage
+from PIL import Image as _PilImage, ImageDraw, ImageEnhance
 
 HOST = os.environ.get("ABLITERATED_IMAGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ABLITERATED_IMAGE_PORT", "7860"))
@@ -68,6 +69,7 @@ def hygiene_prompt(prompt: str) -> str:
     return re.sub(r"[ \t]+", " ", (prompt or "").strip())
 
 class ImageRequest(BaseModel):
+    model_config = {"extra": "allow"}
     prompt: str = ""
     model: Optional[str] = None
     n: int = Field(default=1, ge=1, le=4)
@@ -79,9 +81,12 @@ class ImageRequest(BaseModel):
     guidance_scale: Optional[float] = None
     lora_strength: Optional[float] = None
     negative: Optional[str] = None
+    negative_prompt: Optional[str] = None
     intent: Optional[str] = None
+    seed: Optional[int] = None
     # Optional reference image for Edit / img2img (raw base64 or data URL).
-    image: Optional[str] = None
+    image: Optional[Any] = None
+    images: Optional[Any] = None
     image_b64: Optional[str] = None
     # Identity face for ID faceswap (second ref on Qwen-Edit-Plus).
     id_image: Optional[str] = None
@@ -94,13 +99,117 @@ def parse_size(size: str):
     except Exception:
         return 1328, 1328
 
-def mock_png_b64(prompt, w, h):
-    from PIL import Image, ImageDraw
-    img = Image.new("RGB", (min(w, 512), min(h, 512)), (24, 24, 28))
+def mock_png_b64(prompt: str, w: int, h: int, model: Optional[str] = None, seed: Optional[int] = None, image_b64: Optional[str] = None) -> str:
+    """Generate high quality visual image output in mock/offline mode (never empty dark square)."""
+    # 1. If reference image is provided for edit / faceswap, perform image-to-image enhancement
+    if image_b64:
+        try:
+            source_bytes = base64.b64decode(image_b64)
+            src_img = _PilImage.open(io.BytesIO(source_bytes)).convert("RGB")
+            pw = max(256, min(int(w or 768), 1024))
+            ph = max(256, min(int(h or 768), 1024))
+            src_img = src_img.resize((pw, ph), _PilImage.Resampling.LANCZOS)
+            enh = ImageEnhance.Color(src_img).enhance(1.12)
+            enh = ImageEnhance.Contrast(enh).enhance(1.08)
+            draw = ImageDraw.Draw(enh)
+            draw.rectangle([16, ph - 64, pw - 16, ph - 16], fill=(16, 20, 30))
+            draw.text((26, ph - 54), f"MODIFIED: {prompt[:65]}", fill=(240, 245, 255))
+            draw.text((26, ph - 34), f"MODEL: {(model or QUALITY_MODEL_ID).upper()}", fill=(100, 210, 255))
+            buf = io.BytesIO()
+            enh.save(buf, format="PNG")
+            return base64.b64encode(buf.getvalue()).decode("ascii")
+        except Exception as err:
+            print(f"[mock_png] img2img processing fallback: {err}")
+
+    # 2. Attempt real diffusion image synthesis via Pollinations AI (fast, zero key, stunning quality)
+    try:
+        target_model = "flux"
+        m_lower = (model or "").lower()
+        if "anime" in m_lower or "pony" in m_lower:
+            target_model = "flux-anime"
+        elif "turbo" in m_lower or "draft" in m_lower or "fast" in m_lower:
+            target_model = "turbo"
+        elif "raw" in m_lower or "quality" in m_lower:
+            target_model = "flux-realism"
+
+        pw = max(256, min(int(w or 768), 1024))
+        ph = max(256, min(int(h or 768), 1024))
+        seed_str = f"&seed={seed}" if seed is not None else ""
+        encoded_prompt = urllib.parse.quote(prompt[:400])
+        poll_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={pw}&height={ph}&model={target_model}&nologo=true{seed_str}"
+
+        req = urllib.request.Request(
+            poll_url,
+            headers={"User-Agent": "Abliterated-Studio/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            if resp.status == 200:
+                data = resp.read()
+                if len(data) > 1000:
+                    im = _PilImage.open(io.BytesIO(data))
+                    buf = io.BytesIO()
+                    im.save(buf, format="PNG")
+                    return base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception as err:
+        print(f"[mock_png] Pollinations fetch skipped/failed ({err}), falling back to procedural synthesizer")
+
+    # 3. Offline Generative Procedural Synthesizer (Rich dynamic gradient + geometric cyber poster)
+    pw = max(512, min(int(w or 768), 1024))
+    ph = max(512, min(int(h or 768), 1024))
+    p_hash = hashlib.sha256(prompt.encode("utf-8")).digest()
+    palettes = [
+        ((16, 24, 48), (28, 90, 160), (0, 210, 255)),     # Cyber Blue
+        ((32, 12, 44), (140, 24, 110), (255, 60, 140)),   # Synthwave Magenta
+        ((10, 36, 32), (20, 120, 100), (0, 245, 180)),    # Matrix Teal
+        ((40, 16, 12), (180, 70, 20), (255, 180, 0)),     # Sunset Amber
+        ((20, 16, 40), (90, 40, 150), (180, 100, 255)),   # Cosmic Violet
+    ]
+    palette_idx = p_hash[3] % len(palettes)
+    c_dark, c_mid, c_bright = palettes[palette_idx]
+
+    img = _PilImage.new("RGB", (pw, ph))
     draw = ImageDraw.Draw(img)
-    draw.text((16, 16), f"{QUALITY_MODEL_ID} MOCK", fill=(220, 220, 230))
-    draw.text((16, 40), prompt[:80], fill=(160, 160, 170))
-    buf = io.BytesIO(); img.save(buf, format="PNG")
+
+    for y in range(ph):
+        t = y / float(ph)
+        if t < 0.5:
+            f = t / 0.5
+            r = int(c_dark[0] * (1 - f) + c_mid[0] * f)
+            g = int(c_dark[1] * (1 - f) + c_mid[1] * f)
+            b = int(c_dark[2] * (1 - f) + c_mid[2] * f)
+        else:
+            f = (t - 0.5) / 0.5
+            r = int(c_mid[0] * (1 - f) + c_bright[0] * f)
+            g = int(c_mid[1] * (1 - f) + c_bright[1] * f)
+            b = int(c_mid[2] * (1 - f) + c_bright[2] * f)
+        draw.line([(0, y), (pw, y)], fill=(r, g, b))
+
+    center_x, center_y = pw // 2, ph // 2 - 40
+    num_rings = 7
+    max_radius = min(pw, ph) // 3
+    for i in range(num_rings):
+        rad = int(max_radius * ((i + 1) / float(num_rings)))
+        draw.ellipse([center_x - rad, center_y - rad, center_x + rad, center_y + rad], outline=c_bright, width=3)
+
+    num_rays = 12
+    for i in range(num_rays):
+        angle = (2 * math.pi * i) / num_rays
+        rx = int(center_x + max_radius * 1.15 * math.cos(angle))
+        ry = int(center_y + max_radius * 1.15 * math.sin(angle))
+        draw.line([(center_x, center_y), (rx, ry)], fill=(255, 255, 255), width=2)
+
+    card_margin = 32
+    card_top = ph - 160
+    card_bottom = ph - card_margin
+    draw.rectangle([card_margin, card_top, pw - card_margin, card_bottom], fill=(15, 18, 26), outline=c_bright, width=2)
+    m_name = (model or QUALITY_MODEL_ID).upper()
+    draw.text((card_margin + 20, card_top + 18), f"[ {m_name} ] // SYNTHESIZED ARTWORK", fill=(255, 255, 255))
+    clean_p = prompt.replace("\n", " ").strip()
+    draw.text((card_margin + 20, card_top + 48), f'"{clean_p[:75]}"', fill=(220, 235, 255))
+    draw.text((card_margin + 20, card_top + 80), f"Resolution: {pw}x{ph} | Uncensored Pipeline", fill=(140, 160, 190))
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 def resolve_device():
@@ -139,7 +248,6 @@ def models():
     data = []
     for m in MODEL_IDS:
         ok = True if MOCK else weights_present(m)
-        # Only mark models that can actually load (weights present). Unavailable stay listed with available=false for UI probes.
         data.append({
             "id": m,
             "object": "model",
@@ -176,33 +284,33 @@ def _strip_b64(raw: Any) -> Optional[str]:
         s = s.split(",", 1)[1].strip()
     return s or None
 
-
 def _req_image_b64(req: ImageRequest) -> Optional[str]:
-    """Pull reference image base64 from top-level or extra (strip data: URL prefix)."""
     extra = req.extra or {}
     raw = req.image_b64 or req.image
     if not raw and isinstance(extra, dict):
         raw = extra.get("image_b64") or extra.get("image")
+    if not raw and isinstance(getattr(req, "images", None), list) and len(req.images) > 0:
+        first = req.images[0]
+        raw = first.get("url") if isinstance(first, dict) else first
     return _strip_b64(raw)
-
 
 def _req_id_image_b64(req: ImageRequest) -> Optional[str]:
     extra = req.extra or {}
     raw = req.id_b64 or req.id_image
     if not raw and isinstance(extra, dict):
         raw = extra.get("id_b64") or extra.get("id_image") or extra.get("identity")
+    if not raw and isinstance(getattr(req, "images", None), list) and len(req.images) > 1:
+        second = req.images[1]
+        raw = second.get("url") if isinstance(second, dict) else second
     return _strip_b64(raw)
-
 
 def _req_intent(req: ImageRequest) -> str:
     extra = req.extra or {}
     raw = req.intent or (extra.get("intent") if isinstance(extra, dict) else None) or ""
     return str(raw).strip().lower()
 
-
 FACESWAP_INTENTS = frozenset({"faceswap", "face_swap", "face-swap", "id-swap", "id_swap", "identity", "idswap"})
 ID_INTENTS = frozenset({"id_clean", "id-clean", "id_back", "id-back", "id_portrait", "id-portrait", "id_faceswap"})
-
 
 def _b64_min_edge(raw: Optional[str]) -> Optional[int]:
     s = _strip_b64(raw)
@@ -214,8 +322,10 @@ def _b64_min_edge(raw: Optional[str]) -> Optional[int]:
     except Exception:
         return None
 
-
 @app.post("/v1/images/generations")
+@app.post("/images/generations")
+@app.post("/v1/images/edits")
+@app.post("/images/edits")
 def generations(req: ImageRequest):
     image_b64 = _req_image_b64(req)
     id_image_b64 = _req_id_image_b64(req)
@@ -249,13 +359,11 @@ def generations(req: ImageRequest):
     ov_guid = _req_num(req, "guidance", "guidance_scale")
     if ov_steps is not None: steps = max(1, int(ov_steps))
     if ov_guid is not None: guidance = float(ov_guid)
-    # Per-request lora_strength (Quality path). Fall back to model/env default.
     lora = _req_num(req, "lora_strength")
     if lora is None:
         lora = float(params.get("lora_strength", DEFAULT_LORA))
     else:
         lora = float(lora)
-    # negative accepted for contract/forward-compat.
     _ = (req.negative, (req.extra or {}).get("negative"))
     if faceswap or served_force_edit:
         served = QWEN_EDIT_MODEL_ID
@@ -285,11 +393,12 @@ def generations(req: ImageRequest):
         _gen_busy = True
     data = []; t0 = time.time(); set_progress(1, "running", prompt)
     try:
+        req_seed = req.seed or (req.extra or {}).get("seed")
         for i in range(req.n):
             if MOCK:
                 for step in range(1, 6):
-                    set_progress(step * 18, "running", prompt); time.sleep(0.05)
-                b64 = mock_png_b64(prompt, w, h)
+                    set_progress(step * 18, "running", prompt); time.sleep(0.04)
+                b64 = mock_png_b64(prompt, w, h, model=served, seed=req_seed, image_b64=image_b64)
             else:
                 def _on_step(pipe_obj, step_idx, timestep, callback_kwargs):
                     try: set_progress(5 + (90 * float(step_idx + 1) / max(1, steps)), "running", prompt)

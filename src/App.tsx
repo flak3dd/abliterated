@@ -13,7 +13,6 @@ import {
   KLEIN_IMAGE_MODEL,
   UNCENSORED_IMAGE_MODEL,
   sparkChatSettingsPatch,
-  sparkGptOssSettingsPatch,
   sparkImageSettingsPatch,
   sparkPushCommand,
 } from './lib/sparkInstall';
@@ -41,7 +40,6 @@ import { ChatScreen, type ChatScreenHandle } from './screens/ChatScreen';
 import { HomeScreen } from './screens/HomeScreen';
 import { JobsScreen } from './screens/JobsScreen';
 import { ModelsScreen } from './screens/ModelsScreen';
-import { ImagesScreen } from './screens/ImagesScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { VllmScreen } from './screens/VllmScreen';
 import { WorkspaceScreen } from './screens/WorkspaceScreen';
@@ -54,8 +52,7 @@ const TAB_BY_DIGIT: Record<string, Tab> = {
   '4': 'jobs',
   '5': 'api',
   '6': 'vllm',
-  '7': 'images',
-  '8': 'settings',
+  '7': 'settings',
 };
 
 function isTypingTarget(el: EventTarget | null): boolean {
@@ -432,15 +429,9 @@ export default function App() {
         run: () => setTab('vllm'),
       },
       {
-        id: 'tab-images',
-        label: 'Go to Images',
-        hint: k('⌘7', 'Ctrl+7'),
-        run: () => setTab('images'),
-      },
-      {
         id: 'tab-settings',
         label: 'Go to Settings',
-        hint: k('⌘8', 'Ctrl+8'),
+        hint: k('⌘7', 'Ctrl+7'),
         run: () => setTab('settings'),
       },
       {
@@ -495,18 +486,11 @@ export default function App() {
         },
       },
       {
-        id: 'generate-image',
-        label: 'Generate image…',
-        keywords: 'flux png picture',
-        run: () => setTab('images'),
-      },
-      {
-        id: 'enable-image-gen',
-        label: 'Enable image generator',
-        keywords: 'flux spark-image',
+        id: 'open-image-studio',
+        label: 'Open Image Studio (Web App)',
+        keywords: 'flux png picture image studio generate spark',
         run: () => {
-          patchSettings({ imageGenEnabled: true });
-          setTab('images');
+          window.open('http://127.0.0.1:17326/', '_blank');
         },
       },
       {
@@ -573,12 +557,6 @@ export default function App() {
         label: 'Use Qwen on Spark',
         keywords: 'provider qwen abliterated spark vllm 8000',
         run: () => applySettings({ ...settingsRef.current, ...sparkChatSettingsPatch(settingsRef.current) }),
-      },
-      {
-        id: 'use-gpt-oss-spark',
-        label: 'Use GPT-OSS 120B on Spark',
-        keywords: 'provider gpt-oss 120b abliterated mxfp4 spark vllm agent',
-        run: () => applySettings({ ...settingsRef.current, ...sparkGptOssSettingsPatch(settingsRef.current) }),
       },
       {
         id: 'use-spark-image-gen',
@@ -910,7 +888,7 @@ export default function App() {
             ) : null}
             {visitedTabs.has('api') ? (
               <div className={panelClass('api')}>
-                <ApiScreen settings={settings} onSettingsChange={applySettings} onOpenTab={setTab} />
+                <ApiScreen settings={settings} onSettingsChange={applySettings} />
               </div>
             ) : null}
             {visitedTabs.has('vllm') ? (
@@ -918,11 +896,7 @@ export default function App() {
                 <VllmScreen settings={settings} onSettingsChange={applySettings} />
               </div>
             ) : null}
-            {visitedTabs.has('images') ? (
-              <div className={panelClass('images')}>
-                <ImagesScreen settings={settings} onSettingsChange={applySettings} />
-              </div>
-            ) : null}
+
             {visitedTabs.has('settings') ? (
               <div className={panelClass('settings')}>
                 <SettingsScreen

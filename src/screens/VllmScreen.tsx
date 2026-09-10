@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { sparkChatSettingsPatch, sparkGptOssSettingsPatch } from '../lib/sparkInstall';
+import { sparkChatSettingsPatch } from '../lib/sparkInstall';
 import { formatBytes, vllmCtl, VLLM_RECIPE_PRESETS, type VllmConfig, type VllmStatus } from '../lib/vllmCtl';
 import type { ClientSettings } from '../types';
 
@@ -97,8 +97,7 @@ export function VllmScreen({ settings, onSettingsChange }: Props) {
   // (mismatch → 404 / garbled / empty responses), which is the "model switching is
   // broken" symptom. Serving a recipe now applies this automatically.
   const applyIdeProvider = () => {
-    const patch =
-      cfg.recipe === 'gpt-oss' ? sparkGptOssSettingsPatch(settings) : sparkChatSettingsPatch(settings);
+    const patch = sparkChatSettingsPatch(settings);
     onSettingsChange({
       ...settings,
       ...patch,
@@ -138,19 +137,19 @@ export function VllmScreen({ settings, onSettingsChange }: Props) {
   };
 
   const live = status?.live;
-  const running = status?.docker.find((d) => d.running);
 
   return (
-    <div className="h-full overflow-auto p-4">
-      <header className="page-header">
-        <div className="page-header-title">vLLM</div>
-        <p className="page-header-sub">
-          Spark text server on NVIDIA Sync. One model on :{cfg.port}. Qwen and GPT-OSS 120B cannot run together.
-        </p>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {pill(Boolean(status?.sshOk), 'ssh ' + alias, status?.sshError || 'ssh down')}
-          {pill(Boolean(live?.health), 'tunnel :' + cfg.port, live?.healthError || 'tunnel down')}
-          {pill(Boolean(running), running ? running.name : 'no container', running ? running.status : 'stopped')}
+    <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+      <header className="mx-auto mb-6 flex max-w-3xl flex-wrap items-baseline justify-between gap-3 border-b border-border pb-4">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">vLLM on NVIDIA DGX Spark</h1>
+          <p className="mt-1 text-[13px] text-muted-foreground">
+            Live control of remote vLLM serving. Changes are saved to spark/vllm-ui.json on the remote host.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {pill(!!status?.sshOk, 'SSH ok', 'SSH unreachable')}
+          {pill(!!live?.health, 'vLLM :8000 up', 'vLLM :8000 down')}
           {live?.version ? (
             <span className="rounded-md border border-border px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
               vllm {live.version}

@@ -4,11 +4,13 @@ import {
   INFERENCE_PROVIDERS,
   missingInferenceAuthError,
   resolveActiveSettings,
+  isProviderConfigured,
+  providerUnconfiguredReason,
 } from '../lib/activeEndpoint';
 import { endpointUrl, formatFetchError } from '../lib/apiUrl';
 import { fetchPlatformCredentials } from '../lib/authApi';
 import { coalesceFetch } from '../lib/coalesceFetch';
-import { setSettings } from '../lib/storage';
+import { setSettings, sanitizeSettings } from '../lib/storage';
 import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
 import { formatFeatherlessProbeReport, probeFeatherlessChat } from '../lib/featherlessDebug';
 import { extractHttpErrorMessage } from '../lib/providerError';
@@ -21,20 +23,19 @@ import { recommendedApiPatch } from '../lib/modelSettingsGuide';
 import {
   DRAFT_IMAGE_MODEL,
   FAST_IMAGE_MODEL,
+  IMAGE_MODEL_OPTIONS,
   SPARK_CHAT_MODEL,
-  SPARK_GPT_OSS_MODEL,
   UNCENSORED_IMAGE_MODEL,
   sparkBridgeDownHint,
   sparkChatSettingsPatch,
-  sparkGptOssSettingsPatch,
   sparkImageSettingsPatch,
-  sparkOpsCheatSheet,
+  sparkImageUrl,
   sparkPushCommand,
   sparkQwenPushCommand,
 } from '../lib/sparkInstall';
 import { XAI_IMAGE_BASE_URL, XAI_IMAGE_MODEL, XAI_QUALITIES, isXaiImageBackend, xaiImageSettingsPatch } from '../lib/xaiImage';
 
-import type { ClientSettings, InferenceProvider, ReasoningLevel, Tab } from '../types';
+import type { ClientSettings, InferenceProvider, ReasoningLevel } from '../types';
 import {
   DEFAULT_FEATHERLESS_MODEL,
   FEATHERLESS_EMPTY_STATE,
@@ -48,7 +49,6 @@ import {
 interface Props {
   settings: ClientSettings;
   onSettingsChange: (s: ClientSettings) => void;
-  onOpenTab?: (tab: Tab) => void;
 }
 
 const REASONING: ReasoningLevel[] = ['off', 'low', 'high', 'max'];
@@ -92,7 +92,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 
-export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
+export function ApiScreen({ settings, onSettingsChange }: Props) {
   const [draft, setDraft] = useState(settings);
   const [result, setResult] = useState('');
   const [testing, setTesting] = useState(false);
@@ -104,7 +104,7 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
   }, [settings]);
 
   const patch = (partial: Partial<ClientSettings>) => {
-    const next = { ...draft, ...partial };
+    const next = sanitizeSettings({ ...draft, ...partial });
     setDraft(next);
     setSettings(next);
     onSettingsChange(next);
@@ -560,7 +560,7 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
   const authMissing = missingInferenceAuthError(active);
   const signedIn = Boolean(featherSession?.signedIn);
   const selectProvider = (id: InferenceProvider) => {
-    const next = applyInferenceProvider(draft, id);
+    const next = sanitizeSettings(applyInferenceProvider(draft, id));
     setDraft(next);
     setSettings(next);
     onSettingsChange(next);
@@ -585,26 +585,49 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {INFERENCE_PROVIDERS.map((p) => {
               const on = provider === p.id;
+              const configured = isProviderConfigured(draft, p.id);
+              const reason = providerUnconfiguredReason(draft, p.id);
               return (
                 <button
                   key={p.id}
                   type="button"
                   onClick={() => selectProvider(p.id)}
                   className={
-                    'rounded-lg border px-3 py-2.5 text-left transition-colors ' +
+                    'group relative rounded-lg border px-3 py-2.5 text-left transition-all ' +
                     (on
-                      ? 'border-emerald-500/60 bg-emerald-500/10'
+                      ? 'border-emerald-500/80 bg-emerald-950/25 ring-1 ring-emerald-500/50'
                       : 'border-border bg-background/40 hover:border-primary/40 hover:bg-accent/40')
                   }
                 >
-                  <div className={'text-[13px] font-medium ' + (on ? 'text-emerald-200' : 'text-foreground')}>
-                    {p.label}
+                  <div className="flex items-center justify-between gap-1.5">
+                    <div className={'text-[13px] font-medium ' + (on ? 'text-emerald-200 font-semibold' : 'text-foreground')}>
+                      {p.label}
+                    </div>
+                    {configured ? (
+                      <span className="rounded-full border border-emerald-800/60 bg-emerald-950/60 px-1.5 py-0.2 font-mono text-[8.5px] font-bold text-emerald-300">
+                        Ready
+                      </span>
+                    ) : (
+                      <span className="rounded-full border border-amber-800/60 bg-amber-950/60 px-1.5 py-0.2 font-mono text-[8.5px] font-bold text-amber-300" title={reason || undefined}>
+                        Setup Needed
+                      </span>
+                    )}
                   </div>
-                  <div className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{PROVIDER_HINT[p.id]}</div>
+                  <div className="mt-1 text-[11px] leading-snug text-muted-foreground">{PROVIDER_HINT[p.id]}</div>
                 </button>
               );
             })}
           </div>
+
+          {active.fallbackReason ? (
+            <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-amber-800/70 bg-amber-950/30 p-2.5 font-mono text-[11px] text-amber-200">
+              <span className="text-base">🛡️</span>
+              <div>
+                <div className="font-bold text-amber-100">Safe Active Endpoint Guard Engaged</div>
+                <div className="mt-0.5 text-amber-300/90">{active.fallbackReason}</div>
+              </div>
+            </div>
+          ) : null}
 
           {/* AI Agent API & Workflow Profile Alignment Strip */}
           {(() => {
@@ -677,14 +700,11 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
         {provider === 'dgx-spark' ? (
           <Section
             title="DGX Spark"
-            hint={`Qwen (${SPARK_CHAT_MODEL}) or GPT-OSS 120B MXFP4 (${SPARK_GPT_OSS_MODEL}) on :8000 — one at a time. NVIDIA Sync uses 127.0.0.1 and Vite /spark-v1.`}
+            hint={`Qwen (${SPARK_CHAT_MODEL}) on :8000. NVIDIA Sync uses 127.0.0.1 and Vite /spark-v1.`}
           >
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" onClick={() => patch(sparkChatSettingsPatch(draft))} className="btn-primary h-8 px-3 text-[12px]">
                 Use Spark Qwen
-              </button>
-              <button type="button" onClick={() => patch(sparkGptOssSettingsPatch(draft))} className="btn-ghost h-8 px-3 text-[12px]">
-                Use GPT-OSS 120B
               </button>
               <label className="flex items-center gap-2 text-[13px] text-foreground">
                 <input
@@ -1161,8 +1181,12 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
             >
               xAI Imagine
             </button>
-            <button type="button" onClick={() => onOpenTab?.('images')} className="btn-ghost h-8 px-3 text-[12px]">
-              Open Images tab
+            <button
+              type="button"
+              onClick={() => window.open('http://127.0.0.1:17326/', '_blank')}
+              className="btn-ghost h-8 px-3 text-[12px]"
+            >
+              Open Image Studio (:17326)
             </button>
           </div>
           {isXaiImageBackend(draft) ? (
@@ -1218,39 +1242,58 @@ export function ApiScreen({ settings, onSettingsChange, onOpenTab }: Props) {
               </Field>
             </div>
           ) : (
-            <>
-          <p className="whitespace-pre-wrap text-[12px] leading-5 text-muted-foreground">{sparkBridgeDownHint(draft)}</p>
-          <ul className="space-y-1 text-[12px] text-muted-foreground">
-            {sparkOpsCheatSheet().map((row) => (
-              <li key={row.label}>
-                <span className="text-zinc-500">{row.label}:</span> <code className="break-all text-zinc-300">{row.cmd}</code>
-              </li>
-            ))}
-          </ul>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => patch(sparkImageSettingsPatch(draft, UNCENSORED_IMAGE_MODEL))}
-              className="btn-ghost h-8 px-3 text-[12px]"
-            >
-              Use Spark image gen
-            </button>
-            <button
-              type="button"
-              onClick={() => patch(sparkImageSettingsPatch(draft, FAST_IMAGE_MODEL))}
-              className="btn-ghost h-8 px-3 text-[12px]"
-            >
-              Use Spark Krea quality
-            </button>
-            <button
-              type="button"
-              onClick={() => patch(sparkImageSettingsPatch(draft, DRAFT_IMAGE_MODEL))}
-              className="btn-ghost h-8 px-3 text-[12px]"
-            >
-              Use Spark Qwen-Image stub
-            </button>
-          </div>
-            </>
+            <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Model">
+                  <select
+                    value={draft.imageModel || UNCENSORED_IMAGE_MODEL}
+                    onChange={(e) => patch({ imageModel: e.target.value })}
+                    className="field"
+                  >
+                    {IMAGE_MODEL_OPTIONS.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Base URL" hint="Local or LAN Diffusers bridge (:7860)">
+                  <input
+                    value={draft.imageBaseUrl || sparkImageUrl(draft)}
+                    onChange={(e) => patch({ imageBaseUrl: e.target.value })}
+                    placeholder="http://127.0.0.1:7860/v1"
+                    className="field"
+                  />
+                </Field>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-[10px] uppercase text-muted">Quick presets:</span>
+                <button
+                  type="button"
+                  onClick={() => patch(sparkImageSettingsPatch(draft, UNCENSORED_IMAGE_MODEL))}
+                  className="btn-ghost h-7 px-2.5 text-[11px]"
+                >
+                  Quality (Krea RAW)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => patch(sparkImageSettingsPatch(draft, FAST_IMAGE_MODEL))}
+                  className="btn-ghost h-7 px-2.5 text-[11px]"
+                >
+                  Fast (Turbo)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => patch(sparkImageSettingsPatch(draft, DRAFT_IMAGE_MODEL))}
+                  className="btn-ghost h-7 px-2.5 text-[11px]"
+                >
+                  Draft (Z-Image)
+                </button>
+              </div>
+              <p className="font-mono text-[11px] text-zinc-400">
+                Bridge: <code className="text-zinc-300">{draft.imageBaseUrl || sparkImageUrl(draft)}</code> · {sparkBridgeDownHint(draft)}
+              </p>
+            </div>
           )}
         </Section>
 

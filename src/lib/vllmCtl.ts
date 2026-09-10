@@ -1,4 +1,4 @@
-export type VllmRecipeId = 'qwen' | 'gpt-oss';
+export type VllmRecipeId = 'qwen';
 
 export type VllmConfig = {
   recipe: VllmRecipeId;
@@ -29,6 +29,28 @@ export type VllmRecipe = {
   hf: string;
 };
 
+export type SparkGpuMetrics = {
+  name: string;
+  driver: string;
+  tempC: number;
+  gpuUtilPct: number;
+  memUtilPct: number;
+  vramUsedMb: number;
+  vramTotalMb: number;
+  powerDrawW: number;
+  powerLimitW: number;
+};
+
+export type SparkImageBridgeStatus = {
+  port: number;
+  running: boolean;
+  pid?: number | null;
+  health: boolean;
+  healthError?: string;
+  smokeStatus?: string | null;
+  models: string[];
+};
+
 export type VllmStatus = {
   ok: boolean;
   error?: string;
@@ -39,6 +61,8 @@ export type VllmStatus = {
   docker: { name: string; status: string; ports: string; running: boolean }[];
   models: { name: string; bytes: number; shards: number; config: boolean }[];
   pull: { running: boolean; bytes: number; log: string };
+  gpu?: SparkGpuMetrics | null;
+  image?: SparkImageBridgeStatus | null;
   saved: VllmConfig;
   recipes: VllmRecipe[];
   live: {
@@ -63,33 +87,33 @@ export const VLLM_RECIPE_PRESETS: Pick<VllmRecipe, 'id' | 'label' | 'servedName'
     reasoningParser: 'qwen3',
     toolCallParser: 'qwen3_coder',
   },
-  {
-    id: 'gpt-oss',
-    label: 'GPT-OSS 120B MXFP4 abliterated',
-    servedName: 'gpt-oss-120b-abliterated',
-    hf: 'batsclamp/Huihui-gpt-oss-120b-mxfp4-abliterated',
-    gpuMemoryUtilization: 0.7,
-    maxModelLen: 131072,
-    kvCacheDtype: 'fp8',
-    quantization: 'mxfp4',
-    reasoningParser: 'openai_gptoss',
-    toolCallParser: 'openai',
-  },
 ];
 
-async function viaFetch(op: string, payload: Record<string, unknown>): Promise<VllmStatus & Record<string, unknown>> {
+async function viaFetch<T = VllmStatus & Record<string, unknown>>(op: string, payload: Record<string, unknown>): Promise<T> {
   const r = await fetch('/vllm-ctl/' + op, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const json = (await r.json()) as VllmStatus & { error?: string };
+  const json = (await r.json()) as T & { ok?: boolean; error?: string };
   if (!r.ok || json.ok === false) throw new Error(json.error || `vLLM control HTTP ${r.status}`);
-  return json;
+  return json as T;
 }
 
 export async function vllmCtl(op: string, payload: Record<string, unknown> = {}): Promise<VllmStatus & Record<string, unknown>> {
   return viaFetch(op, payload);
+}
+
+export async function sparkImageAction(alias: string, action: string): Promise<{ ok: boolean; action: string; stdout?: string; stderr?: string }> {
+  return viaFetch<{ ok: boolean; action: string; stdout?: string; stderr?: string }>('image-action', { alias, action });
+}
+
+export async function sparkStackAction(alias: string, action: string): Promise<{ ok: boolean; action: string; stdout?: string; stderr?: string }> {
+  return viaFetch<{ ok: boolean; action: string; stdout?: string; stderr?: string }>('stack-action', { alias, action });
+}
+
+export async function sparkTailLogs(alias: string, target: 'vllm' | 'image' | 'smoketest' | 'pull', lines = 120): Promise<{ ok: boolean; target: string; logs: string }> {
+  return viaFetch<{ ok: boolean; target: string; logs: string }>('logs', { alias, target, lines });
 }
 
 export function formatBytes(n: number): string {

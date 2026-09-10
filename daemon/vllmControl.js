@@ -31,22 +31,6 @@ export const RECIPES = {
     toolCallParser: 'qwen3_coder',
     hf: 'THe-Plague/Qwen3.6-35B-A3B-abliterated-NVFP4-MTP',
   },
-  'gpt-oss': {
-    id: 'gpt-oss',
-    label: 'GPT-OSS 120B MXFP4 abliterated',
-    servedName: 'gpt-oss-120b-abliterated',
-    compose: 'docker-compose.gpt-oss-120b-abliterated.yml',
-    container: 'gpt-oss-120b-abliterated',
-    pull: 'pull-gpt-oss-120b.sh',
-    modelDir: 'models/Huihui-gpt-oss-120b-mxfp4-abliterated',
-    gpuMemoryUtilization: 0.7,
-    maxModelLen: 131072,
-    kvCacheDtype: 'fp8',
-    quantization: 'mxfp4',
-    reasoningParser: 'openai_gptoss',
-    toolCallParser: 'openai',
-    hf: 'batsclamp/Huihui-gpt-oss-120b-mxfp4-abliterated',
-  },
 };
 
 export function defaultConfig(recipeId = 'qwen') {
@@ -71,7 +55,7 @@ function assertAlias(alias) {
 }
 
 function sanitizeConfig(raw) {
-  const recipe = raw?.recipe === 'gpt-oss' ? 'gpt-oss' : 'qwen';
+  const recipe = RECIPES[raw?.recipe] ? raw.recipe : 'qwen';
   const base = defaultConfig(recipe);
   const servedName = String(raw?.servedName || base.servedName).trim();
   if (!/^[A-Za-z0-9._:-]{1,80}$/.test(servedName)) throw new Error('Invalid served model name');
@@ -155,6 +139,81 @@ async function readSavedConfig(alias, remoteDir) {
   }
 }
 
+export function parseGpuCsvLine(line) {
+  if (!line || typeof line !== 'string') return null;
+  const parts = line.trim().split(',').map((s) => s.trim());
+  if (parts.length < 7) return null;
+  return {
+    name: parts[0] || 'NVIDIA GPU',
+    driver: parts[1] || '—',
+    tempC: Number(parts[2]) || 0,
+    gpuUtilPct: Number(parts[3]) || 0,
+    memUtilPct: Number(parts[4]) || 0,
+    vramUsedMb: Number(parts[5]) || 0,
+    vramTotalMb: Number(parts[6]) || 0,
+    powerDrawW: Number(parts[7]) || 0,
+    powerLimitW: Number(parts[8]) || 0,
+  };
+}
+
+export async function queryGpuStatus(alias) {
+  try {
+    const { stdout } = await ssh(
+      alias,
+      'nvidia-smi --query-gpu=name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,power.limit --format=csv,noheader,nounits 2>/dev/null || true',
+      10000,
+    );
+    const line = (stdout || '').trim().split('\n')[0];
+    return parseGpuCsvLine(line);
+  } catch {
+    return null;
+  }
+}
+
+export async function queryImageStatus(alias, host = '127.0.0.1', port = 7860) {
+  const [health, modelsApi] = await Promise.all([
+    httpGetJson(`http://${host}:${port}/health`, 2000),
+    httpGetJson(`http://${host}:${port}/v1/models`, 2000),
+  ]);
+
+  let pid = null;
+  let running = false;
+  let smokeStatus = null;
+
+  try {
+    const { stdout } = await ssh(
+      alias,
+      `p=$(ps -eo pid=,args= | awk '/serve-openai-bridge\\.py/ && !/awk/ {print $1}'); echo "$p"; cat ~/abliterated-spark/spark-image/logs/quality_post.status 2>/dev/null || cat ~/spark-image/logs/quality_post.status 2>/dev/null || true`,
+      8000,
+    );
+    const lines = (stdout || '').trim().split('\n');
+    const firstPid = parseInt(lines[0], 10);
+    if (!Number.isNaN(firstPid) && firstPid > 0) {
+      pid = firstPid;
+      running = true;
+    }
+    if (lines[1]) {
+      smokeStatus = lines.slice(1).join(' ').trim();
+    }
+  } catch {
+    // SSH not available or failed
+  }
+
+  const liveModels = Array.isArray(modelsApi.json?.data)
+    ? modelsApi.json.data.map((m) => (typeof m === 'string' ? m : (m && m.id) || ''))
+    : [];
+
+  return {
+    port,
+    running: running || health.ok,
+    pid,
+    health: health.ok,
+    healthError: health.error || (!health.ok && health.status ? `HTTP ${health.status}` : ''),
+    smokeStatus,
+    models: liveModels.filter(Boolean),
+  };
+}
+
 export async function vllmStatus(opts = {}) {
   const alias = assertAlias(opts.alias || 'flak3dd');
   const port = Math.floor(Number(opts.port || 8000));
@@ -226,10 +285,30 @@ PY`,
     sshError = err instanceof Error ? err.message : String(err);
   }
 
-  const [health, modelsApi, version] = await Promise.all([
-    httpGetJson(`http://127.0.0.1:${port}/health`),
-    httpGetJson(`http://127.0.0.1:${port}/v1/models`),
-    httpGetJson(`http://127.0.0.1:${port}/version`),
+  const candidateHosts = ['127.0.0.1', '192.168.4.101', 'gx10-d0e7.local'];
+  let liveHost = '127.0.0.1';
+  let health = { ok: false, status: 0 };
+  let modelsApi = { ok: false, status: 0 };
+  let version = { ok: false, status: 0 };
+
+  for (const h of candidateHosts) {
+    const [hRes, mRes, vRes] = await Promise.all([
+      httpGetJson(`http://${h}:${port}/health`, 1500),
+      httpGetJson(`http://${h}:${port}/v1/models`, 1500),
+      httpGetJson(`http://${h}:${port}/version`, 1500),
+    ]);
+    if (hRes.ok || mRes.ok) {
+      liveHost = h;
+      health = hRes;
+      modelsApi = mRes;
+      version = vRes;
+      break;
+    }
+  }
+
+  const [gpu, image] = await Promise.all([
+    sshOk ? queryGpuStatus(alias) : Promise.resolve(null),
+    queryImageStatus(alias, liveHost, 7860),
   ]);
 
   const liveModels = Array.isArray(modelsApi.json?.data)
@@ -245,6 +324,8 @@ PY`,
     docker,
     models,
     pull,
+    gpu,
+    image,
     saved: saved || defaultConfig('qwen'),
     recipes: Object.values(RECIPES),
     live: {
@@ -299,18 +380,62 @@ export async function vllmStop(opts = {}) {
 
 export async function vllmPull(opts = {}) {
   const alias = assertAlias(opts.alias || 'flak3dd');
-  const recipe = opts.recipe === 'gpt-oss' ? 'gpt-oss' : 'qwen';
+  const recipe = RECIPES[opts.recipe] ? opts.recipe : 'qwen';
   const remoteDir = await resolveRemoteDir(alias);
   const script = RECIPES[recipe].pull;
   const local = path.join(SPARK_LOCAL, script);
   await scp(alias, local, `${remoteDir}/${script}`);
-  const pidFile = recipe === 'gpt-oss' ? 'pull-gpt-oss-120b.pid' : 'pull-model.pid';
-  const logFile = recipe === 'gpt-oss' ? 'pull-gpt-oss-120b.log' : 'pull-model.log';
+  const pidFile = 'pull-model.pid';
+  const logFile = 'pull-model.log';
   const { stdout } = await ssh(
     alias,
     `chmod +x ${remoteDir}/${script}; cd ${remoteDir}; if [[ -f ${pidFile} ]] && kill -0 "$(cat ${pidFile})" 2>/dev/null; then echo ALREADY; else nohup ./${script} >> ${logFile} 2>&1 & echo $! > ${pidFile}; echo STARTED; fi`,
   );
   return { ok: true, recipe, state: stdout.trim(), remoteDir };
+}
+
+export async function sparkImageCtl(alias, action) {
+  assertAlias(alias);
+  const act = String(action || 'status').toLowerCase();
+  const cmd = `if [ -f "$HOME/abliterated-spark/spark-image/spark_ctl.sh" ]; then bash "$HOME/abliterated-spark/spark-image/spark_ctl.sh" ${act}; elif [ -f "$HOME/spark-image/spark_ctl.sh" ]; then bash "$HOME/spark-image/spark_ctl.sh" ${act}; else echo "spark_ctl.sh not found"; exit 1; fi`;
+  const { stdout, stderr } = await ssh(alias, cmd, 60000);
+  return { ok: true, action: act, stdout: (stdout || '').slice(-4000), stderr: (stderr || '').slice(-2000) };
+}
+
+export async function sparkStackCtl(alias, action) {
+  assertAlias(alias);
+  const act = String(action || 'status').toLowerCase();
+  let cmd = '';
+  if (act === 'start-all' || act === 'start') {
+    cmd = `if [ -f "$HOME/abliterated-spark/spark-install/start.sh" ]; then bash "$HOME/abliterated-spark/spark-install/start.sh" --with-text; elif [ -f "$HOME/spark-install/start.sh" ]; then bash "$HOME/spark-install/start.sh" --with-text; else echo "start.sh not found"; exit 1; fi`;
+  } else if (act === 'stop-all' || act === 'stop') {
+    cmd = `if [ -f "$HOME/abliterated-spark/spark-install/stop.sh" ]; then bash "$HOME/abliterated-spark/spark-install/stop.sh"; elif [ -f "$HOME/spark-install/stop.sh" ]; then bash "$HOME/spark-install/stop.sh"; else echo "stop.sh not found"; exit 1; fi`;
+  } else if (act === 'free-ports') {
+    cmd = `fuser -k 8000/tcp 7860/tcp 2>/dev/null || true; pkill -f "serve-openai-bridge.py" 2>/dev/null || true; docker rm -f qwen-abliterated gpt-oss-120b-abliterated 2>/dev/null || true; echo "Ports 8000 & 7860 freed"`;
+  } else if (act === 'probe' || act === 'status') {
+    cmd = `if [ -f "$HOME/abliterated-spark/spark-install/status.sh" ]; then bash "$HOME/abliterated-spark/spark-install/status.sh" 127.0.0.1; elif [ -f "$HOME/spark-install/status.sh" ]; then bash "$HOME/spark-install/status.sh" 127.0.0.1; else echo "status.sh not found"; exit 1; fi`;
+  } else {
+    throw new Error(`Unknown stack action: ${act}`);
+  }
+  const { stdout, stderr } = await ssh(alias, cmd, 90000);
+  return { ok: true, action: act, stdout: (stdout || '').slice(-4000), stderr: (stderr || '').slice(-2000) };
+}
+
+export async function sparkLogs(alias, target, lines = 120) {
+  assertAlias(alias);
+  const n = Math.min(500, Math.max(10, Number(lines) || 120));
+  let cmd = '';
+  if (target === 'image') {
+    cmd = `tail -n ${n} "$HOME/abliterated-spark/spark-image/logs/bridge.log" 2>/dev/null || tail -n ${n} "$HOME/spark-image/logs/bridge.log" 2>/dev/null || echo "No image bridge log"`;
+  } else if (target === 'post' || target === 'smoketest') {
+    cmd = `tail -n ${n} "$HOME/abliterated-spark/spark-image/logs/quality-post.out" 2>/dev/null || tail -n ${n} "$HOME/spark-image/logs/quality-post.out" 2>/dev/null || echo "No smoke test log"`;
+  } else if (target === 'pull') {
+    cmd = `tail -n ${n} "$HOME/spark/pull-*.log" 2>/dev/null || tail -n ${n} "$HOME/abliterated-spark/spark/pull-*.log" 2>/dev/null || echo "No pull log"`;
+  } else {
+    cmd = `docker logs --tail ${n} qwen-abliterated 2>&1 || docker logs --tail ${n} gpt-oss-120b-abliterated 2>&1 || echo "No vLLM container running"`;
+  }
+  const { stdout, stderr } = await ssh(alias, cmd, 15000);
+  return { ok: true, target, logs: (stdout || stderr || '').slice(-16000) };
 }
 
 export async function handleVllmCtl(op, payload = {}) {
@@ -327,7 +452,17 @@ export async function handleVllmCtl(op, payload = {}) {
       return vllmPull(payload);
     case 'recipes':
       return { ok: true, recipes: Object.values(RECIPES), defaults: defaultConfig('qwen') };
+    case 'gpu':
+      return { ok: true, gpu: await queryGpuStatus(assertAlias(payload.alias || 'flak3dd')) };
+    case 'image-status':
+      return { ok: true, image: await queryImageStatus(assertAlias(payload.alias || 'flak3dd'), payload.host || '127.0.0.1', payload.port || 7860) };
+    case 'image-action':
+      return sparkImageCtl(assertAlias(payload.alias || 'flak3dd'), payload.action || payload.op);
+    case 'stack-action':
+      return sparkStackCtl(assertAlias(payload.alias || 'flak3dd'), payload.action || payload.op);
+    case 'logs':
+      return sparkLogs(assertAlias(payload.alias || 'flak3dd'), payload.target || 'vllm', payload.lines || 120);
     default:
-      throw new Error(`Unknown vLLM control op: ${op}`);
+      throw new Error(`Unknown vLLM / Spark control op: ${op}`);
   }
 }

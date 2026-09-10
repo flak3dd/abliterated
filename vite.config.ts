@@ -5,10 +5,89 @@ import react from "@vitejs/plugin-react";
 
 import fs from "fs";
 import path from "path";
+import http from "http";
 import { fileURLToPath } from "url";
 import { ABLITERATED_TEMPLATES } from "./src/lib/mailersendTemplates";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** Load .env and .env.local into process.env so dev proxies see configured URLs. */
+function loadLocalEnv() {
+  const envFiles = [".env", ".env.local"];
+  for (const file of envFiles) {
+    const full = path.join(__dirname, file);
+    if (!fs.existsSync(full)) continue;
+    try {
+      const content = fs.readFileSync(full, "utf8");
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const idx = trimmed.indexOf("=");
+        if (idx === -1) continue;
+        const key = trimmed.slice(0, idx).trim();
+        let val = trimmed.slice(idx + 1).trim();
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        if (process.env[key] === undefined) {
+          process.env[key] = val;
+        }
+      }
+    } catch {}
+  }
+}
+loadLocalEnv();
+
+let activeSparkTarget = process.env.DGX_SPARK_URL || "http://192.168.4.101:8000";
+
+const SPARK_CANDIDATES = [
+  process.env.DGX_SPARK_URL,
+  "http://127.0.0.1:8000",
+  "http://192.168.4.101:8000",
+  "http://gx10-d0e7.local:8000",
+].filter(Boolean) as string[];
+
+async function probeSparkHost(target: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(target);
+      const req = http.get(
+        {
+          hostname: u.hostname,
+          port: u.port || 80,
+          path: "/v1/models",
+          timeout: 2000,
+        },
+        (res) => {
+          resolve((res.statusCode || 0) >= 200 && (res.statusCode || 0) < 400);
+        },
+      );
+      req.on("error", () => resolve(false));
+      req.on("timeout", () => {
+        req.destroy();
+        resolve(false);
+      });
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+async function refreshSparkTarget() {
+  for (const candidate of SPARK_CANDIDATES) {
+    const ok = await probeSparkHost(candidate);
+    if (ok) {
+      activeSparkTarget = candidate;
+      return candidate;
+    }
+  }
+  return activeSparkTarget;
+}
+
+void refreshSparkTarget();
+setInterval(() => {
+  void refreshSparkTarget();
+}, 10000);
 
 /** Serve public/docs/index.html for /docs and /docs/ (before SPA fallback). */
 function docsStaticIndex(): Plugin {
@@ -126,9 +205,34 @@ const abliterationProxy = {
     secure: true,
   },
   '/spark-v1': {
-    target: process.env.DGX_SPARK_URL || 'http://127.0.0.1:8000',
+    target: activeSparkTarget,
+    router: () => activeSparkTarget,
     changeOrigin: true,
+    secure: false,
+    timeout: 0,
+    proxyTimeout: 0,
+    ws: true,
     rewrite: (p: string) => p.replace(/^\/spark-v1/, '/v1'),
+    configure: (proxy: { on: (event: string, listener: (...args: never[]) => void) => void }) => {
+      proxy.on(
+        'error',
+        ((err: Error, _req: unknown, res: unknown) => {
+          void refreshSparkTarget();
+          const r = res as ProxyResLike;
+          if (!r?.writeHead || !r.end || r.headersSent) return;
+          r.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
+          r.end(
+            JSON.stringify({
+              error: {
+                message: `DGX Spark vLLM server is unreachable at ${activeSparkTarget} (${err?.message || err}). Please check that vLLM is running on gx10-d0e7 (192.168.4.101:8000) or start the SSH tunnel: ssh -L 8000:127.0.0.1:8000 flak3dd`,
+                type: 'spark_unreachable',
+                code: 503,
+              },
+            }),
+          );
+        }) as (...args: never[]) => void,
+      );
+    },
   },
 
   /** Cloud Featherless API (CORS bypass in DEV). */

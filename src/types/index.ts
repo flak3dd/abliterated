@@ -1,6 +1,6 @@
 import type { FileRef, PlanApproved, PlanItem, WorkflowStep } from '../lib/turnWorkflow';
 
-export type Tab = 'home' | 'workspace' | 'models' | 'jobs' | 'api' | 'vllm' | 'settings' | 'images';
+export type Tab = 'home' | 'workspace' | 'models' | 'jobs' | 'api' | 'vllm' | 'settings';
 export type ReasoningLevel = 'off' | 'low' | 'high' | 'max';
 
 /** Unified agent interaction mode selector. */

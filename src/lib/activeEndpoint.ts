@@ -15,6 +15,45 @@ function abliterationEnvToken(): string {
   return String(import.meta.env.VITE_ABLITERATED_TOKEN || '').trim();
 }
 
+export function isLocalFeatherOAuthBase(baseUrl?: string): boolean {
+  const u = (baseUrl || '').trim().replace(/\/$/, '');
+  return u === 'http://127.0.0.1:3000/v1' || u === 'http://localhost:3000/v1';
+}
+
+export function isProviderConfigured(settings: ClientSettings, provider: InferenceProvider): boolean {
+  if (provider === 'abliteration') return true;
+  if (provider === 'dgx-spark') return settings.sparkEnabled !== false;
+  if (provider === 'featherless') {
+    return Boolean(settings.featherlessToken?.trim()) || isLocalFeatherOAuthBase(settings.featherlessBaseUrl);
+  }
+  if (provider === 'platform') {
+    return Boolean(settings.token?.trim() || settings.accountLoggedIn);
+  }
+  if (provider === 'custom') {
+    return Boolean(settings.baseUrl?.trim() && settings.defaultModel?.trim());
+  }
+  return true;
+}
+
+export function providerUnconfiguredReason(settings: ClientSettings, provider: InferenceProvider): string | null {
+  if (provider === 'featherless') {
+    if (!settings.featherlessToken?.trim() && !isLocalFeatherOAuthBase(settings.featherlessBaseUrl)) {
+      return 'Featherless API key required';
+    }
+  }
+  if (provider === 'platform') {
+    if (!settings.token?.trim() && !settings.accountLoggedIn) {
+      return 'Account login or platform key required';
+    }
+  }
+  if (provider === 'custom') {
+    if (!settings.baseUrl?.trim() || !settings.defaultModel?.trim()) {
+      return 'Custom Base URL and model name required';
+    }
+  }
+  return null;
+}
+
 export type ActiveEndpoint = {
   baseUrl: string;
   token: string;
@@ -25,13 +64,25 @@ export type ActiveEndpoint = {
   active: boolean;
   sparkViaProxy: boolean;
   featherlessViaProxy: boolean;
+  fallbackReason?: string;
 };
 
 export function resolveActiveSettings(settings: ClientSettings): ActiveEndpoint {
   const provider = settings.inferenceProvider ?? 'abliteration';
+  const envTok = abliterationEnvToken();
+  const ablitFallback: ActiveEndpoint = {
+    baseUrl: settings.baseUrl?.trim() || ABLITERATION_DEFAULT_BASE_URL,
+    token: envTok || (settings.token ?? '').trim(),
+    defaultModel: settings.defaultModel?.trim() || ABLITERATION_DEFAULT_MODEL,
+    label: 'ablit (safe fallback)',
+    provider: 'abliteration',
+    active: true,
+    sparkViaProxy: false,
+    featherlessViaProxy: false,
+  };
 
   if (provider === 'dgx-spark') {
-    if (settings.sparkEnabled) {
+    if (settings.sparkEnabled !== false) {
       const model = settings.sparkModel?.trim() || 'qwen-abliterated';
       return {
         baseUrl: settings.sparkBaseUrl?.trim() || 'http://127.0.0.1:8000/v1',
@@ -45,45 +96,44 @@ export function resolveActiveSettings(settings: ClientSettings): ActiveEndpoint 
       };
     }
     return {
-      baseUrl: settings.baseUrl,
-      token: settings.token,
-      defaultModel: settings.defaultModel,
-      label: 'spark',
-      provider,
-      active: false,
-      sparkViaProxy: false,
-      featherlessViaProxy: false,
+      ...ablitFallback,
+      fallbackReason: 'DGX Spark is marked disabled. Safely routed via Abliteration Cloud Cluster so agent continues working.',
     };
   }
 
   if (provider === 'featherless') {
-    if (settings.featherlessEnabled !== false) {
-      const model = resolveFeatherlessModelId(settings.featherlessModel);
+    if (settings.featherlessEnabled === false) {
       return {
-        baseUrl: settings.featherlessBaseUrl?.trim() || 'https://api.featherless.ai/v1',
-        token: settings.featherlessToken ?? '',
-        defaultModel: model,
-        label: 'featherless:' + model,
-        provider,
-        active: true,
-        sparkViaProxy: false,
-        featherlessViaProxy: settings.featherlessViaProxy === true,
+        ...ablitFallback,
+        fallbackReason: 'Featherless is marked disabled. Safely routed via Abliteration Cloud Cluster so agent continues working.',
       };
     }
+    if (!settings.featherlessToken?.trim() && !isLocalFeatherOAuthBase(settings.featherlessBaseUrl)) {
+      return {
+        ...ablitFallback,
+        fallbackReason: 'Featherless API key is missing. Safely routed via Abliteration Cloud Cluster so agent continues working.',
+      };
+    }
+    const model = resolveFeatherlessModelId(settings.featherlessModel);
     return {
-      baseUrl: settings.baseUrl,
-      token: settings.token,
-      defaultModel: settings.defaultModel,
-      label: 'featherless',
+      baseUrl: settings.featherlessBaseUrl?.trim() || 'https://api.featherless.ai/v1',
+      token: settings.featherlessToken ?? '',
+      defaultModel: model,
+      label: 'featherless:' + model,
       provider,
-      active: false,
+      active: true,
       sparkViaProxy: false,
-      featherlessViaProxy: false,
+      featherlessViaProxy: settings.featherlessViaProxy === true,
     };
   }
 
-
   if (provider === 'platform') {
+    if (!settings.token?.trim() && !settings.accountLoggedIn) {
+      return {
+        ...ablitFallback,
+        fallbackReason: 'Platform credentials missing. Safely routed via Abliteration Cloud Cluster so agent continues working.',
+      };
+    }
     const defaultBase =
       (import.meta.env.VITE_PLATFORM_GATEWAY_URL as string | undefined)?.trim() ||
       'https://abliterated.app/api/v1';
@@ -100,10 +150,16 @@ export function resolveActiveSettings(settings: ClientSettings): ActiveEndpoint 
   }
 
   if (provider === 'custom') {
+    if (!settings.baseUrl?.trim() || !settings.defaultModel?.trim()) {
+      return {
+        ...ablitFallback,
+        fallbackReason: 'Custom endpoint requires base URL and model. Safely routed via Abliteration Cloud Cluster so agent continues working.',
+      };
+    }
     return {
-      baseUrl: settings.baseUrl,
-      token: settings.token,
-      defaultModel: settings.defaultModel,
+      baseUrl: settings.baseUrl.trim(),
+      token: settings.token ?? '',
+      defaultModel: settings.defaultModel.trim(),
       label: 'custom',
       provider,
       active: true,
@@ -112,10 +168,7 @@ export function resolveActiveSettings(settings: ClientSettings): ActiveEndpoint 
     };
   }
 
-  // Abliteration: empty form fields still resolve to cloud defaults (Custom keeps raw empties).
-  // DEV: `.env.local` VITE_ABLITERATED_TOKEN wins so rotating the cloud key takes effect
-  // without relying on a stale localStorage paste. Production: UI token only.
-  const envTok = abliterationEnvToken();
+  // Abliteration
   return {
     baseUrl: settings.baseUrl?.trim() || ABLITERATION_DEFAULT_BASE_URL,
     token: envTok || (settings.token ?? '').trim(),

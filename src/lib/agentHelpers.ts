@@ -1,15 +1,34 @@
 export { looksLikeVerifyEvidence, buildVerifyBeforeDoneNudge, buildIncompleteCapNote } from './verifyDone';
 export { auditTurnChanges, buildVerifySummaryNudge } from './changeAudit';
-import type { ToolType, AgentMode } from '../types';
-import { PLAN_MODE_TOOLS, ASK_MODE_TOOLS, DEBUG_MODE_TOOLS } from '../types';
+import { ALL_TOOL_TYPES, PLAN_MODE_TOOLS, ASK_MODE_TOOLS, DEBUG_MODE_TOOLS, type ToolType, type AgentMode } from '../types';
 import { withCompletenessChecklist } from './deepenComplete';
 import { looksLikeStubAnswer, looksLikeTokenCollapse } from './tokenCollapse';
 
 /** Pure helpers for agent loop settings, telemetry, pins, and prefetch tokens. */
 
 export const DEFAULT_MAX_AGENT_TURNS = 24;
+export const MIN_AGENT_TURNS = 4;
 export const MAX_AGENT_TURNS_HARD_CAP = 50;
 export const AGENT_RUNS_KEEP = 50;
+
+export const CORE_AGENT_TOOLS: readonly ToolType[] = [
+  'read_file',
+  'write_file',
+  'shell',
+  'grep',
+  'glob',
+  'list_dir',
+  'todo',
+];
+
+export function sanitizeEnabledTools(tools: ToolType[] | undefined): ToolType[] {
+  if (!tools || tools.length === 0) return [...ALL_TOOL_TYPES];
+  const set = new Set(tools);
+  for (const core of CORE_AGENT_TOOLS) {
+    set.add(core);
+  }
+  return Array.from(set);
+}
 
 export type AgentStopReason = 'no_tools' | 'cap' | 'abort' | 'error' | 'pending_gate' | 'deepened' | 'loop_detected';
 
@@ -34,7 +53,7 @@ export type AgentRunRecord = {
 export function clampMaxAgentTurns(n: unknown): number {
   const v = typeof n === 'number' ? n : Number(n);
   if (!Number.isFinite(v)) return DEFAULT_MAX_AGENT_TURNS;
-  return Math.min(MAX_AGENT_TURNS_HARD_CAP, Math.max(1, Math.floor(v)));
+  return Math.min(MAX_AGENT_TURNS_HARD_CAP, Math.max(MIN_AGENT_TURNS, Math.floor(v)));
 }
 
 export const DEFAULT_MAX_CONCURRENT_JOBS = 1;

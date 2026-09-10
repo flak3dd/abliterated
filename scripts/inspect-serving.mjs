@@ -1,20 +1,24 @@
 import { execSync } from 'node:child_process';
 
 const pyCode = `
-with open('/home/flak3dd/spark/serving_patch.py', 'r') as f:
-    lines = f.readlines()
-
-for i, line in enumerate(lines):
-    if 'use_harmony' in line or 'harmony' in line.lower():
-        print(f"{i+1}: {line.rstrip()}")
-        for j in range(max(0, i-5), min(len(lines), i+15)):
-            print(f"  {j+1}: {lines[j].rstrip()}")
-        print("="*60)
+import subprocess
+out = subprocess.run(["grep", "-rn", "unexpected tokens remaining", "/usr/local/lib/python3.12/dist-packages/"], capture_output=True, text=True)
+print("STDOUT:", out.stdout[:1000])
+print("STDERR:", out.stderr[:1000])
+if not out.stdout:
+    out2 = subprocess.run(["grep", "-rn", "unexpected tokens", "/vllm-workspace/"], capture_output=True, text=True)
+    print("STDOUT 2:", out2.stdout[:1000])
 `;
 
 try {
-  const res = execSync("ssh flak3dd 'python3'", { input: pyCode, encoding: 'utf8' });
-  console.log(res);
+  const res = execSync("ssh flak3dd 'docker run -i --rm -v /home/flak3dd/spark/models/Huihui-gpt-oss-120b-mxfp4-abliterated:/models/current:ro --entrypoint python3 vllm/vllm-openai:cu130-nightly'", {
+    input: pyCode,
+    encoding: 'utf8'
+  });
+  console.log('--- Native vLLM Inspection ---\n' + res);
 } catch (e) {
-  console.error(e.message);
+  console.error('Error:', e.message);
+  if (e.stdout) console.log('stdout:', e.stdout);
+  if (e.stderr) console.log('stderr:', e.stderr);
 }
+

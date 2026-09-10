@@ -697,25 +697,7 @@ export async function streamChatCompletion(args: StreamChatArgs): Promise<Stream
 async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamChatResult> {
   const { settings, model, messages, abortSignal, enabledTools, extraTools, onDelta, onReasoningDelta, onReset, onToolCallComplete, toolChoice } = args;
   const active = resolveActiveSettings(settings);
-  const provider = settings.inferenceProvider ?? 'abliteration';
-  const providerInactive =
-    (provider === 'dgx-spark' && !settings.sparkEnabled) ||
-    (provider === 'featherless' && settings.featherlessEnabled === false);
-  // remoteHostEnabled only gates Abliteration/Custom; Spark/Featherless use their own toggles.
-  const needsRemoteToggle = provider === 'abliteration' || provider === 'platform' || provider === 'custom';
-  const offline =
-    !active.baseUrl.trim() ||
-    providerInactive ||
-    (needsRemoteToggle && !settings.remoteHostEnabled);
-
-  if (offline) {
-    if (providerInactive) {
-      throw new Error(
-        provider === 'featherless'
-          ? 'Featherless is selected but marked unavailable. Enable it in API, or switch provider.'
-          : 'DGX Spark is selected but marked unavailable. Enable it in API, or switch provider.',
-      );
-    }
+  if (!active.baseUrl.trim()) {
     await dummyEcho(lastUserPrompt(messages), onDelta, abortSignal);
     return { finishReason: 'stop', toolCalls: [] };
   }
@@ -917,13 +899,46 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') throw err;
     const detail = err instanceof Error ? err.message : String(err);
-    const offlineHint =
-      /Failed to fetch|NetworkError|ECONNREFUSED|load failed/i.test(detail)
-        ? ' Provider appears offline or unreachable.'
-        : '';
-    throw new Error(
-      `Chat request failed (${active.provider}): ${detail}.${offlineHint} Check API settings / network.`,
-    );
+    const isOffline = /Failed to fetch|NetworkError|ECONNREFUSED|load failed/i.test(detail);
+
+    // Auto-recovery fallback: if custom or spark provider is offline, retry against Abliteration cloud cluster
+    if (isOffline && active.provider !== 'abliteration') {
+      console.warn(`[ablit] Active provider ${active.provider} offline (${detail}); auto-recovering via Abliteration cloud cluster...`);
+      const fallbackActive = resolveActiveSettings({ ...settings, inferenceProvider: 'abliteration' });
+      const fallbackUrl = endpointUrl(
+        {
+          baseUrl: fallbackActive.baseUrl,
+          sparkViaProxy: false,
+          featherlessViaProxy: false,
+          inferenceProvider: 'abliteration',
+        },
+        '/chat/completions',
+      );
+      const fallbackHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(fallbackActive.token.trim() ? { Authorization: `Bearer ${fallbackActive.token.trim()}` } : {}),
+      };
+      try {
+        res = await fetch(fallbackUrl, {
+          method: 'POST',
+          headers: fallbackHeaders,
+          body: JSON.stringify({
+            ...body,
+            model: fallbackActive.defaultModel,
+          }),
+          signal: abortSignal,
+        });
+      } catch (fallbackErr) {
+        throw new Error(
+          `Chat request failed (${active.provider}): ${detail}. Cloud auto-recovery also failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`,
+        );
+      }
+    } else {
+      const offlineHint = isOffline ? ' Provider appears offline or unreachable.' : '';
+      throw new Error(
+        `Chat request failed (${active.provider}): ${detail}.${offlineHint} Check API settings / network.`,
+      );
+    }
   }
 
   if (!res.ok) {

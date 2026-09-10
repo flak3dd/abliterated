@@ -101,57 +101,57 @@ const MODEL_CUSTOM = '__custom__';
 /** Job chips only select a mode. The primary button is what actually generates. */
 const IMAGE_JOBS = {
   quality: {
-    chip: 'New still',
-    title: 'New still — quality',
-    intent: 'Creates a new photoreal image from the prompt. Does not edit a photo you drop in.',
+    chip: 'Quality (RAW)',
+    title: 'Photoreal Quality — Krea 2 RAW',
+    intent: 'Creates a new photoreal image from the prompt (Krea 2 RAW + LoRA 0.75).',
     action: 'Generate quality still',
   },
   fast: {
-    chip: 'Fast still',
-    title: 'New still — fast',
-    intent: 'Creates a new image quickly (Krea Turbo). Lower fidelity than quality.',
+    chip: 'Fast (Turbo)',
+    title: 'Fast Generation — Krea Turbo',
+    intent: 'Creates a new image quickly (Krea 2 Turbo).',
     action: 'Generate fast still',
   },
   draft: {
-    chip: 'Draft sketch',
-    title: 'New still — draft',
-    intent: 'Creates a quick NSFW-capable sketch (Z-Image Turbo). For layout, not finals.',
+    chip: 'Draft (Sketch)',
+    title: 'Draft Preview — Z-Image Turbo',
+    intent: 'Creates a quick sketch for layout and concepts (Z-Image Turbo).',
     action: 'Generate draft sketch',
   },
   instruction: {
-    chip: 'From text',
-    title: 'New still — instruction',
-    intent: 'Creates a new image from a written instruction (Qwen-Image). No reference photo.',
+    chip: 'Text-to-Image',
+    title: 'Text-to-Image — Qwen-Image',
+    intent: 'Instruction-following image synthesis from text (Qwen-Image).',
     action: 'Generate from text',
   },
   edit: {
-    chip: 'Edit photo',
-    title: 'Edit an existing photo',
-    intent: 'Changes the dropped photo using your instruction. Requires a reference image.',
+    chip: 'Edit Photo',
+    title: 'Edit Existing Photo — Qwen-Edit',
+    intent: 'Modifies the dropped photo using your instruction. Requires a reference image.',
     action: 'Apply edit to photo',
   },
   faceswap: {
-    chip: 'Face onto photo',
-    title: 'Put this face on a photo',
-    intent: 'Copies the identity face onto the target scene. Needs both images. Prompt is optional.',
+    chip: 'Face Swap',
+    title: 'Face Swap — Qwen-Edit',
+    intent: 'Transfers an identity face onto a target scene. Needs both images. Prompt is optional.',
     action: 'Put face on photo',
   },
   id: {
-    chip: 'ID document',
-    title: 'ID document',
+    chip: 'ID Document',
+    title: 'ID Document Pipeline — Qwen-Edit',
     intent: 'Works on a real scan: clean or swap the portrait. Does not invent a new identity.',
     action: 'Run ID pipeline',
   },
   klein: {
-    chip: 'Klein still',
-    title: 'New still — Klein 9B',
-    intent: 'Creates a new image with FLUX.2 Klein. Gated weights; no-op if missing.',
+    chip: 'FLUX.2 Klein',
+    title: 'High Adherence — FLUX.2 Klein 9B',
+    intent: 'Creates a new image with FLUX.2 Klein 9B.',
     action: 'Generate Klein still',
   },
   anime: {
-    chip: 'Anime still',
-    title: 'New still — anime',
-    intent: 'Creates a new illustration (Illustrious / Pony zoo). Not the photoreal quality path.',
+    chip: 'Anime Style',
+    title: 'Anime Illustration — Illustrious / Pony',
+    intent: 'Creates a new stylized illustration (Illustrious / Pony).',
     action: 'Generate anime still',
   },
 } as const;
@@ -1177,6 +1177,31 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
     window.setTimeout(() => modelSelectRef.current?.focus(), 50);
   };
 
+  const handleModelSelectChange = (v: string) => {
+    if (v === MODEL_CUSTOM) {
+      if (knownModelIds.includes(settings.imageModel)) patch({ imageModel: '' });
+      return;
+    }
+    if (v === UNCENSORED_IMAGE_MODEL) {
+      applyQuality();
+    } else if (v === FAST_IMAGE_MODEL) {
+      applyFast();
+    } else if (v === DRAFT_IMAGE_MODEL) {
+      applyDraft();
+    } else if (v === QWEN_IMAGE_MODEL) {
+      applyInstruction();
+    } else if (v === QWEN_EDIT_IMAGE_MODEL) {
+      if (!isEditPath) applyEdit();
+      else applyImageModel(v);
+    } else if (v === KLEIN_IMAGE_MODEL) {
+      applyKlein();
+    } else if (v === ANIME_IMAGE_MODEL || v === PONY_IMAGE_MODEL) {
+      applyAnime();
+    } else {
+      applyImageModel(v);
+    }
+  };
+
   const applySparkLan = () => {
     const p = {
       ...sparkImageSettingsPatch(settings, UNCENSORED_IMAGE_MODEL),
@@ -1558,8 +1583,8 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
 
       <div className="mb-1.5">
         <div className="mb-1 flex flex-wrap items-baseline gap-2">
-          <span className="font-mono text-[10px] uppercase text-muted">Job</span>
-          <span className="font-mono text-[10px] normal-case text-zinc-500">selects what the green button will do — does not generate</span>
+          <span className="font-mono text-[10px] uppercase text-muted">Job / Model</span>
+          <span className="font-mono text-[10px] normal-case text-zinc-500">selects workflow & model preset</span>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
         <button type="button" className={chipOn(imageJobId === 'quality')} onClick={applyQuality} title={IMAGE_JOBS.quality.intent} aria-label={`${IMAGE_JOBS.quality.chip}. ${IMAGE_JOBS.quality.intent}`}>
@@ -1578,6 +1603,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         </button>
           </>
         ) : null}
+        <span className="mx-0.5 text-zinc-600">|</span>
         <button type="button" className={chipOn(imageJobId === 'edit', { muted: !modelAvailable(QWEN_EDIT_IMAGE_MODEL) })} onClick={applyEdit} title={IMAGE_JOBS.edit.intent} aria-disabled={!modelAvailable(QWEN_EDIT_IMAGE_MODEL)} aria-label={IMAGE_JOBS.edit.intent}>
           {IMAGE_JOBS.edit.chip}
         </button>
@@ -1589,6 +1615,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
         </button>
         {!xaiOn ? (
           <>
+        <span className="mx-0.5 text-zinc-600">|</span>
         <button type="button" className={chipOn(imageJobId === 'klein', { muted: !modelAvailable(KLEIN_IMAGE_MODEL) })} onClick={applyKlein} title={modelAvailable(KLEIN_IMAGE_MODEL) ? IMAGE_JOBS.klein.intent : `${KLEIN_IMAGE_MODEL} (gated / weights missing)`} aria-disabled={!modelAvailable(KLEIN_IMAGE_MODEL)} aria-label={IMAGE_JOBS.klein.intent}>
           {IMAGE_JOBS.klein.chip}
         </button>
@@ -2031,7 +2058,7 @@ export function ImagesScreen({ settings, onSettingsChange }: Props) {
                     <option value={XAI_IMAGE_MODEL}>Grok Imagine 2.0</option>
                   </select>
                 ) : (
-                  <select ref={modelSelectRef} value={modelSelectValue} onChange={(e) => { const v = e.target.value; if (v === MODEL_CUSTOM) { if (knownModelIds.includes(settings.imageModel)) patch({ imageModel: '' }); return; } patch({ imageModel: v }); }} className="field mt-1">
+                  <select ref={modelSelectRef} value={modelSelectValue} onChange={(e) => handleModelSelectChange(e.target.value)} className="field mt-1">
                     {IMAGE_MODEL_OPTIONS.map((m) => (
                       <option key={m.id} value={m.id}>{m.label}</option>
                     ))}

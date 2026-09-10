@@ -1,12 +1,9 @@
 import { execSync } from 'node:child_process';
 
 const pyCode = `
-from transformers import AutoTokenizer
-
-tok = AutoTokenizer.from_pretrained('/models/current')
-print("Vocab size:", len(tok))
-for token in ['<|start|>', '<|end|>', '<|channel|>', '<|message|>', '<|call|>', '<|return|>', '<|endoftext|>']:
-    print(f"{token} id:", tok.convert_tokens_to_ids(token))
+import json
+with open('/models/current/generation_config.json') as f:
+    print("generation_config.json:\\n", f.read())
 `;
 
 try {
