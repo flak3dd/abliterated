@@ -19,6 +19,7 @@
     "test:agent": "node scripts/test-agent-response.mjs",
     "test:agent-mode": "node scripts/test-agent-mode.mjs",
     "test:reasoning": "node scripts/test-reasoning-work.mjs",
+    "test:reasoning-ui": "node scripts/test-reasoning-ui.mjs",
     "test:agent-presets": "node scripts/test-agent-presets.mjs",
     "test:live-prompts": "node scripts/test-live-prompts.mjs",
     "test:benchmark-20": "node scripts/benchmark-20-prompts.mjs",
@@ -71,7 +72,8 @@
     "test:race-abort": "node scripts/test-race-abort.mjs",
     "test:model-profile": "node scripts/test-model-agent-profile.mjs",
     "test:task-graph": "node scripts/test-task-graph.mjs",
-    "test": "npm run smoke && npm run test:agent && npm run test:reasoning && npm run test:change-audit && npm run test:sse && npm run test:token-collapse && npm run test:xai-image && npm run test:thread-io && npm run test:mcp-catalog && npm run test:model-guide && npm run test:context && npm run test:system-prompt && npm run test:race-abort && npm run test:model-profile && npm run test:task-graph && npm run test:build && npm run test:workspace && npm run test:grok-edits && npm run test:apply-inbox && npm run test:bridge-handshake && npm run test:write-root && npm run test:memory && npm run test:mempalace && npm run test:vdone && npm run test:multi-agent && npm run test:featherless-qwen && npm run test:prove-improve && npm run test:tool-args && npm run test:turn-workflow && npm run test:eval-fixtures && npm run test:capability-router && npm run test:url-safety && npm run test:license-harden && npm run test:spark-install && npm run test:spark-controller && npm run test:image-studio",
+    "test:web-interaction": "node scripts/test-web-interaction-venv-autorun.mjs",
+    "test": "npm run smoke && npm run test:agent && npm run test:reasoning && npm run test:change-audit && npm run test:sse && npm run test:token-collapse && npm run test:xai-image && npm run test:thread-io && npm run test:mcp-catalog && npm run test:model-guide && npm run test:context && npm run test:system-prompt && npm run test:race-abort && npm run test:model-profile && npm run test:task-graph && npm run test:build && npm run test:workspace && npm run test:grok-edits && npm run test:apply-inbox && npm run test:bridge-handshake && npm run test:write-root && npm run test:memory && npm run test:mempalace && npm run test:vdone && npm run test:multi-agent && npm run test:featherless-qwen && npm run test:prove-improve && npm run test:tool-args && npm run test:turn-workflow && npm run test:eval-fixtures && npm run test:capability-router && npm run test:url-safety && npm run test:license-harden && npm run test:spark-install && npm run test:spark-controller && npm run test:image-studio && npm run test:zip && npm run test:web-interaction",
     "image:mock": "cd spark-image && ABLITERATED_IMAGE_MOCK=1 ABLITERATED_IMAGE_HOST=127.0.0.1 ABLITERATED_IMAGE_PORT=7860 python3 serve-openai-bridge.py",
     "image:studio": "node image-studio/server.mjs",
     "spark:push": "bash spark-install/push.sh",
@@ -101,6 +103,7 @@
     "test:auth": "node scripts/test-auth-api.mjs",
     "test:url-safety": "node scripts/test-url-safety.mjs",
     "test:license-harden": "node scripts/test-license-harden.mjs",
+    "test:zip": "node scripts/test-zip-download.mjs && node scripts/test-zip-download-markdown.mjs",
     "spark:tunnel": "node scripts/spark-tunnel.mjs"
   },
   "dependencies": {

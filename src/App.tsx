@@ -40,6 +40,7 @@ import { SidebarFileTree } from './components/layout/SidebarFileTree';
 import { importThreadPayload } from './lib/threadIo';
 import { ApiScreen } from './screens/ApiScreen';
 import { ChatScreen, type ChatScreenHandle } from './screens/ChatScreen';
+import { CliScreen } from './screens/CliScreen';
 import { HomeScreen } from './screens/HomeScreen';
 import { JobsScreen } from './screens/JobsScreen';
 import { ModelsScreen } from './screens/ModelsScreen';
@@ -55,7 +56,8 @@ const TAB_BY_DIGIT: Record<string, Tab> = {
   '4': 'jobs',
   '5': 'api',
   '6': 'vllm',
-  '7': 'settings',
+  '7': 'cli',
+  '8': 'settings',
 };
 
 function isTypingTarget(el: EventTarget | null): boolean {
@@ -447,9 +449,15 @@ export default function App() {
         run: () => setTab('vllm'),
       },
       {
+        id: 'tab-cli',
+        label: 'Go to CLI Terminal',
+        hint: k('⌘7', 'Ctrl+7'),
+        run: () => setTab('cli'),
+      },
+      {
         id: 'tab-settings',
         label: 'Go to Settings',
-        hint: k('⌘7', 'Ctrl+7'),
+        hint: k('⌘8', 'Ctrl+8'),
         run: () => setTab('settings'),
       },
       {
@@ -1006,6 +1014,21 @@ export default function App() {
             {visitedTabs.has('vllm') ? (
               <div className={panelClass('vllm')}>
                 <VllmScreen settings={settings} onSettingsChange={applySettings} />
+              </div>
+            ) : null}
+            {visitedTabs.has('cli') ? (
+              <div className={panelClass('cli')}>
+                <CliScreen
+                  settings={settings}
+                  workspaceRoot={workspace.rootPath}
+                  bridgeStatus={bridgeStatus}
+                  onWorkspaceRootChange={(newRoot) => {
+                    const next = { ...workspace, rootPath: newRoot, rootExplicit: true };
+                    setWorkspace(next);
+                    setWorkspaceState(next);
+                  }}
+                  onPatchSettings={patchSettings}
+                />
               </div>
             ) : null}
 

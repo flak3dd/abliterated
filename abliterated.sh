@@ -112,8 +112,31 @@ _ABL_TERMINAL_UP=0
 ABL_NUM_ASCII=1
 ABL_NUM_KATAKANA=1
 
-# Colour slots, filled by abl_detect_color_support.
+# Colour slots and dual-spectrum palette system (Green Matrix & Electric Blue)
+# Maps directly to CSS tokens in the web design system.
+ABL_SPECTRUM="green"
+ABL_TRUECOLOR=0
+
 ABL_C_WHITE_PEAK=""
+ABL_C_NEON=""
+ABL_C_BRIGHT=""
+ABL_C_MID=""
+ABL_C_DEEP=""
+
+# Active skull tier tokens (~1..~4 in ASCII skull art)
+ABL_C_SKULL_1=""
+ABL_C_SKULL_2=""
+ABL_C_SKULL_3=""
+ABL_C_SKULL_4=""
+
+# Active rain cascade tokens (head -> t1 -> t2 -> t3 -> t4)
+ABL_C_RAIN_HEAD=""
+ABL_C_RAIN_T1=""
+ABL_C_RAIN_T2=""
+ABL_C_RAIN_T3=""
+ABL_C_RAIN_T4=""
+
+# Legacy compatibility slots
 ABL_C_GREEN_NEON=""
 ABL_C_GREEN_BRIGHT=""
 ABL_C_GREEN_MID=""
@@ -134,88 +157,236 @@ ABL_NCOLORS=8
 ABL_WORLD_BLUE=0
 ABL_BG=""
 
+# Set active spectrum: "green" or "blue".
+# silent: 1 = suppress full-screen transition, 0 = render centered shift stamp.
+abl_set_spectrum() {
+  local target="${1:-green}"
+  local silent="${2:-1}"
+  local prev="${ABL_SPECTRUM:-green}"
+  ABL_SPECTRUM="$target"
+
+  if [[ "$target" == "blue" ]]; then
+    ABL_WORLD_BLUE=1
+  else
+    ABL_WORLD_BLUE=0
+  fi
+
+  if (( ABL_NO_COLOR )); then
+    ABL_C_WHITE_PEAK=""
+    ABL_C_NEON=""
+    ABL_C_BRIGHT=""
+    ABL_C_MID=""
+    ABL_C_DEEP=""
+    ABL_C_SKULL_1=""
+    ABL_C_SKULL_2=""
+    ABL_C_SKULL_3=""
+    ABL_C_SKULL_4=""
+    ABL_C_RAIN_HEAD=""
+    ABL_C_RAIN_T1=""
+    ABL_C_RAIN_T2=""
+    ABL_C_RAIN_T3=""
+    ABL_C_RAIN_T4=""
+    ABL_BG=""
+    ABL_C_RESET="${ABL_ESC}[0m"
+  elif (( ABL_TRUECOLOR )); then
+    # 24-bit TrueColor escapes matching exact hex tokens from the web UI
+    if [[ "$target" == "blue" ]]; then
+      # Electric Blue: neon #00e5ff, bright #00afd7, mid #005fff, deep #0a5f87, bg #020610
+      ABL_C_WHITE_PEAK="${ABL_ESC}[38;2;255;255;255;1m"
+      ABL_C_NEON="${ABL_ESC}[38;2;0;229;255;1m"
+      ABL_C_BRIGHT="${ABL_ESC}[38;2;0;175;215m"
+      ABL_C_MID="${ABL_ESC}[38;2;0;95;255m"
+      ABL_C_DEEP="${ABL_ESC}[38;2;10;95;135m"
+      # Skull tiers: sk1 #0a4a66, sk2 #1e8fc4, sk3 #63d6f7, sk4 #00ffff
+      ABL_C_SKULL_1="${ABL_ESC}[38;2;10;74;102m"
+      ABL_C_SKULL_2="${ABL_ESC}[38;2;30;143;196m"
+      ABL_C_SKULL_3="${ABL_ESC}[38;2;99;214;247m"
+      ABL_C_SKULL_4="${ABL_ESC}[38;2;0;255;255m"
+      # Rain tiers: head #d9fbff, t1 #00e5ff, t2 #00c0e0, t3 #005fff, t4 #005f87
+      ABL_C_RAIN_HEAD="${ABL_ESC}[38;2;217;251;255;1m"
+      ABL_C_RAIN_T1="${ABL_ESC}[38;2;0;229;255m"
+      ABL_C_RAIN_T2="${ABL_ESC}[38;2;0;192;224m"
+      ABL_C_RAIN_T3="${ABL_ESC}[38;2;0;95;255m"
+      ABL_C_RAIN_T4="${ABL_ESC}[38;2;0;95;135m"
+      ABL_BG="${ABL_ESC}[48;2;2;6;16m"
+    else
+      # Green Matrix: neon #5fff5f, bright #00ff00, mid #00af00, deep #0a6e2a, bg #020804
+      ABL_C_WHITE_PEAK="${ABL_ESC}[38;2;255;255;255;1m"
+      ABL_C_NEON="${ABL_ESC}[38;2;95;255;95;1m"
+      ABL_C_BRIGHT="${ABL_ESC}[38;2;0;255;0m"
+      ABL_C_MID="${ABL_ESC}[38;2;0;175;0m"
+      ABL_C_DEEP="${ABL_ESC}[38;2;10;110;42m"
+      # Skull tiers: sk1 #0d5c26, sk2 #22b45a, sk3 #7dffa8, sk4 #00c8ff
+      ABL_C_SKULL_1="${ABL_ESC}[38;2;13;92;38m"
+      ABL_C_SKULL_2="${ABL_ESC}[38;2;34;180;90m"
+      ABL_C_SKULL_3="${ABL_ESC}[38;2;125;255;168m"
+      ABL_C_SKULL_4="${ABL_ESC}[38;2;0;200;255m"
+      # Rain tiers: head #d6ffd6, t1 #5fff5f, t2 #00ff00, t3 #00af00, t4 #005f00
+      ABL_C_RAIN_HEAD="${ABL_ESC}[38;2;214;255;214;1m"
+      ABL_C_RAIN_T1="${ABL_ESC}[38;2;95;255;95m"
+      ABL_C_RAIN_T2="${ABL_ESC}[38;2;0;255;0m"
+      ABL_C_RAIN_T3="${ABL_ESC}[38;2;0;175;0m"
+      ABL_C_RAIN_T4="${ABL_ESC}[38;2;0;95;0m"
+      ABL_BG="${ABL_ESC}[48;2;2;8;4m"
+    fi
+    ABL_C_RESET="${ABL_ESC}[0m${ABL_BG}"
+  elif (( ABL_NCOLORS >= 256 )); then
+    if [[ "$target" == "blue" ]]; then
+      ABL_C_WHITE_PEAK="${ABL_ESC}[38;5;231;1m"
+      ABL_C_NEON="${ABL_ESC}[38;5;51;1m"
+      ABL_C_BRIGHT="${ABL_ESC}[38;5;39m"
+      ABL_C_MID="${ABL_ESC}[38;5;27m"
+      ABL_C_DEEP="${ABL_ESC}[38;5;24m"
+      ABL_C_SKULL_1="${ABL_ESC}[38;5;24m"
+      ABL_C_SKULL_2="${ABL_ESC}[38;5;31m"
+      ABL_C_SKULL_3="${ABL_ESC}[38;5;81m"
+      ABL_C_SKULL_4="${ABL_ESC}[38;5;51m"
+      ABL_C_RAIN_HEAD="${ABL_ESC}[38;5;195;1m"
+      ABL_C_RAIN_T1="${ABL_ESC}[38;5;51m"
+      ABL_C_RAIN_T2="${ABL_ESC}[38;5;39m"
+      ABL_C_RAIN_T3="${ABL_ESC}[38;5;27m"
+      ABL_C_RAIN_T4="${ABL_ESC}[38;5;24m"
+      ABL_BG="${ABL_ESC}[48;5;17m"
+    else
+      ABL_C_WHITE_PEAK="${ABL_ESC}[38;5;231;1m"
+      ABL_C_NEON="${ABL_ESC}[38;5;83;1m"
+      ABL_C_BRIGHT="${ABL_ESC}[38;5;46m"
+      ABL_C_MID="${ABL_ESC}[38;5;34m"
+      ABL_C_DEEP="${ABL_ESC}[38;5;28m"
+      ABL_C_SKULL_1="${ABL_ESC}[38;5;22m"
+      ABL_C_SKULL_2="${ABL_ESC}[38;5;35m"
+      ABL_C_SKULL_3="${ABL_ESC}[38;5;121m"
+      ABL_C_SKULL_4="${ABL_ESC}[38;5;45m"
+      ABL_C_RAIN_HEAD="${ABL_ESC}[38;5;194;1m"
+      ABL_C_RAIN_T1="${ABL_ESC}[38;5;83m"
+      ABL_C_RAIN_T2="${ABL_ESC}[38;5;46m"
+      ABL_C_RAIN_T3="${ABL_ESC}[38;5;34m"
+      ABL_C_RAIN_T4="${ABL_ESC}[38;5;22m"
+      ABL_BG="${ABL_ESC}[48;5;232m"
+    fi
+    ABL_C_RESET="${ABL_ESC}[0m${ABL_BG}"
+  else
+    if [[ "$target" == "blue" ]]; then
+      ABL_C_WHITE_PEAK="${ABL_ESC}[1;37m"
+      ABL_C_NEON="${ABL_ESC}[1;36m"
+      ABL_C_BRIGHT="${ABL_ESC}[36m"
+      ABL_C_MID="${ABL_ESC}[34m"
+      ABL_C_DEEP="${ABL_ESC}[2;34m"
+      ABL_C_SKULL_1="${ABL_ESC}[2;34m"
+      ABL_C_SKULL_2="${ABL_ESC}[34m"
+      ABL_C_SKULL_3="${ABL_ESC}[36m"
+      ABL_C_SKULL_4="${ABL_ESC}[1;36m"
+      ABL_C_RAIN_HEAD="${ABL_ESC}[1;37m"
+      ABL_C_RAIN_T1="${ABL_ESC}[1;36m"
+      ABL_C_RAIN_T2="${ABL_ESC}[36m"
+      ABL_C_RAIN_T3="${ABL_ESC}[34m"
+      ABL_C_RAIN_T4="${ABL_ESC}[2;34m"
+    else
+      ABL_C_WHITE_PEAK="${ABL_ESC}[1;37m"
+      ABL_C_NEON="${ABL_ESC}[1;32m"
+      ABL_C_BRIGHT="${ABL_ESC}[1;32m"
+      ABL_C_MID="${ABL_ESC}[32m"
+      ABL_C_DEEP="${ABL_ESC}[2;32m"
+      ABL_C_SKULL_1="${ABL_ESC}[2;32m"
+      ABL_C_SKULL_2="${ABL_ESC}[32m"
+      ABL_C_SKULL_3="${ABL_ESC}[1;32m"
+      ABL_C_SKULL_4="${ABL_ESC}[1;36m"
+      ABL_C_RAIN_HEAD="${ABL_ESC}[1;37m"
+      ABL_C_RAIN_T1="${ABL_ESC}[1;32m"
+      ABL_C_RAIN_T2="${ABL_ESC}[32m"
+      ABL_C_RAIN_T3="${ABL_ESC}[32m"
+      ABL_C_RAIN_T4="${ABL_ESC}[2;32m"
+    fi
+    ABL_BG=""
+    ABL_C_RESET="${ABL_ESC}[0m"
+  fi
+
+  # Mirror legacy aliases so existing phase logic seamlessly uses active spectrum
+  ABL_C_GREEN_NEON="$ABL_C_NEON"
+  ABL_C_GREEN_BRIGHT="$ABL_C_BRIGHT"
+  ABL_C_GREEN_MID="$ABL_C_MID"
+  ABL_C_GREEN_DARK="$ABL_C_DEEP"
+
+  # Also retain specific references
+  if [[ "$target" == "blue" ]]; then
+    ABL_C_BLUE_NEON="$ABL_C_NEON"
+    ABL_C_BLUE_BRIGHT="$ABL_C_BRIGHT"
+    ABL_C_BLUE_MID="$ABL_C_MID"
+    ABL_C_BLUE_DARK="$ABL_C_DEEP"
+  fi
+
+  # Re-prepare skull art if loaded
+  if (( ${#_ABL_SKULL_SRC[@]} > 0 )); then
+    abl_prepare_art
+  fi
+
+  if (( silent == 0 )); then
+    printf '%s' "${ABL_ESC}[0m${ABL_BG}${ABL_ESC}[2J${ABL_ESC}[H"
+    local upFrom="GREEN" upTo="BLUE"
+    if [[ "$target" == "green" ]]; then upFrom="BLUE"; upTo="GREEN"; fi
+    abl_write_centered "[ SPECTRUM SHIFT: $upFrom -> $upTo ]" $(( ABL_H / 2 )) "$ABL_C_NEON"
+    abl_write_centered "[ RAIN VECTOR RECOLOURED ]" $(( ABL_H / 2 + 2 )) "$ABL_C_BRIGHT"
+    abl_sleep_ms 450
+    printf '%s' "${ABL_BG}${ABL_ESC}[2J${ABL_ESC}[H"
+  fi
+}
+
 abl_detect_color_support() {
   local ncolors
   ncolors=$(tput colors 2>/dev/null)
   [[ "$ncolors" =~ ^[0-9]+$ ]] || ncolors=8
   ABL_NCOLORS=$ncolors
 
-  if (( ABL_NO_COLOR )); then
-    ABL_C_WHITE_PEAK=""
-    ABL_C_GREEN_NEON=""
-    ABL_C_GREEN_BRIGHT=""
-    ABL_C_GREEN_MID=""
-    ABL_C_GREEN_DARK=""
-    ABL_C_BLUE_NEON=""
-    ABL_C_BLUE_BRIGHT=""
-    ABL_C_BLUE_MID=""
-    ABL_C_BLUE_DARK=""
-    return 0
+  # Detect 24-bit TrueColor capability
+  ABL_TRUECOLOR=0
+  if [[ "${COLORTERM:-}" =~ ^(truecolor|24bit)$ ]] || \
+     [[ "${TERM_PROGRAM:-}" =~ ^(iTerm\.app|Apple_Terminal|WezTerm|ghostty|vscode)$ ]] || \
+     [[ "${TERM:-}" =~ ^(xterm-direct|xterm-ghostty|kitty|alacritty)$ ]]; then
+    ABL_TRUECOLOR=1
   fi
 
-  if (( ncolors >= 256 )); then
-    ABL_C_WHITE_PEAK="${ABL_ESC}[38;5;231;1m"
-    ABL_C_GREEN_NEON="${ABL_ESC}[38;5;82;1m"
-    ABL_C_GREEN_BRIGHT="${ABL_ESC}[38;5;46m"
-    ABL_C_GREEN_MID="${ABL_ESC}[38;5;34m"
-    ABL_C_GREEN_DARK="${ABL_ESC}[38;5;22m"
-    ABL_C_BLUE_NEON="${ABL_ESC}[38;5;51;1m"
-    ABL_C_BLUE_BRIGHT="${ABL_ESC}[38;5;39m"
-    ABL_C_BLUE_MID="${ABL_ESC}[38;5;27m"
-    ABL_C_BLUE_DARK="${ABL_ESC}[38;5;18m"
-  else
-    ABL_C_WHITE_PEAK="${ABL_ESC}[1;37m"
-    ABL_C_GREEN_NEON="${ABL_ESC}[1;32m"
-    ABL_C_GREEN_BRIGHT="${ABL_ESC}[1;32m"
-    ABL_C_GREEN_MID="${ABL_ESC}[32m"
-    ABL_C_GREEN_DARK="${ABL_ESC}[2;32m"
-    ABL_C_BLUE_NEON="${ABL_ESC}[1;36m"
-    ABL_C_BLUE_BRIGHT="${ABL_ESC}[36m"
-    ABL_C_BLUE_MID="${ABL_ESC}[34m"
-    ABL_C_BLUE_DARK="${ABL_ESC}[2;34m"
-  fi
-
-  # Re-apply world remap if we already flipped after the terminal sequence.
-  (( ABL_WORLD_BLUE )) && abl_shift_to_blue_world 1
+  # Initialize palette using selected spectrum
+  abl_set_spectrum "$ABL_SPECTRUM" 1
 }
 
-# After phase 2 the whole machine goes blue: rain, skull tiers, rules, bg.
-# GREEN_* slots are overwritten so the rain loop does not need a second palette.
+# Shift to blue world (Phase 2 -> Phase 2b transition)
 abl_shift_to_blue_world() {
   local silent="${1:-0}"
-  ABL_WORLD_BLUE=1
-  (( ABL_NO_COLOR )) && return 0
+  abl_set_spectrum "blue" "$silent"
+}
 
-  ABL_C_GREEN_NEON="$ABL_C_BLUE_NEON"
-  ABL_C_GREEN_BRIGHT="$ABL_C_BLUE_BRIGHT"
-  ABL_C_GREEN_MID="$ABL_C_BLUE_MID"
-  ABL_C_GREEN_DARK="$ABL_C_BLUE_DARK"
+# Shift to green world
+abl_shift_to_green_world() {
+  local silent="${1:-0}"
+  abl_set_spectrum "green" "$silent"
+}
 
-  if (( ABL_NCOLORS >= 256 )); then
-    ABL_BG="${ABL_ESC}[48;5;17m"
-  else
-    ABL_BG=""
-  fi
-  ABL_C_RESET="${ABL_ESC}[0m${ABL_BG}"
-
-  if (( silent == 0 )); then
-    printf '%s' "${ABL_ESC}[0m${ABL_BG}${ABL_ESC}[2J${ABL_ESC}[H"
-    abl_write_centered "[ SPECTRUM SHIFT: GREEN -> BLUE ]" $(( ABL_H / 2 )) "$ABL_C_BLUE_NEON"
-    abl_write_centered "[ RAIN VECTOR RECOLOURED ]" $(( ABL_H / 2 + 2 )) "$ABL_C_BLUE_BRIGHT"
-    abl_sleep_ms 450
-    printf '%s' "${ABL_BG}${ABL_ESC}[2J${ABL_ESC}[H"
-  fi
+# Dynamic toggle during interactive loops
+abl_shift_spectrum() {
+  local to="$1"
+  local silent="${2:-1}"
+  abl_set_spectrum "$to" "$silent"
 }
 
 # 10 wall-clock seconds of live rain: green columns ignite cyan then lock blue.
 # Diagonal shock front + stray early-converted columns. Does not use ABL_SPEED
 # for the 10s cap — first ten real seconds of rain are the convert.
 abl_spectrum_shift_sequence() {
-  local t0 elapsed pct front x t ty headY len tailY score edge
-  local color FRAME_BUFFER span hud
-  local gH="$ABL_C_GREEN_NEON" gB="$ABL_C_GREEN_BRIGHT" gM="$ABL_C_GREEN_MID" gD="$ABL_C_GREEN_DARK"
-  local bH="$ABL_C_BLUE_NEON"  bB="$ABL_C_BLUE_BRIGHT"  bM="$ABL_C_BLUE_MID"  bD="$ABL_C_BLUE_DARK"
-  local shock="$ABL_C_WHITE_PEAK"
+  local t0 elapsed pct front x t ty headY len tailY score edge color FRAME_BUFFER span hud vx vy dx _ABL_G
+  local gH gB gM gD bH bB bM bD shock
+  if (( ABL_TRUECOLOR )); then
+    gH="${ABL_ESC}[38;2;95;255;95;1m"; gB="${ABL_ESC}[38;2;0;255;0m"; gM="${ABL_ESC}[38;2;0;175;0m"; gD="${ABL_ESC}[38;2;10;110;42m"
+    bH="${ABL_ESC}[38;2;0;229;255;1m"; bB="${ABL_ESC}[38;2;0;175;215m"; bM="${ABL_ESC}[38;2;0;95;255m"; bD="${ABL_ESC}[38;2;10;95;135m"
+    shock="${ABL_ESC}[38;2;255;255;255;1m"
+  elif (( ABL_NCOLORS >= 256 )); then
+    gH="${ABL_ESC}[38;5;83;1m"; gB="${ABL_ESC}[38;5;46m"; gM="${ABL_ESC}[38;5;34m"; gD="${ABL_ESC}[38;5;28m"
+    bH="${ABL_ESC}[38;5;51;1m"; bB="${ABL_ESC}[38;5;39m"; bM="${ABL_ESC}[38;5;27m"; bD="${ABL_ESC}[38;5;24m"
+    shock="${ABL_ESC}[38;5;231;1m"
+  else
+    gH="${ABL_ESC}[1;32m"; gB="${ABL_ESC}[1;32m"; gM="${ABL_ESC}[32m"; gD="${ABL_ESC}[2;32m"
+    bH="${ABL_ESC}[1;36m"; bB="${ABL_ESC}[36m"; bM="${ABL_ESC}[34m"; bD="${ABL_ESC}[2;34m"
+    shock="${ABL_ESC}[1;37m"
+  fi
 
   (( ABL_NUM_ASCII < 1 )) && ABL_NUM_ASCII=1
   (( ABL_NUM_KATAKANA < 1 )) && ABL_NUM_KATAKANA=1
@@ -803,10 +974,10 @@ abl_prepare_art() {
     ABL_ART_PLAIN[$j]="$plain"
 
     col="$raw"
-    col="${col//\~1/$ABL_C_GREEN_DARK}"
-    col="${col//\~2/$ABL_C_GREEN_MID}"
-    col="${col//\~3/$ABL_C_GREEN_BRIGHT}"
-    col="${col//\~4/$ABL_C_BLUE_BRIGHT}"
+    col="${col//\~1/$ABL_C_SKULL_1}"
+    col="${col//\~2/$ABL_C_SKULL_2}"
+    col="${col//\~3/$ABL_C_SKULL_3}"
+    col="${col//\~4/$ABL_C_SKULL_4}"
     ABL_ART_ROWS[$j]="$col"
 
     j=$(( j + 1 ))
@@ -1143,6 +1314,20 @@ abl_run_matrix_rain() {
           k|K) ABL_USE_KATAKANA=$(( ! ABL_USE_KATAKANA ))
                (( ABL_UTF8 == 0 )) && ABL_USE_KATAKANA=0 ;;
           l|L) ABL_KEEP_LOGO=$(( ! ABL_KEEP_LOGO )) ;;
+          s|S)
+            if [[ "$ABL_SPECTRUM" == "blue" ]]; then
+              abl_shift_spectrum "green" 1
+            else
+              abl_shift_spectrum "blue" 1
+            fi
+            if (( ABL_H > 0 )); then
+              local spec_footer="[ SPACE: Pause ]  [ +/-: Speed ]  [ K: Glyphs ]  [ S: Spectrum ]  [ Q: Disconnect ]"
+              abl_write_centered "$spec_footer" $(( ABL_H - 1 )) "$ABL_C_BRIGHT"
+            fi
+            if (( ABL_KEEP_LOGO )); then
+              abl_redraw_logo
+            fi
+            ;;
         esac
       fi
       active_threshold=95
@@ -1194,8 +1379,8 @@ abl_run_matrix_rain() {
 
       if (( headY >= 1 && headY <= ABL_H )); then
         _ABL_G="${ABL_USE_KATAKANA:+${ABL_GLYPHS_KATAKANA[RANDOM%ABL_NUM_KATAKANA]}}"; : "${_ABL_G:=${ABL_GLYPHS_ASCII[RANDOM%ABL_NUM_ASCII]}}"
-        head_color="$ABL_C_WHITE_PEAK"
-        (( RANDOM % 100 > 90 )) && head_color="$ABL_C_GREEN_BRIGHT"
+        head_color="$ABL_C_RAIN_HEAD"
+        (( RANDOM % 100 > 90 )) && head_color="$ABL_C_RAIN_T1"
         FRAME_BUFFER="${FRAME_BUFFER}${ABL_ESC}[${headY};${x}H${head_color}${_ABL_G}"
       fi
 
@@ -1203,8 +1388,8 @@ abl_run_matrix_rain() {
         ty=$(( headY - t ))
         if (( ty >= 1 && ty <= ABL_H )); then
           _ABL_G="${ABL_USE_KATAKANA:+${ABL_GLYPHS_KATAKANA[RANDOM%ABL_NUM_KATAKANA]}}"; : "${_ABL_G:=${ABL_GLYPHS_ASCII[RANDOM%ABL_NUM_ASCII]}}"
-          final_trail="$ABL_C_GREEN_NEON"
-          (( t == 1 )) && final_trail="$ABL_C_WHITE_PEAK"
+          final_trail="$ABL_C_RAIN_T1"
+          (( t == 1 )) && final_trail="$ABL_C_RAIN_HEAD"
           FRAME_BUFFER="${FRAME_BUFFER}${ABL_ESC}[${ty};${x}H${final_trail}${_ABL_G}"
         fi
       done
@@ -1214,7 +1399,7 @@ abl_run_matrix_rain() {
         (( ty < 1 )) && break
         if (( ty <= ABL_H )) && (( RANDOM % 100 < 25 )); then
           _ABL_G="${ABL_USE_KATAKANA:+${ABL_GLYPHS_KATAKANA[RANDOM%ABL_NUM_KATAKANA]}}"; : "${_ABL_G:=${ABL_GLYPHS_ASCII[RANDOM%ABL_NUM_ASCII]}}"
-          FRAME_BUFFER="${FRAME_BUFFER}${ABL_ESC}[${ty};${x}H${ABL_C_GREEN_MID}${_ABL_G}"
+          FRAME_BUFFER="${FRAME_BUFFER}${ABL_ESC}[${ty};${x}H${ABL_C_RAIN_T2}${_ABL_G}"
         fi
       done
 
@@ -1224,7 +1409,11 @@ abl_run_matrix_rain() {
         (( ty < 1 )) && break
         if (( ty <= ABL_H )) && (( RANDOM % 100 < 15 )); then
           _ABL_G="${ABL_USE_KATAKANA:+${ABL_GLYPHS_KATAKANA[RANDOM%ABL_NUM_KATAKANA]}}"; : "${_ABL_G:=${ABL_GLYPHS_ASCII[RANDOM%ABL_NUM_ASCII]}}"
-          FRAME_BUFFER="${FRAME_BUFFER}${ABL_ESC}[${ty};${x}H${ABL_C_GREEN_DARK}${_ABL_G}"
+          if (( t > 14 )); then
+            FRAME_BUFFER="${FRAME_BUFFER}${ABL_ESC}[${ty};${x}H${ABL_C_RAIN_T4}${_ABL_G}"
+          else
+            FRAME_BUFFER="${FRAME_BUFFER}${ABL_ESC}[${ty};${x}H${ABL_C_RAIN_T3}${_ABL_G}"
+          fi
         fi
       done
 
@@ -1347,12 +1536,12 @@ phase6b_logo_reveal() {
   # Sweep the plate open with a bright leading edge.
   for (( y = ABL_BAND_TOP; y <= ABL_BAND_BOT; y++ )); do
     abl_clear_row "$y"
-    abl_rule "$y" "$ABL_C_BLUE_NEON" "$ABL_LOGO_W"
+    abl_rule "$y" "$ABL_C_NEON" "$ABL_LOGO_W"
     abl_sleep_ms 7
     abl_clear_row "$y"
   done
-  abl_rule "$ABL_BAND_TOP" "$ABL_C_BLUE_DARK" "$ABL_LOGO_W"
-  abl_rule "$ABL_BAND_BOT" "$ABL_C_BLUE_DARK" "$ABL_LOGO_W"
+  abl_rule "$ABL_BAND_TOP" "$ABL_C_DEEP" "$ABL_LOGO_W"
+  abl_rule "$ABL_BAND_BOT" "$ABL_C_DEEP" "$ABL_LOGO_W"
   abl_sleep_ms 80
 
   # Reveal the lettering row by row. The two passes are at the SAME column:
@@ -1362,7 +1551,7 @@ phase6b_logo_reveal() {
   for (( i = 0; i < ABL_LOGO_H; i++ )); do
     y=$(( ABL_LOGO_Y + i ))
     (( y > ABL_H )) && break
-    abl_draw_logo_row "${ABL_LOGO_PAT[$i]}" "$y" "$ABL_LOGO_X" "$ABL_C_GREEN_NEON"
+    abl_draw_logo_row "${ABL_LOGO_PAT[$i]}" "$y" "$ABL_LOGO_X" "$ABL_C_NEON"
     abl_sleep_ms 12
     abl_draw_logo_row "${ABL_LOGO_PAT[$i]}" "$y" "$ABL_LOGO_X" "$ABL_C_WHITE_PEAK"
     abl_sleep_ms 14
@@ -1372,7 +1561,7 @@ phase6b_logo_reveal() {
 
   sub_y=$(( ABL_LOGO_Y + ABL_LOGO_H + 1 ))
   if (( sub_y <= ABL_H )); then
-    abl_write_centered "$subtitle" "$sub_y" "$ABL_C_BLUE_NEON"
+    abl_write_centered "$subtitle" "$sub_y" "$ABL_C_NEON"
     abl_sleep_ms 150
   fi
 
@@ -1384,13 +1573,13 @@ phase6b_logo_reveal() {
     bar_x=$(( (ABL_W - bar_width - 2) / 2 ))
     (( bar_x < 1 )) && bar_x=1
 
-    printf '%s' "${ABL_ESC}[${bar_y};${bar_x}H${ABL_C_GREEN_BRIGHT}[${ABL_ESC}[${bar_y};$(( bar_x + bar_width + 1 ))H]${ABL_C_RESET}"
+    printf '%s' "${ABL_ESC}[${bar_y};${bar_x}H${ABL_C_BRIGHT}[${ABL_ESC}[${bar_y};$(( bar_x + bar_width + 1 ))H]${ABL_C_RESET}"
     for (( p = 0; p < bar_width; p++ )); do
       percent=$(( (p + 1) * 100 / bar_width ))
       printf '%s' "${ABL_ESC}[${bar_y};$(( bar_x + 1 + p ))H${ABL_C_WHITE_PEAK}="
       abl_sleep_ms 10
     done
-    abl_write_centered "ABLITERATION COMPLETE" $(( bar_y + 1 )) "$ABL_C_BLUE_NEON"
+    abl_write_centered "ABLITERATION COMPLETE" $(( bar_y + 1 )) "$ABL_C_NEON"
   fi
   abl_sleep_ms 400
 }
@@ -1547,26 +1736,30 @@ No chmod. No sudo. ~30 seconds, then it exits. Q quits early.
 Usage: $0 [OPTIONS]
 
 Options:
-  (default)         Run the film, fill to 30 seconds of rain, then exit.
-  --one-shot        Run the cinematic sequence, then exit (no 30s fill).
-  --screensaver     Skip the intro, go straight to the matrix screensaver.
-  --ascii           Force the ASCII glyph set instead of Katakana.
-  --katakana        Force half-width Katakana glyphs (default).
-  --speed <mult>    Delay multiplier: 0.5 = 2x faster, 2 = 2x slower.
-                    Default 0.5. Accepts values from 0.01 to 20.
-  --seed <n>        Seed bash RANDOM for a reproducible run.
-  --no-color        Disable all ANSI colour.
-  --keep-logo       Hold the wordmark through the screensaver.
-  --skull-only      Phase 6 stops after the skull materialises.
-  --logo-only       Phase 6 skips the skull and draws the plate.
-  --rain-seconds N  Cap non-interactive rain bursts (oneshot/test).
-  --test            Rapid validation pass across all phases.
-  -h, --help        Show this help.
+  (default)             Run the film, fill to 30 seconds of rain, then exit.
+  --one-shot            Run the cinematic sequence, then exit (no 30s fill).
+  --screensaver         Skip the intro, go straight to the matrix screensaver.
+  --spectrum <g|b>      Select world spectrum: green or blue (default: green).
+  --green               Force Green Matrix spectrum.
+  --blue                Force Electric Blue spectrum.
+  --ascii               Force the ASCII glyph set instead of Katakana.
+  --katakana            Force half-width Katakana glyphs (default).
+  --speed <mult>        Delay multiplier: 0.5 = 2x faster, 2 = 2x slower.
+                        Default 0.5. Accepts values from 0.01 to 20.
+  --seed <n>            Seed bash RANDOM for a reproducible run.
+  --no-color            Disable all ANSI colour.
+  --keep-logo           Hold the wordmark through the screensaver.
+  --skull-only          Phase 6 stops after the skull materialises.
+  --logo-only           Phase 6 skips the skull and draws the plate.
+  --rain-seconds N      Cap non-interactive rain bursts (oneshot/test).
+  --test                Rapid validation pass across all phases.
+  -h, --help            Show this help.
 
 Screensaver keys:
   SPACE  pause / resume      +/-  faster / slower
   K      toggle glyph set    L    toggle keep-logo
-  Q      quit
+  S      toggle spectrum (green <-> blue)
+  Q      disconnect / quit
 EOF
   abl_tty_troubleshoot
   (( _ABL_IS_SOURCED )) && return 0
@@ -1580,6 +1773,20 @@ abl_parse_args() {
         if abl_require_val "$1" "${2:-}" "$#" '^[0-9]*\.?[0-9]+$' "a number (e.g. 0.5)"; then
           abl_parse_speed "$_ABL_VAL"; shift 2
         else shift $?; fi ;;
+      --spectrum)
+        if abl_require_val "$1" "${2:-}" "$#" '^(green|blue)$' "green|blue"; then
+          ABL_SPECTRUM="$_ABL_VAL"
+          [[ "$_ABL_VAL" == "blue" ]] && ABL_WORLD_BLUE=1 || ABL_WORLD_BLUE=0
+          shift 2
+        else shift $?; fi ;;
+      --green)
+        ABL_SPECTRUM="green"
+        ABL_WORLD_BLUE=0
+        shift ;;
+      --blue)
+        ABL_SPECTRUM="blue"
+        ABL_WORLD_BLUE=1
+        shift ;;
       --mode)
         if abl_require_val "$1" "${2:-}" "$#" '^(hybrid|oneshot|screensaver|test)$' "hybrid|oneshot|screensaver|test"; then
           ABL_MODE="$_ABL_VAL"; shift 2
@@ -1610,14 +1817,14 @@ abl_parse_args() {
 }
 
 abl_screensaver_loop() {
-  local footer="[ SPACE: Pause ]  [ +/-: Speed ]  [ K: Glyphs ]  [ L: Logo ]  [ Q: Disconnect ]"
+  local footer="[ SPACE: Pause ]  [ +/-: Speed ]  [ K: Glyphs ]  [ S: Spectrum ]  [ Q: Disconnect ]"
   if (( ABL_KEEP_LOGO )); then
     abl_select_art
     abl_prepare_art
     abl_select_logo
     abl_position_logo
   fi
-  abl_write_centered "$footer" $(( ABL_H - 1 )) "$ABL_C_BLUE_BRIGHT"
+  abl_write_centered "$footer" $(( ABL_H - 1 )) "$ABL_C_BRIGHT"
   abl_run_matrix_rain 0 20 1
 }
 
@@ -1640,7 +1847,7 @@ main() {
 
   case "$ABL_MODE" in
     screensaver)
-      abl_shift_to_blue_world
+      abl_set_spectrum "$ABL_SPECTRUM" 1
       abl_screensaver_loop
       abl_cleanup
       return 0

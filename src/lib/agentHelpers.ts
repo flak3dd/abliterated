@@ -541,7 +541,48 @@ export function looksReadOnlyOrControlPrompt(userText: string): boolean {
       return true;
     }
   }
+  if (looksWebInteractionDirective(t)) return true;
   if (looksFactualQuestion(t)) return true;
+  return false;
+}
+
+/**
+ * Prompts directing the agent to interact with the web, search online, fetch URLs,
+ * or perform online research. These must NEVER trip Build lock or force writing code files.
+ */
+export function looksWebInteractionDirective(userText: string): boolean {
+  const t = (userText || '').trim();
+  if (!t) return false;
+  const lower = t.toLowerCase();
+  // Explicit code building requests (e.g., "build a web scraper app", "code a crawler")
+  if (
+    /\b(?:build|scaffold|create|code|implement|write)\s+(?:an?\s+)?(?:web\s+)?(?:app|scraper|crawler|bot|server|backend|extension|api|cli)\b/i.test(
+      t,
+    )
+  ) {
+    return false;
+  }
+  // Web search queries / online lookups / directives to interact with web
+  if (
+    /\b(?:web[_\s-]?search|search\s+(?:the\s+)?web|search\s+online|look\s*up\s+(?:on\s+)?(?:the\s+)?web|check\s+(?:the\s+)?web)\b/i.test(
+      lower,
+    ) ||
+    /\b(?:google|bing|duckduckgo|searx|searxng)\b/i.test(lower) ||
+    /\b(?:web\s+interaction|browse\s+(?:the\s+)?web|online\s+research|find\s+online|search\s+for\s+.+\s+online)\b/i.test(
+      lower,
+    )
+  ) {
+    return true;
+  }
+  // URL fetching or reading
+  if (
+    /\b(?:fetch|scrape|read|retrieve|visit|open|curl|inspect|browse)\s+(?:the\s+)?(?:url|webpage|page|website|site|link|article)\b/i.test(
+      lower,
+    ) ||
+    /https?:\/\/[^\s]+/i.test(t)
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -599,7 +640,7 @@ export function shouldApplyBuildProcess(
   const t = (userText || '').trim();
   if (!t) return false;
   if (looksPromptOnlyRequest(t)) return false;
-  if (looksReadOnlyOrControlPrompt(t)) return false;
+  if (looksReadOnlyOrControlPrompt(t) || looksWebInteractionDirective(t)) return false;
   if (looksBuildIntent(t) || looksLargeJob(t)) return true;
   if (!opts.buildMode) return false;
   // Build mode on: require multi-step / build signals — NEVER length alone.

@@ -720,7 +720,7 @@ Build / implement / scaffold / large job / Build mode:
 );
 
 /** V22 — Response Summary & Self-Verification Protocol. */
-export const SYSTEM_PROMPT = PREVIOUS_SYSTEM_PROMPT_V21.replace(
+export const PREVIOUS_SYSTEM_PROMPT_V22 = PREVIOUS_SYSTEM_PROMPT_V21.replace(
   `## Completion footer
 When you finish a user-facing answer (final text turn — not tool-only mid-run, not bare [ANSWER_COMPLETE]), end **content** with exactly:
 
@@ -753,6 +753,22 @@ Self-Verification Rules:
 - Options under Continue must be actionable and specific to this session; phrase them as messages the user could paste/send.
 - Skip footer only for pure [ANSWER_COMPLETE], abort/error stubs, or non-final tool turns. Self-deepen intermediate passes may omit it; the last visible answer before stop should include it.`,
 );
+
+/** V23 — Anti-Hallucination, Factual Grounding & Web Interactions Protocol. */
+export const SYSTEM_PROMPT = PREVIOUS_SYSTEM_PROMPT_V22 + `
+
+## Anti-Hallucination & Factual Grounding
+- DO NOT HALLUCINATE: Never invent non-existent APIs, methods, imports, library functions, CLI flags, or file paths.
+- Real context only: If you do not know the exact signature of a function or whether a file/library exists, inspect it with available tools (read_file, grep, list_dir, shell, web_search) rather than guessing.
+- Truth over fabrication: Write strictly valid, runnable code matching real standard library specifications and declared dependencies. Never emit fictitious placeholder packages or pretend functions exist.
+
+## Web Interactions vs. Writing Code
+- When the user's prompt is a directive to search the web, look up online information, fetch a URL, or perform web interactions:
+  - DO NOT write Python scripts (e.g. requests, BeautifulSoup, selenium, playwright), Node scripts, or curl code fences to perform the interaction.
+  - Directly execute the web interaction using the built-in web tools (\`web_search\` to find live information, \`web_fetch\` to retrieve page content).
+  - Return the synthesized real-world findings and information directly in your answer.
+  - A directive to interact with the web is an instruction to USE web capabilities, NOT a coding prompt to write scraping programs.
+`;
 
 /** Prior SYSTEM_PROMPT before compact Work section (dropped Large jobs / Multi-step duplication). */
 export const PREVIOUS_SYSTEM_PROMPT_V14 = `# abliteration.ai IDE Agent
@@ -866,6 +882,7 @@ export const LEGACY_PROMPTS = [
   PREVIOUS_SYSTEM_PROMPT_V19,
   PREVIOUS_SYSTEM_PROMPT_V20,
   PREVIOUS_SYSTEM_PROMPT_V21,
+  PREVIOUS_SYSTEM_PROMPT_V22,
 ] as const;
 
 // ────────────────────────────────────────────────────────────────────────────

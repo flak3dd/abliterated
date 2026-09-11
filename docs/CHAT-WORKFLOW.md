@@ -85,9 +85,10 @@ Key state (all in the hook): `messages` (+ `messagesRef` for stale-closure-free 
 3. For each turn up to `maxTurns`:
    - Build the API messages with `toApiMessages` (assembles the system prompt via
      `assembleSystemPrompt` — steering directives first, bulk context last, budget-pruned).
-   - Call **`streamChatCompletion`** ([useAgentLoop.ts:1543](../src/hooks/useAgentLoop.ts)) with
-     callbacks: `onDelta` (content, line 1566), `onReasoningDelta` (thinking, line 1590),
-     tool-call deltas, and the abort signal.
+    - Call **`streamChatCompletion`** ([useAgentLoop.ts](../src/hooks/useAgentLoop.ts)) with
+      callbacks: `onDelta` (content), `onReasoningDelta` (thinking),
+      `onToolCallDelta` (switches phase to `tool_plan` immediately on tool tokens),
+      and the abort signal.
    - `finalizeAssistant()` runs the content transforms and the grok layer.
    - **No tool calls** → the decision cascade decides finish vs. self-deepen (see §6).
    - **Tool calls** → split into parallel (safe) vs. gated (git/shell/verify/create_pr),
@@ -164,6 +165,10 @@ There is **no** `toolRunner.ts` and **no** `src/lib/tools/` registry; the switch
   `reasoningStepsNotExecuted` ([src/lib/reasoningWork.ts](../src/lib/reasoningWork.ts),
   [useAgentLoop.ts:1845](../src/hooks/useAgentLoop.ts)) injects a one-shot nudge to actually
   perform them.
+- **Reasoning coalescing & Thought display**: when models emit pure reasoning with empty content,
+  `finalizeReasoningChannel` promotes reasoning into `content`. `MessageBubble.tsx` preserves
+  the text in `displayContent` with `hasAnswer=true` and suppresses the duplicate Thought
+  accordion so the answer is never hidden.
 - Other gates in the no-tools cascade: fake-tool recovery, build todo/implement/verify
   nudges, self-deepen, prove-improve, MCP/skill follow-ups.
 

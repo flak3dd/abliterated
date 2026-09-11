@@ -76,6 +76,7 @@ import {
   shouldSkipSelfDeepen,
   looksTrivialFileEdit,
   looksPromptOnlyRequest,
+  looksWebInteractionDirective,
   type AgentRunRecord,
 } from '../lib/agentHelpers';
 import {
@@ -882,6 +883,10 @@ export function useAgentLoop({
       !buildProcess && !isPlanMode && !isAskMode && lastUser && looksLargeJob(lastUser.content)
         ? buildLargeJobNudge()
         : '';
+    const webDirectiveNudge =
+      lastUser && looksWebInteractionDirective(lastUser.content)
+        ? 'CRITICAL DIRECTIVE — WEB INTERACTION REQUEST: The user requested a web interaction or online research. Use the web tools (`web_search`, `web_fetch`) to retrieve live data and answer directly. DO NOT write python/curl/scraping code files or scaffold projects.'
+        : '';
     const thoughtOn = agentProfile.useThoughtLock;
     const thoughtNudge = thoughtOn ? buildThoughtModeNudge() : '';
     const toolsOff = !agentProfile.sendTools;
@@ -929,6 +934,7 @@ export function useAgentLoop({
         { text: sys, essential: true },
         { text: modeSection, essential: true },
         { text: lockedGoalSystemBlock(lockedGoal), essential: true },
+        { text: webDirectiveNudge, essential: true },
         { text: thoughtNudge, essential: true },
         { text: modeNudge, essential: true },
         { text: isPlanMode ? planNudge : '', essential: true },
@@ -1622,11 +1628,17 @@ export function useAgentLoop({
               } else if (
                 agentPhaseRef.current !== 'writing' &&
                 agentPhaseRef.current !== 'reasoning' &&
+                agentPhaseRef.current !== 'tool_plan' &&
                 !turnHasContentRef.current
               ) {
                 setPhase('reasoning', { hasReasoning: true }, turn);
               }
               persistStream({ ...assistant });
+            },
+            onToolCallDelta: (tc) => {
+              if (agentPhaseRef.current !== 'tool_plan' && agentPhaseRef.current !== 'tool_exec') {
+                setPhase('tool_plan', { toolName: tc.name }, turn);
+              }
             },
           });
           let toolCalls = result.toolCalls;

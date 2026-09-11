@@ -18,7 +18,14 @@ import {
   RotateCcw,
   AlertTriangle,
   Loader2,
+  Download,
 } from 'lucide-react';
+import {
+  downloadSingleFile,
+  downloadFilesAsZip,
+  detectFilenameAndContent,
+  extractFilesFromMarkdown,
+} from '../../lib/zipDownload';
 import { DiffViewer } from './DiffViewer';
 import { ReasoningTrace } from './ReasoningTrace';
 import { TerminalPane, type TerminalTone } from './TerminalPane';
@@ -364,14 +371,28 @@ function CodeBlock({
             </span>
           ) : null}
           {code.trim() ? (
-            <button
-              type="button"
-              onClick={() => void copy()}
-              className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
-            >
-              {copied ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
-              <span className={copied ? 'text-emerald-400 font-medium' : ''}>{copied ? 'Copied' : 'Copy'}</span>
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  const { filename, cleanContent } = detectFilenameAndContent(code, lang);
+                  downloadSingleFile(filename, cleanContent);
+                }}
+                className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
+                title="Download file"
+              >
+                <Download size={11} />
+                <span>Download</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void copy()}
+                className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
+              >
+                {copied ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+                <span className={copied ? 'text-emerald-400 font-medium' : ''}>{copied ? 'Copied' : 'Copy'}</span>
+              </button>
+            </>
           ) : null}
         </div>
       </div>
@@ -521,8 +542,13 @@ function MessageBubbleInner({
   const reasoningForUi = useMemo(() => {
     const raw = m.reasoning || '';
     if (!raw.trim()) return '';
-    return stripImplementationFromText(raw);
-  }, [m.reasoning]);
+    const stripped = stripImplementationFromText(raw);
+    const body = stripThinkingWrappers(m.content || '');
+    // If the content is already displaying this exact text (coalesced from reasoning),
+    // suppress the redundant Thought accordion so the answer renders cleanly as the message body.
+    if (body.trim() && stripped.trim() === body.trim()) return '';
+    return stripped;
+  }, [m.reasoning, m.content]);
 
   const displayContent = useMemo(() => {
     if (m.role === 'user' && isMidRunMessageContent(m.content)) return stripMidRunPrefix(m.content);
@@ -532,7 +558,6 @@ function MessageBubbleInner({
       if (liftReasoningWork(m.content || '')) return PLAN_CODE_OMITTED_NOTE;
     }
     const body = stripThinkingWrappers(m.content || '');
-    if (reasoningForUi && body.trim() === reasoningForUi.trim()) return '';
     if (body.trim() === NO_CONTENT_REASONING_NOTE && reasoningForUi) return '';
     return body;
   }, [m.role, m.content, reasoningForUi, writesLocked]);
@@ -573,6 +598,11 @@ function MessageBubbleInner({
   }, [m.role, m.changeSummary, footer, m.files]);
 
   const mainContent = footer ? footer.body : displayContent;
+
+  const messageFiles = useMemo(
+    () => (m.role === 'assistant' ? extractFilesFromMarkdown(mainContent) : []),
+    [m.role, mainContent],
+  );
 
   const contentNode = useMemo(() => {
     if (!(mainContent.trim() || !m.reasoning)) return null;
@@ -626,11 +656,40 @@ function MessageBubbleInner({
           </span>
         ) : null}
         {m.status === 'error' ? <span className="text-rose-400 font-semibold">error</span> : null}
+        {m.role === 'assistant' && messageFiles.length > 1 ? (
+          <button
+            type="button"
+            onClick={() => {
+              const dateStr = new Date().toISOString().slice(0, 10);
+              downloadFilesAsZip(`abliterated-response-files-${dateStr}`, messageFiles);
+            }}
+            className="ml-auto inline-flex items-center gap-1 rounded-[2px] border border-sky-800/50 bg-sky-950/50 px-1.5 py-0.5 text-[9.5px] uppercase font-mono text-sky-300 hover:bg-sky-900/70 hover:text-sky-100 hover:border-sky-700/60 transition-colors"
+            title={`Download all ${messageFiles.length} files as a ZIP archive`}
+          >
+            <Download size={10} />
+            <span>ZIP ({messageFiles.length})</span>
+          </button>
+        ) : m.role === 'assistant' && messageFiles.length === 1 ? (
+          <button
+            type="button"
+            onClick={() => {
+              downloadSingleFile(messageFiles[0].name, messageFiles[0].content as string);
+            }}
+            className="ml-auto inline-flex items-center gap-1 rounded-[2px] border border-sky-800/50 bg-sky-950/50 px-1.5 py-0.5 text-[9.5px] uppercase font-mono text-sky-300 hover:bg-sky-900/70 hover:text-sky-100 hover:border-sky-700/60 transition-colors"
+            title={`Download ${messageFiles[0].name}`}
+          >
+            <Download size={10} />
+            <span>Download</span>
+          </button>
+        ) : null}
         {textToCopy.trim() ? (
           <button
             type="button"
             onClick={() => void copy()}
-            className="ml-auto inline-flex items-center gap-1 rounded-[2px] px-1.5 py-0.5 text-[9.5px] uppercase font-mono text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
+            className={cn(
+              "inline-flex items-center gap-1 rounded-[2px] px-1.5 py-0.5 text-[9.5px] uppercase font-mono text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors",
+              (!m.role || m.role !== 'assistant' || messageFiles.length === 0) && "ml-auto"
+            )}
           >
             {copied ? <Check size={10} className="text-emerald-400" /> : <Copy size={10} />}
             <span className={copied ? 'text-emerald-400 font-medium' : ''}>{copied ? 'Copied' : 'Copy'}</span>

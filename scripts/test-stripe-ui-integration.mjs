@@ -13,10 +13,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const outDir = path.join(root, 'dist-test-stripe-ui');
-// Build a test bundle using Vite (handles TSX, imports, aliases seamlessly)
 const { build } = await import('vite');
+const reactPlugin = (await import('@vitejs/plugin-react')).default;
+
 await build({
   root,
+  configFile: false,
+  plugins: [reactPlugin()],
   logLevel: 'error',
   build: {
     outDir,
@@ -38,8 +41,10 @@ const React = await import('react');
 const billingTabMod = await import(pathToFileURL(path.join(outDir, 'BillingTabBundle.js')).href);
 const licenseMod = await import(pathToFileURL(path.resolve(root, 'dist-test-stripe-ui/lib/license.js')).href).catch(async () => {
   // also bundle license or import from src via vite
-  const res = await build({
+  await build({
     root,
+    configFile: false,
+    plugins: [reactPlugin()],
     logLevel: 'error',
     build: {
       outDir: path.join(outDir, 'license'),
@@ -222,3 +227,4 @@ function createDefaultProps(overrides = {}) {
 fs.rmSync(outDir, { recursive: true, force: true });
 
 console.log('\n=== All Stripe UI Integration Tests PASSED! ===');
+process.exit(0);

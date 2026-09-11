@@ -46,6 +46,7 @@ export function defaultContextWindow(provider: string, contextLength?: number): 
     return Math.floor(contextLength);
   }
   if (provider === 'featherless') return 32768;
+  if (provider === 'dgx-spark') return 65536;
   return 131072;
 }
 

@@ -22,6 +22,7 @@ __pycache__/
 *.py[cod]
 .ablit/*.py
 .ablit/images/
+.qwen/
 scripts/mailersend_*.json
 
 # Code signing secrets (never commit)

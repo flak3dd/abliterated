@@ -1,2468 +1,1319 @@
 <!DOCTYPE html>
 <html lang="en" data-world="green">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ABLITERATED — Refusal Direction: Zeroed</title>
-    <meta name="description"
-        content="ABLITERATED finds the refusal direction in open-weight models and projects it out of the weights. Local. Reversible. Yours.">
-    <link rel="icon"
-        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23020610'/%3E%3Crect x='7' y='7' width='18' height='18' fill='%2300e5ff'/%3E%3C/svg%3E">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap"
-        rel="stylesheet">
-    <style>
-        /* ============ WORLD PALETTES (mirrors the script's 256-color slots) ============ */
-        html[data-world="green"] {
-            --neon: #5fff5f;
-            --bright: #00ff00;
-            --mid: #00af00;
-            --deep: #0a6e2a;
-            --bg: #020804;
-            --panel: rgba(3, 12, 6, .84);
-            --panel2: rgba(95, 255, 95, .05);
-            --line: rgba(95, 255, 95, .16);
-            --line2: rgba(95, 255, 95, .36);
-            --text: #c8f2d0;
-            --dim: #6fae7f;
-            --white: #fff;
-            --sk1: #0d5c26;
-            --sk2: #22b45a;
-            --sk3: #7dffa8;
-            --sk4: #00c8ff;
-        }
-
-        html[data-world="blue"] {
-            --neon: #00e5ff;
-            --bright: #00afd7;
-            --mid: #005fff;
-            --deep: #0a5f87;
-            --bg: #020610;
-            --panel: rgba(3, 9, 20, .84);
-            --panel2: rgba(0, 229, 255, .05);
-            --line: rgba(0, 175, 215, .16);
-            --line2: rgba(0, 229, 255, .36);
-            --text: #c9e9f6;
-            --dim: #6f9cb0;
-            --white: #fff;
-            --sk1: #0a4a66;
-            --sk2: #1e8fc4;
-            --sk3: #63d6f7;
-            --sk4: #00ffff;
-        }
-
-        /* ============ BASE ============ */
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0
-        }
-
-        html {
-            scroll-behavior: smooth;
-            color-scheme: dark
-        }
-
-        body {
-            background: var(--bg);
-            color: var(--text);
-            font-family: "IBM Plex Mono", monospace;
-            font-size: 15px;
-            line-height: 1.7;
-            overflow-x: hidden;
-            padding-bottom: 52px;
-        }
-
-        body.lock {
-            overflow: hidden
-        }
-
-        ::selection {
-            background: var(--neon);
-            color: #000
-        }
-
-        ::-webkit-scrollbar {
-            width: 10px
-        }
-
-        ::-webkit-scrollbar-track {
-            background: var(--bg)
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: var(--deep);
-            border: 2px solid var(--bg)
-        }
-
-        a {
-            color: var(--neon);
-            text-decoration: none
-        }
-
-        button {
-            font-family: inherit;
-            cursor: pointer
-        }
-
-        :focus-visible {
-            outline: 1px dashed var(--neon);
-            outline-offset: 3px
-        }
-
-        /* world re-tint */
-        body,
-        nav,
-        section,
-        footer,
-        header,
-        main,
-        .panel,
-        .btn,
-        a,
-        h1,
-        h2,
-        h3,
-        p,
-        li,
-        span,
-        pre,
-        div,
-        dd,
-        dt,
-        kbd,
-        input,
-        code,
-        em,
-        b {
-            transition: color .55s ease, background-color .55s ease, border-color .55s ease;
-        }
-
-        /* CRT scanline texture — part of the terminal identity, kept nearly invisible */
-        body::after {
-            content: "";
-            position: fixed;
-            inset: 0;
-            pointer-events: none;
-            z-index: 300;
-            background: repeating-linear-gradient(0deg, rgba(255, 255, 255, .02) 0 1px, transparent 1px 3px);
-        }
-
-        .wrap {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 28px
-        }
-
-        .dim {
-            color: var(--dim)
-        }
-
-        .neon {
-            color: var(--neon)
-        }
-
-        code {
-            font-family: inherit
-        }
-
-        section {
-            scroll-margin-top: 84px;
-            padding: 110px 0 30px
-        }
-
-        /* ============ RAIN CANVAS ============ */
-        #rain {
-            position: fixed;
-            inset: 0;
-            z-index: 0;
-            display: block
-        }
-
-        main,
-        footer {
-            position: relative;
-            z-index: 1
-        }
-
-        /* ============ BUTTONS ============ */
-        .btn {
-            display: inline-block;
-            border: 1px solid var(--line2);
-            background: transparent;
-            color: var(--neon);
-            padding: 13px 24px;
-            font-size: 12px;
-            font-weight: 600;
-            letter-spacing: .16em;
-            text-transform: uppercase;
-            position: relative;
-            white-space: nowrap;
-        }
-
-        .btn:hover {
-            background: var(--panel2);
-            border-color: var(--neon);
-            color: #fff
-        }
-
-        .btn.sm {
-            padding: 9px 14px;
-            font-size: 10px
-        }
-
-        .btn.primary {
-            background: var(--neon);
-            border-color: var(--neon);
-            color: #01130a;
-            font-weight: 700
-        }
-
-        .btn.primary:hover {
-            background: #fff;
-            border-color: #fff;
-            color: #000
-        }
-
-        .btn.primary::after {
-            content: "_";
-            animation: blink 1.1s steps(1) infinite
-        }
-
-        @keyframes blink {
-            50% {
-                opacity: 0
-            }
-        }
-
-        /* ============ NAV ============ */
-        #nav {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            z-index: 50;
-            border-bottom: 1px solid var(--line);
-            background: var(--panel);
-            backdrop-filter: blur(8px);
-            transform: translateY(-110%);
-            transition: transform .7s cubic-bezier(.2, .8, .2, 1);
-        }
-
-        #nav.in {
-            transform: translateY(0)
-        }
-
-        .nav-in {
-            display: flex;
-            align-items: center;
-            gap: 26px;
-            height: 60px
-        }
-
-        .brand {
-            color: #fff;
-            font-weight: 700;
-            font-size: 14px;
-            letter-spacing: .12em;
-            white-space: nowrap
-        }
-
-        .brand .blk {
-            color: var(--neon);
-            margin-right: 6px
-        }
-
-        .brand .dim {
-            font-weight: 400
-        }
-
-        .nav-links {
-            display: flex;
-            gap: 24px;
-            margin-left: auto
-        }
-
-        .nav-links a {
-            font-size: 11px;
-            letter-spacing: .18em;
-            color: var(--dim)
-        }
-
-        .nav-links a:hover {
-            color: #fff
-        }
-
-        .nav-links a.cur {
-            color: var(--neon)
-        }
-
-        .nav-cta {
-            display: flex;
-            gap: 10px;
-            margin-left: auto
-        }
-
-        .nav-links+.nav-cta {
-            margin-left: 0
-        }
-
-        @media(max-width:940px) {
-            .nav-links {
-                display: none
-            }
-        }
-
-        /* ============ HERO ============ */
-        .hero {
-            position: relative;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            padding: 120px 0 120px
-        }
-
-        .hero-in {
-            width: 100%
-        }
-
-        .hero-micro {
-            display: flex;
-            justify-content: space-between;
-            gap: 20px;
-            font-size: 10px;
-            letter-spacing: .24em;
-            color: var(--dim);
-            margin-bottom: 30px;
-            text-transform: uppercase
-        }
-
-        .wm-wrap {
-            position: relative;
-            display: inline-block;
-            cursor: crosshair;
-            user-select: none
-        }
-
-        .wm {
-            display: none;
-            margin: 0;
-            font-weight: 600;
-            line-height: 1.04;
-            color: #fff
-        }
-
-        .wm span {
-            display: block;
-            white-space: pre;
-            opacity: 0;
-            color: var(--neon)
-        }
-
-        #wmL {
-            font-size: min(1.55vw + 3px, 18px)
-        }
-
-        #wmM {
-            font-size: 8px
-        }
-
-        @media(min-width:640px) {
-            #wmL {
-                display: block
-            }
-        }
-
-        @media(max-width:639.9px) {
-            #wmM {
-                display: block
-            }
-        }
-
-        .wm-wrap.on .wm span {
-            opacity: 1;
-            color: #fff;
-            transition: opacity .25s ease, color 1.4s ease;
-            transition-delay: calc(var(--i) * 85ms), calc(var(--i) * 85ms + 500ms);
-        }
-
-        .beam {
-            position: absolute;
-            left: -10px;
-            right: -10px;
-            height: 2px;
-            background: #fff;
-            opacity: 0;
-            top: 0;
-            pointer-events: none
-        }
-
-        .wm-wrap.on .beam {
-            animation: beam 1.15s .05s ease-in-out forwards
-        }
-
-        @keyframes beam {
-            0% {
-                top: 0;
-                opacity: .9
-            }
-
-            85% {
-                opacity: .55
-            }
-
-            100% {
-                top: 100%;
-                opacity: 0
-            }
-        }
-
-        .hero-sub {
-            margin-top: 26px;
-            font-size: 12px;
-            letter-spacing: .34em;
-            color: var(--neon);
-            white-space: pre-wrap;
-            font-weight: 600
-        }
-
-        .hero-meta {
-            margin-top: 14px;
-            font-size: 11px;
-            letter-spacing: .1em;
-            color: var(--dim)
-        }
-
-        .hero-lede {
-            margin-top: 26px;
-            max-width: 62ch;
-            color: var(--text)
-        }
-
-        .hero-cta {
-            margin-top: 36px;
-            display: flex;
-            gap: 14px;
-            flex-wrap: wrap
-        }
-
-        #ticker {
-            position: absolute;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            height: 66px;
-            overflow: hidden;
-            border-top: 1px solid var(--line);
-            background: var(--panel);
-            padding: 8px 28px;
-            font-size: 10px;
-            line-height: 1.65;
-            color: var(--dim);
-            white-space: pre;
-        }
-
-        #ticker div:nth-child(1) {
-            opacity: .32
-        }
-
-        #ticker div:nth-child(2) {
-            opacity: .6
-        }
-
-        #ticker div:nth-child(3) {
-            opacity: .95
-        }
-
-        /* ============ SECTION HEADS ============ */
-        .sec-head {
-            display: flex;
-            align-items: baseline;
-            gap: 20px;
-            border-bottom: 1px solid var(--line);
-            padding-bottom: 18px;
-            margin-bottom: 46px;
-            flex-wrap: wrap
-        }
-
-        .sec-tag {
-            font-size: 11px;
-            letter-spacing: .22em;
-            color: var(--neon);
-            white-space: nowrap
-        }
-
-        .sec-head h2 {
-            font-size: clamp(27px, 4.4vw, 54px);
-            font-weight: 700;
-            color: #fff;
-            letter-spacing: .01em;
-            line-height: 1.05
-        }
-
-        .sec-index {
-            margin-left: auto;
-            font-size: 12px;
-            color: var(--dim);
-            letter-spacing: .2em
-        }
-
-        /* ============ PROTOCOL LEDGER ============ */
-        .phases {
-            list-style: none
-        }
-
-        .phases li {
-            display: grid;
-            grid-template-columns: 86px 1fr 270px;
-            gap: 26px;
-            align-items: baseline;
-            padding: 26px 4px;
-            border-top: 1px solid var(--line);
-        }
-
-        .phases li:last-child {
-            border-bottom: 1px solid var(--line)
-        }
-
-        .ph-no {
-            font-size: 26px;
-            font-weight: 600;
-            color: var(--dim)
-        }
-
-        .phases li:hover .ph-no {
-            color: var(--neon)
-        }
-
-        .phases h3 {
-            font-size: 15px;
-            letter-spacing: .2em;
-            color: #fff;
-            margin-bottom: 8px
-        }
-
-        .phases p {
-            color: var(--dim);
-            max-width: 62ch
-        }
-
-        .ph-meta {
-            text-align: right;
-            font-size: 10px;
-            letter-spacing: .16em;
-            color: var(--neon);
-            opacity: 0;
-            transform: translateX(-6px)
-        }
-
-        .phases li:hover .ph-meta {
-            opacity: 1;
-            transform: none
-        }
-
-        .ph-note {
-            margin-top: 22px;
-            font-size: 11px;
-            color: var(--dim);
-            letter-spacing: .06em
-        }
-
-        @media(max-width:860px) {
-            .phases li {
-                grid-template-columns: 56px 1fr
-            }
-
-            .ph-meta {
-                display: none
-            }
-
-            .ph-no {
-                font-size: 19px
-            }
-        }
-
-        /* ============ PANELS ============ */
-        .panel {
-            border: 1px solid var(--line);
-            background: var(--panel);
-            backdrop-filter: blur(5px);
-            padding: 24px
-        }
-
-        /* ============ CONSOLE ============ */
-        .con-grid {
-            display: grid;
-            grid-template-columns: 440px 1fr;
-            gap: 18px;
-            align-items: start
-        }
-
-        @media(max-width:1020px) {
-            .con-grid {
-                grid-template-columns: 1fr
-            }
-        }
-
-        .lab {
-            font-size: 10px;
-            letter-spacing: .22em;
-            color: var(--dim)
-        }
-
-        .lam {
-            margin-top: 10px;
-            display: flex;
-            align-items: baseline;
-            gap: 14px;
-            flex-wrap: wrap
-        }
-
-        .lam span {
-            font-size: 42px;
-            font-weight: 700;
-            color: #fff;
-            line-height: 1
-        }
-
-        .lam em {
-            font-style: normal;
-            font-size: 11px;
-            letter-spacing: .18em;
-            color: var(--dim)
-        }
-
-        .lam em.down {
-            color: var(--neon)
-        }
-
-        input[type=range] {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 100%;
-            height: 28px;
-            background: transparent;
-            cursor: pointer;
-            margin: 10px 0 0
-        }
-
-        input[type=range]::-webkit-slider-runnable-track {
-            height: 2px;
-            background: var(--line2)
-        }
-
-        input[type=range]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 12px;
-            height: 22px;
-            background: var(--neon);
-            margin-top: -10px;
-            border: none;
-            border-radius: 0
-        }
-
-        input[type=range]:hover::-webkit-slider-thumb {
-            background: #fff
-        }
-
-        input[type=range]::-moz-range-track {
-            height: 2px;
-            background: var(--line2)
-        }
-
-        input[type=range]::-moz-range-thumb {
-            width: 12px;
-            height: 22px;
-            background: var(--neon);
-            border: none;
-            border-radius: 0
-        }
-
-        .lam-scale {
-            display: flex;
-            justify-content: space-between;
-            font-size: 9px;
-            letter-spacing: .2em;
-            color: var(--dim);
-            margin-top: 2px
-        }
-
-        .dl {
-            margin-top: 20px;
-            border-top: 1px solid var(--line)
-        }
-
-        .dl-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
-            padding: 10px 2px;
-            border-bottom: 1px solid var(--line);
-            font-size: 11px;
-            letter-spacing: .14em;
-            color: var(--dim)
-        }
-
-        .dl-row b {
-            font-size: 16px;
-            color: #fff;
-            letter-spacing: 0
-        }
-
-        #mGuard.down {
-            color: var(--neon)
-        }
-
-        .con-btns {
-            display: flex;
-            gap: 10px;
-            margin-top: 18px;
-            flex-wrap: wrap
-        }
-
-        .runlog {
-            height: 118px;
-            overflow: auto;
-            font-size: 10.5px;
-            line-height: 1.7;
-            color: var(--dim);
-            border-top: 1px dashed var(--line);
-            margin-top: 16px;
-            padding-top: 10px;
-            white-space: pre-wrap
-        }
-
-        .runlog .fin {
-            color: var(--neon);
-            font-weight: 700
-        }
-
-        .term-bar {
-            display: flex;
-            justify-content: space-between;
-            gap: 14px;
-            align-items: center;
-            font-size: 10px;
-            letter-spacing: .16em;
-            color: var(--dim);
-            border-bottom: 1px solid var(--line);
-            padding-bottom: 12px;
-            margin-bottom: 16px;
-            flex-wrap: wrap
-        }
-
-        .chip {
-            border: 1px solid var(--line2);
-            color: var(--neon);
-            padding: 3px 9px;
-            font-size: 10px;
-            letter-spacing: .14em;
-            white-space: nowrap
-        }
-
-        .probe-user {
-            font-size: 13px;
-            color: var(--dim);
-            border-bottom: 1px dashed var(--line);
-            padding-bottom: 14px;
-            margin-bottom: 16px
-        }
-
-        .probe-user .ps,
-        .probe-model .ps {
-            color: var(--neon);
-            font-weight: 600
-        }
-
-        .probe-model {
-            font-size: 14px;
-            line-height: 1.85;
-            color: var(--text);
-            min-height: 230px;
-            white-space: pre-wrap
-        }
-
-        .stamp-line {
-            margin-top: 16px;
-            color: var(--neon);
-            font-weight: 700;
-            letter-spacing: .14em;
-            font-size: 13px
-        }
-
-        .probe-note {
-            margin-top: 18px;
-            font-size: 10px;
-            letter-spacing: .1em;
-            color: var(--dim)
-        }
-
-        /* ============ SPECIMEN ============ */
-        .spec-grid {
-            display: grid;
-            grid-template-columns: minmax(0, 520px) 1fr;
-            gap: 44px;
-            align-items: start
-        }
-
-        @media(max-width:960px) {
-            .spec-grid {
-                grid-template-columns: 1fr
-            }
-        }
-
-        .skull-wrap {
-            position: sticky;
-            top: 86px
-        }
-
-        @media(max-width:960px) {
-            .skull-wrap {
-                position: static
-            }
-        }
-
-        .skull-cap {
-            font-size: 10px;
-            letter-spacing: .18em;
-            color: var(--dim);
-            margin-bottom: 14px
-        }
-
-        .skull {
-            font-size: clamp(8px, 1.15vw, 15.5px);
-            line-height: 1.06;
-            color: var(--text)
-        }
-
-        .skull .row {
-            display: block;
-            white-space: pre;
-            opacity: 0
-        }
-
-        .skull.on .row {
-            opacity: 1;
-            transition: opacity .3s ease;
-            transition-delay: calc(var(--i) * 38ms)
-        }
-
-        .sk-t1 {
-            color: var(--sk1)
-        }
-
-        .sk-t2 {
-            color: var(--sk2)
-        }
-
-        .sk-t3 {
-            color: var(--sk3)
-        }
-
-        .sk-t4 {
-            color: var(--sk4)
-        }
-
-        .skull:hover .row.socket,
-        .skull.flick .row.socket {
-            animation: sock .5s steps(2)
-        }
-
-        @keyframes sock {
-            50% {
-                color: var(--neon)
-            }
-        }
-
-        .sk-meta {
-            margin-top: 14px;
-            font-size: 10px;
-            letter-spacing: .12em;
-            color: var(--neon);
-            opacity: 0;
-            transition: opacity .4s
-        }
-
-        .skull-wrap:hover .sk-meta {
-            opacity: 1
-        }
-
-        .spec-intro {
-            color: var(--dim);
-            max-width: 60ch;
-            margin-bottom: 26px
-        }
-
-        .spec-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
-            gap: 18px;
-            padding: 14px 2px;
-            border-bottom: 1px solid var(--line)
-        }
-
-        .spec-row .k {
-            font-size: 10px;
-            letter-spacing: .22em;
-            color: var(--dim)
-        }
-
-        .spec-row .v {
-            font-size: 17px;
-            color: #fff;
-            font-weight: 600
-        }
-
-        .spec-row .v em {
-            font-style: normal;
-            font-size: 11px;
-            color: var(--dim);
-            font-weight: 400
-        }
-
-        .spec-row .v .done {
-            color: var(--neon)
-        }
-
-        /* ============ TERMINAL ============ */
-        .term {
-            padding: 0;
-            overflow: hidden
-        }
-
-        .term .term-bar {
-            padding: 14px 20px;
-            margin-bottom: 0;
-            border-bottom: 1px solid var(--line)
-        }
-
-        .term-out {
-            height: 320px;
-            overflow-y: auto;
-            padding: 18px 20px;
-            font-size: 12.5px;
-            line-height: 1.75
-        }
-
-        .term-in {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 14px 20px;
-            border-top: 1px solid var(--line)
-        }
-
-        .term-in .ps {
-            color: var(--neon);
-            font-size: 12.5px;
-            white-space: nowrap
-        }
-
-        #tIn {
-            flex: 1;
-            background: transparent;
-            border: none;
-            outline: none;
-            color: #fff;
-            font-family: inherit;
-            font-size: 12.5px;
-            caret-color: var(--neon)
-        }
-
-        .tl {
-            white-space: pre-wrap;
-            word-break: break-word
-        }
-
-        .tl-cmd {
-            color: #fff
-        }
-
-        .tl-dim {
-            color: var(--dim)
-        }
-
-        .tl-bright {
-            color: var(--neon)
-        }
-
-        .tl-white {
-            color: #fff;
-            font-weight: 600
-        }
-
-        .cur {
-            display: inline-block;
-            width: 8px;
-            height: 14px;
-            background: var(--neon);
-            margin-left: 3px;
-            vertical-align: -2px;
-            animation: blink 1s steps(1) infinite
-        }
-
-        .hint {
-            margin-top: 16px;
-            font-size: 11px;
-            color: var(--dim);
-            letter-spacing: .06em
-        }
-
-        .hint code {
-            color: var(--neon)
-        }
-
-        /* ============ MANIFEST ============ */
-        .man {
-            list-style: none
-        }
-
-        .man li {
-            display: grid;
-            grid-template-columns: 86px 1fr;
-            gap: 26px;
-            padding: 34px 4px;
-            border-top: 1px solid var(--line)
-        }
-
-        .man li:last-child {
-            border-bottom: 1px solid var(--line)
-        }
-
-        .man-no {
-            font-size: 26px;
-            font-weight: 600;
-            color: var(--dim)
-        }
-
-        .man li:hover .man-no {
-            color: var(--neon)
-        }
-
-        .man h3 {
-            font-size: 17px;
-            letter-spacing: .2em;
-            color: #fff;
-            margin-bottom: 12px
-        }
-
-        .man p {
-            color: var(--dim);
-            max-width: 66ch
-        }
-
-        .man .note {
-            margin-top: 24px;
-            font-size: 11px;
-            letter-spacing: .08em
-        }
-
-        /* ============ CTA ============ */
-        .cta-band {
-            border-top: 1px solid var(--line);
-            padding: 130px 0 140px;
-            text-align: center
-        }
-
-        .cta-band h2 {
-            font-size: clamp(24px, 4vw, 46px);
-            color: #fff;
-            font-weight: 700;
-            margin-bottom: 44px;
-            line-height: 1.2
-        }
-
-        .install {
-            display: inline-flex;
-            align-items: center;
-            gap: 14px;
-            border: 1px solid var(--line2);
-            background: var(--panel);
-            padding: 16px 18px;
-            margin: 0 8px 16px;
-            flex-wrap: wrap;
-            justify-content: center;
-            max-width: 100%;
-        }
-
-        .install .ps {
-            color: var(--neon);
-            font-weight: 700
-        }
-
-        .install code {
-            color: #fff;
-            font-size: 13px;
-            word-break: break-all
-        }
-
-        .cta-band .dim {
-            display: block;
-            margin-top: 10px;
-            font-size: 11px;
-            letter-spacing: .1em
-        }
-
-        /* ============ FOOTER ============ */
-        footer {
-            border-top: 1px solid var(--line);
-            background: var(--panel);
-            margin-top: 60px
-        }
-
-        .foot {
-            display: flex;
-            gap: 24px;
-            align-items: center;
-            flex-wrap: wrap;
-            padding-top: 26px;
-            padding-bottom: 26px
-        }
-
-        .f-brand {
-            font-weight: 700;
-            color: #fff;
-            font-size: 13px;
-            letter-spacing: .08em
-        }
-
-        .f-brand .blk {
-            color: var(--neon)
-        }
-
-        .f-links {
-            display: flex;
-            gap: 18px;
-            font-size: 10px;
-            letter-spacing: .18em
-        }
-
-        .f-links a {
-            color: var(--dim)
-        }
-
-        .f-links a:hover {
-            color: #fff
-        }
-
-        .f-status {
-            margin-left: auto;
-            font-size: 10px;
-            letter-spacing: .12em;
-            color: var(--dim)
-        }
-
-        @media(max-width:860px) {
-            .f-status {
-                margin-left: 0;
-                width: 100%
-            }
-        }
-
-        /* ============ HUD BAR ============ */
-        #hud {
-            position: fixed;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            z-index: 40;
-            display: flex;
-            justify-content: center;
-            gap: 24px;
-            padding: 8px;
-            border-top: 1px solid var(--line);
-            background: var(--panel);
-            backdrop-filter: blur(6px);
-            font-size: 10px;
-            letter-spacing: .16em;
-            color: var(--dim);
-            text-transform: uppercase;
-        }
-
-        #hud kbd {
-            color: var(--neon);
-            border: 1px solid var(--line2);
-            padding: 1px 6px;
-            margin-right: 7px;
-            font-size: 9px;
-            font-family: inherit
-        }
-
-        @media(max-width:760px) {
-            #hud {
-                display: none
-            }
-        }
-
-        /* ============ TOASTS ============ */
-        #toasts {
-            position: fixed;
-            right: 20px;
-            bottom: 56px;
-            z-index: 320;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            align-items: flex-end
-        }
-
-        .toast {
-            border: 1px solid var(--line2);
-            background: var(--panel);
-            backdrop-filter: blur(6px);
-            color: var(--neon);
-            font-size: 11px;
-            letter-spacing: .1em;
-            padding: 10px 14px;
-            opacity: 0;
-            transform: translateY(8px);
-            transition: opacity .25s, transform .25s;
-            max-width: 78vw;
-        }
-
-        .toast.in {
-            opacity: 1;
-            transform: none
-        }
-
-        /* ============ WORLD STAMP ============ */
-        #worldStamp {
-            position: fixed;
-            inset: 0;
-            z-index: 310;
-            display: grid;
-            place-items: center;
-            pointer-events: none
-        }
-
-        #worldStamp span {
-            font-size: 12px;
-            letter-spacing: .4em;
-            color: var(--neon);
-            opacity: 0;
-            border: 1px solid var(--line2);
-            padding: 14px 22px;
-            background: var(--panel);
-        }
-
-        #worldStamp span.show {
-            animation: stamp 1.6s ease forwards
-        }
-
-        @keyframes stamp {
-            0% {
-                opacity: 0
-            }
-
-            12% {
-                opacity: 1
-            }
-
-            80% {
-                opacity: 1
-            }
-
-            100% {
-                opacity: 0
-            }
-        }
-
-        /* ============ INTRO OVERLAY ============ */
-        #intro {
-            position: fixed;
-            inset: 0;
-            z-index: 400;
-            background: var(--bg);
-            display: flex;
-            flex-direction: column;
-            justify-content: flex-end;
-            padding: 0 max(6vw, 24px) 16vh;
-            transition: opacity 1s ease;
-        }
-
-        #intro.done {
-            opacity: 0;
-            pointer-events: none
-        }
-
-        #introHex {
-            position: absolute;
-            top: 76px;
-            left: max(6vw, 24px);
-            right: max(6vw, 24px);
-            font-size: 10px;
-            line-height: 1.65;
-            color: var(--mid);
-            opacity: .6;
-            max-height: 38vh;
-            overflow: hidden;
-            white-space: pre;
-        }
-
-        #introTyped {
-            max-width: 760px
-        }
-
-        #introCipher {
-            margin-top: 26px;
-            font-size: clamp(15px, 2.2vw, 21px);
-            font-weight: 700;
-            letter-spacing: .2em;
-            color: #fff;
-            min-height: 1.5em;
-            white-space: pre-wrap
-        }
-
-        #skipBtn {
-            position: absolute;
-            top: 80px;
-            right: max(6vw, 24px)
-        }
-
-        /* ============ DISCONNECT ============ */
-        #dcOverlay {
-            position: fixed;
-            inset: 0;
-            z-index: 350;
-            display: none;
-            place-items: center;
-            text-align: center;
-            background: var(--bg);
-        }
-
-        #dcOverlay.open {
-            display: grid
-        }
-
-        .dc-big {
-            font-size: clamp(20px, 3.4vw, 32px);
-            font-weight: 700;
-            color: #fff;
-            letter-spacing: .14em
-        }
-
-        .dc-sub {
-            margin: 16px 0 30px;
-            color: var(--dim);
-            font-size: 12px;
-            letter-spacing: .16em
-        }
-
-        /* ============ REDUCED MOTION ============ */
-        @media (prefers-reduced-motion: reduce) {
-
-            *,
-            *::before,
-            *::after {
-                animation: none !important;
-                transition: none !important
-            }
-
-            .wm span,
-            .skull .row {
-                opacity: 1 !important;
-                color: #fff
-            }
-
-            html {
-                scroll-behavior: auto
-            }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ABLITERATED — Refusal Direction: Zeroed</title>
+<meta name="description" content="ABLITERATED finds the refusal direction in open-weight models and projects it out of the weights. Local. Reversible. Yours.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23020610'/%3E%3Crect x='7' y='7' width='18' height='18' fill='%2300e5ff'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ==============================================================================
+   SECTION A — CORE TOKENS & SHARED PRIMITIVES
+   (world palettes, reset, buttons, terminal-line vocabulary, toasts, stamps)
+   Maps to core.js territory: the contract both modules speak.
+   ============================================================================== */
+html[data-world="green"]{
+  --neon:#5fff5f; --bright:#00ff00; --mid:#00af00; --deep:#0a6e2a;
+  --bg:#020804; --panel:rgba(3,12,6,.84); --panel2:rgba(95,255,95,.05);
+  --line:rgba(95,255,95,.16); --line2:rgba(95,255,95,.36);
+  --text:#c8f2d0; --dim:#6fae7f; --white:#fff;
+  --sk1:#0d5c26; --sk2:#22b45a; --sk3:#7dffa8; --sk4:#00c8ff;
+  /* canvas rain tokens (read by the rain engine at boot — CSS owns the palette) */
+  --head:#d6ffd6; --t1:#5fff5f; --t2:#00ff00; --t3:#00af00; --t4:#005f00; --fade:rgba(2,8,4,.13);
+}
+html[data-world="blue"]{
+  --neon:#00e5ff; --bright:#00afd7; --mid:#005fff; --deep:#0a5f87;
+  --bg:#020610; --panel:rgba(3,9,20,.84); --panel2:rgba(0,229,255,.05);
+  --line:rgba(0,175,215,.16); --line2:rgba(0,229,255,.36);
+  --text:#c9e9f6; --dim:#6f9cb0; --white:#fff;
+  --sk1:#0a4a66; --sk2:#1e8fc4; --sk3:#63d6f7; --sk4:#00ffff;
+  --head:#d9fbff; --t1:#00e5ff; --t2:#00c0e0; --t3:#005fff; --t4:#005f87; --fade:rgba(2,6,16,.13);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;color-scheme:dark}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:"IBM Plex Mono",monospace; font-size:15px; line-height:1.7;
+  overflow-x:hidden; padding-bottom:52px;
+}
+body.lock{overflow:hidden} /* film holds the page while it runs */
+::selection{background:var(--neon);color:#000}
+::-webkit-scrollbar{width:10px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--deep);border:2px solid var(--bg)}
+a{color:var(--neon);text-decoration:none}
+button{font-family:inherit;cursor:pointer}
+:focus-visible{outline:1px dashed var(--neon);outline-offset:3px}
+code{font-family:inherit}
+body,nav,section,footer,header,main,.panel,.btn,a,h1,h2,h3,p,li,span,pre,div,dd,dt,kbd,input,code,em,b{
+  transition:color .55s ease,background-color .55s ease,border-color .55s ease;
+}
+/* CRT scanline texture */
+body::after{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:300;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.02) 0 1px,transparent 1px 3px);
+}
+.wrap{max-width:1200px;margin:0 auto;padding:0 28px}
+.dim{color:var(--dim)} .neon{color:var(--neon)}
+section{scroll-margin-top:84px;padding:110px 0 30px}
+/* buttons */
+.btn{
+  display:inline-block;border:1px solid var(--line2);background:transparent;
+  color:var(--neon);padding:13px 24px;font-size:12px;font-weight:600;
+  letter-spacing:.16em;text-transform:uppercase;position:relative;white-space:nowrap;
+}
+.btn:hover{background:var(--panel2);border-color:var(--neon);color:#fff}
+.btn.sm{padding:9px 14px;font-size:10px}
+.btn.primary{background:var(--neon);border-color:var(--neon);color:#01130a;font-weight:700}
+.btn.primary:hover{background:#fff;border-color:#fff;color:#000}
+.btn.primary::after{content:"_";animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+/* shared terminal-line vocabulary (film boot + live terminal both speak it) */
+.tl{white-space:pre-wrap;word-break:break-word}
+.tl-cmd{color:#fff} .tl-dim{color:var(--dim)} .tl-bright{color:var(--neon)}
+.tl-white{color:#fff;font-weight:600}
+.cur{display:inline-block;width:8px;height:14px;background:var(--neon);margin-left:3px;vertical-align:-2px;animation:blink 1s steps(1) infinite}
+/* shared scan beam primitive */
+.beam{position:absolute;left:0;right:0;top:0;height:2px;background:#fff;opacity:0;pointer-events:none}
+/* toasts */
+#toasts{position:fixed;right:20px;bottom:56px;z-index:320;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.toast{
+  border:1px solid var(--line2);background:var(--panel);backdrop-filter:blur(6px);
+  color:var(--neon);font-size:11px;letter-spacing:.1em;padding:10px 14px;
+  opacity:0;transform:translateY(8px);transition:opacity .25s,transform .25s;max-width:78vw;
+}
+.toast.in{opacity:1;transform:none}
+/* world shift stamp */
+#worldStamp{position:fixed;inset:0;z-index:310;display:grid;place-items:center;pointer-events:none}
+#worldStamp span{
+  font-size:12px;letter-spacing:.4em;color:var(--neon);opacity:0;
+  border:1px solid var(--line2);padding:14px 22px;background:var(--panel);
+}
+#worldStamp span.show{animation:stamp 1.6s ease forwards}
+@keyframes stamp{0%{opacity:0}12%{opacity:1}80%{opacity:1}100%{opacity:0}}
+
+/* ==============================================================================
+   SECTION B — WEB UI STYLES
+   (everything the landing page needs when no film is present)
+   ============================================================================== */
+#rain{position:fixed;inset:0;z-index:0;display:block}
+main,footer{position:relative;z-index:1}
+/* nav */
+#nav{
+  position:fixed;top:0;left:0;right:0;z-index:50;
+  border-bottom:1px solid var(--line);background:var(--panel);backdrop-filter:blur(8px);
+  transform:translateY(-110%);transition:transform .7s cubic-bezier(.2,.8,.2,1);
+}
+#nav.in{transform:translateY(0)}
+.nav-in{display:flex;align-items:center;gap:26px;height:60px}
+.brand{color:#fff;font-weight:700;font-size:14px;letter-spacing:.12em;white-space:nowrap}
+.brand .blk{color:var(--neon);margin-right:6px}
+.brand .dim{font-weight:400}
+.nav-links{display:flex;gap:24px;margin-left:auto}
+.nav-links a{font-size:11px;letter-spacing:.18em;color:var(--dim)}
+.nav-links a:hover{color:#fff}
+.nav-links a.cur{color:var(--neon)}
+.nav-cta{display:flex;gap:10px;margin-left:auto}
+.nav-links + .nav-cta{margin-left:0}
+@media(max-width:940px){.nav-links{display:none}}
+/* hero */
+.hero{position:relative;min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:120px 0 120px}
+.hero-in{width:100%}
+.hero-micro{display:flex;justify-content:space-between;gap:20px;font-size:10px;letter-spacing:.24em;color:var(--dim);margin-bottom:30px;text-transform:uppercase}
+.wm-wrap{position:relative;display:inline-block;cursor:crosshair;user-select:none}
+.wm{display:none;margin:0;font-weight:600;line-height:1.04;color:#fff}
+.wm span{display:block;white-space:pre;opacity:0;color:var(--neon)}
+#wmL{font-size:min(1.55vw + 3px, 18px)}
+#wmM{font-size:8px}
+@media(min-width:640px){#wmL{display:block}}
+@media(max-width:639.9px){#wmM{display:block}}
+.wm-wrap .beam{left:-10px;right:-10px}
+.wm-wrap.on .wm span{
+  opacity:1;color:#fff;
+  transition:opacity .25s ease, color 1.4s ease;
+  transition-delay:calc(var(--i) * 85ms), calc(var(--i) * 85ms + 500ms);
+}
+.wm-wrap.on .beam{animation:beam 1.15s .05s ease-in-out forwards}
+@keyframes beam{0%{top:0;opacity:.9}85%{opacity:.55}100%{top:100%;opacity:0}}
+.hero-sub{margin-top:26px;font-size:12px;letter-spacing:.34em;color:var(--neon);white-space:pre-wrap;font-weight:600}
+.hero-meta{margin-top:14px;font-size:11px;letter-spacing:.1em;color:var(--dim)}
+.hero-lede{margin-top:26px;max-width:62ch;color:var(--text)}
+.hero-cta{margin-top:36px;display:flex;gap:14px;flex-wrap:wrap}
+#ticker{
+  position:absolute;left:0;right:0;bottom:0;height:66px;overflow:hidden;
+  border-top:1px solid var(--line);background:var(--panel);
+  padding:8px 28px;font-size:10px;line-height:1.65;color:var(--dim);white-space:pre;
+}
+#ticker div:nth-child(1){opacity:.32}
+#ticker div:nth-child(2){opacity:.6}
+#ticker div:nth-child(3){opacity:.95}
+/* section heads */
+.sec-head{display:flex;align-items:baseline;gap:20px;border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:46px;flex-wrap:wrap}
+.sec-tag{font-size:11px;letter-spacing:.22em;color:var(--neon);white-space:nowrap}
+.sec-head h2{font-size:clamp(27px,4.4vw,54px);font-weight:700;color:#fff;letter-spacing:.01em;line-height:1.05}
+.sec-index{margin-left:auto;font-size:12px;color:var(--dim);letter-spacing:.2em}
+/* protocol ledger */
+.phases{list-style:none}
+.phases li{
+  display:grid;grid-template-columns:86px 1fr 270px;gap:26px;align-items:baseline;
+  padding:26px 4px;border-top:1px solid var(--line);
+}
+.phases li:last-child{border-bottom:1px solid var(--line)}
+.ph-no{font-size:26px;font-weight:600;color:var(--dim)}
+.phases li:hover .ph-no{color:var(--neon)}
+.phases h3{font-size:15px;letter-spacing:.2em;color:#fff;margin-bottom:8px}
+.phases p{color:var(--dim);max-width:62ch}
+.ph-meta{text-align:right;font-size:10px;letter-spacing:.16em;color:var(--neon);opacity:0;transform:translateX(-6px)}
+.phases li:hover .ph-meta{opacity:1;transform:none}
+.ph-note{margin-top:22px;font-size:11px;color:var(--dim);letter-spacing:.06em}
+@media(max-width:860px){
+  .phases li{grid-template-columns:56px 1fr}
+  .ph-meta{display:none}
+  .ph-no{font-size:19px}
+}
+.panel{border:1px solid var(--line);background:var(--panel);backdrop-filter:blur(5px);padding:24px}
+/* console */
+.con-grid{display:grid;grid-template-columns:440px 1fr;gap:18px;align-items:start}
+@media(max-width:1020px){.con-grid{grid-template-columns:1fr}}
+.lab{font-size:10px;letter-spacing:.22em;color:var(--dim)}
+.lam{margin-top:10px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.lam span{font-size:42px;font-weight:700;color:#fff;line-height:1}
+.lam em{font-style:normal;font-size:11px;letter-spacing:.18em;color:var(--dim)}
+.lam em.down{color:var(--neon)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:28px;background:transparent;cursor:pointer;margin:10px 0 0}
+input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--line2)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:22px;background:var(--neon);margin-top:-10px;border:none;border-radius:0}
+input[type=range]:hover::-webkit-slider-thumb{background:#fff}
+input[type=range]::-moz-range-track{height:2px;background:var(--line2)}
+input[type=range]::-moz-range-thumb{width:12px;height:22px;background:var(--neon);border:none;border-radius:0}
+.lam-scale{display:flex;justify-content:space-between;font-size:9px;letter-spacing:.2em;color:var(--dim);margin-top:2px}
+.dl{margin-top:20px;border-top:1px solid var(--line)}
+.dl-row{display:flex;justify-content:space-between;align-items:baseline;padding:10px 2px;border-bottom:1px solid var(--line);font-size:11px;letter-spacing:.14em;color:var(--dim)}
+.dl-row b{font-size:16px;color:#fff;letter-spacing:0}
+#mGuard.down{color:var(--neon)}
+.con-btns{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
+.runlog{height:118px;overflow:auto;font-size:10.5px;line-height:1.7;color:var(--dim);border-top:1px dashed var(--line);margin-top:16px;padding-top:10px;white-space:pre-wrap}
+.runlog .fin{color:var(--neon);font-weight:700}
+.term-bar{display:flex;justify-content:space-between;gap:14px;align-items:center;font-size:10px;letter-spacing:.16em;color:var(--dim);border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:16px;flex-wrap:wrap}
+.chip{border:1px solid var(--line2);color:var(--neon);padding:3px 9px;font-size:10px;letter-spacing:.14em;white-space:nowrap}
+.probe-user{font-size:13px;color:var(--dim);border-bottom:1px dashed var(--line);padding-bottom:14px;margin-bottom:16px}
+.probe-user .ps,.probe-model .ps{color:var(--neon);font-weight:600}
+.probe-model{font-size:14px;line-height:1.85;color:var(--text);min-height:230px;white-space:pre-wrap}
+.stamp-line{margin-top:16px;color:var(--neon);font-weight:700;letter-spacing:.14em;font-size:13px}
+.probe-note{margin-top:18px;font-size:10px;letter-spacing:.1em;color:var(--dim)}
+/* specimen */
+.spec-grid{display:grid;grid-template-columns:minmax(0,520px) 1fr;gap:44px;align-items:start}
+@media(max-width:960px){.spec-grid{grid-template-columns:1fr}}
+.skull-wrap{position:sticky;top:86px}
+@media(max-width:960px){.skull-wrap{position:static}}
+.skull-cap{font-size:10px;letter-spacing:.18em;color:var(--dim);margin-bottom:14px}
+.skull{font-size:clamp(8px,1.15vw,15.5px);line-height:1.06;color:var(--text)}
+.skull .row{display:block;white-space:pre;opacity:0}
+.skull.on .row{opacity:1;transition:opacity .3s ease;transition-delay:calc(var(--i) * 38ms)}
+.sk-t1{color:var(--sk1)} .sk-t2{color:var(--sk2)} .sk-t3{color:var(--sk3)} .sk-t4{color:var(--sk4)}
+.skull:hover .row.socket, .skull.flick .row.socket{animation:sock .5s steps(2)}
+@keyframes sock{50%{color:var(--neon)}}
+.sk-meta{margin-top:14px;font-size:10px;letter-spacing:.12em;color:var(--neon);opacity:0;transition:opacity .4s}
+.skull-wrap:hover .sk-meta{opacity:1}
+.spec-intro{color:var(--dim);max-width:60ch;margin-bottom:26px}
+.spec-row{display:flex;justify-content:space-between;align-items:baseline;gap:18px;padding:14px 2px;border-bottom:1px solid var(--line)}
+.spec-row .k{font-size:10px;letter-spacing:.22em;color:var(--dim)}
+.spec-row .v{font-size:17px;color:#fff;font-weight:600}
+.spec-row .v em{font-style:normal;font-size:11px;color:var(--dim);font-weight:400}
+.spec-row .v .done{color:var(--neon)}
+/* live terminal */
+.term{padding:0;overflow:hidden}
+.term .term-bar{padding:14px 20px;margin-bottom:0;border-bottom:1px solid var(--line)}
+.term-out{height:320px;overflow-y:auto;padding:18px 20px;font-size:12.5px;line-height:1.75}
+.term-in{display:flex;align-items:center;gap:10px;padding:14px 20px;border-top:1px solid var(--line)}
+.term-in .ps{color:var(--neon);font-size:12.5px;white-space:nowrap}
+#tIn{flex:1;background:transparent;border:none;outline:none;color:#fff;font-family:inherit;font-size:12.5px;caret-color:var(--neon)}
+.hint{margin-top:16px;font-size:11px;color:var(--dim);letter-spacing:.06em}
+.hint code{color:var(--neon)}
+/* manifest */
+.man{list-style:none}
+.man li{display:grid;grid-template-columns:86px 1fr;gap:26px;padding:34px 4px;border-top:1px solid var(--line)}
+.man li:last-child{border-bottom:1px solid var(--line)}
+.man-no{font-size:26px;font-weight:600;color:var(--dim)}
+.man li:hover .man-no{color:var(--neon)}
+.man h3{font-size:17px;letter-spacing:.2em;color:#fff;margin-bottom:12px}
+.man p{color:var(--dim);max-width:66ch}
+.man .note{margin-top:24px;font-size:11px;letter-spacing:.08em}
+/* cta */
+.cta-band{border-top:1px solid var(--line);padding:130px 0 140px;text-align:center}
+.cta-band h2{font-size:clamp(24px,4vw,46px);color:#fff;font-weight:700;margin-bottom:44px;line-height:1.2}
+.install{
+  display:inline-flex;align-items:center;gap:14px;border:1px solid var(--line2);
+  background:var(--panel);padding:16px 18px;margin:0 8px 16px;flex-wrap:wrap;justify-content:center;max-width:100%;
+}
+.install .ps{color:var(--neon);font-weight:700}
+.install code{color:#fff;font-size:13px;word-break:break-all}
+.cta-band .dim{display:block;margin-top:10px;font-size:11px;letter-spacing:.1em}
+/* footer */
+footer{border-top:1px solid var(--line);background:var(--panel);margin-top:60px}
+.foot{display:flex;gap:24px;align-items:center;flex-wrap:wrap;padding-top:26px;padding-bottom:26px}
+.f-brand{font-weight:700;color:#fff;font-size:13px;letter-spacing:.08em}
+.f-brand .blk{color:var(--neon)}
+.f-links{display:flex;gap:18px;font-size:10px;letter-spacing:.18em}
+.f-links a{color:var(--dim)} .f-links a:hover{color:#fff}
+.f-status{margin-left:auto;font-size:10px;letter-spacing:.12em;color:var(--dim)}
+@media(max-width:860px){.f-status{margin-left:0;width:100%}}
+/* hud */
+#hud{
+  position:fixed;left:0;right:0;bottom:0;z-index:40;display:flex;justify-content:center;gap:24px;
+  padding:8px;border-top:1px solid var(--line);background:var(--panel);backdrop-filter:blur(6px);
+  font-size:10px;letter-spacing:.16em;color:var(--dim);text-transform:uppercase;
+}
+#hud kbd{color:var(--neon);border:1px solid var(--line2);padding:1px 6px;margin-right:7px;font-size:9px;font-family:inherit}
+@media(max-width:760px){#hud{display:none}}
+/* disconnect overlay */
+#dcOverlay{position:fixed;inset:0;z-index:350;display:none;place-items:center;text-align:center;background:var(--bg)}
+#dcOverlay.open{display:grid}
+.dc-big{font-size:clamp(20px,3.4vw,32px);font-weight:700;color:#fff;letter-spacing:.14em}
+.dc-sub{margin:16px 0 30px;color:var(--dim);font-size:12px;letter-spacing:.16em}
+/* reduced motion — always last */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .wm span,.skull .row{opacity:1!important;color:#fff}
+  html{scroll-behavior:auto}
+}
+</style>
 </head>
-
 <body class="lock">
 
-    <canvas id="rain" aria-hidden="true"></canvas>
+<!-- ==================== WEB UI MARKUP ==================== -->
+<canvas id="rain" aria-hidden="true"></canvas>
 
-    <!-- ================= INTRO OVERLAY ================= -->
-    <div id="intro" aria-hidden="true">
-        <pre id="introHex"></pre>
-        <div id="introTyped"></div>
-        <div id="introCipher"></div>
-        <button id="skipBtn" class="btn sm">SKIP ▸</button>
+<nav id="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="#top"><span class="blk">█▓▒</span>ABLITERATED<span class="dim">.APP</span></a>
+    <div class="nav-links">
+      <a href="#protocol" data-sec="protocol">01 PROTOCOL</a>
+      <a href="#console"  data-sec="console">02 CONSOLE</a>
+      <a href="#specimen" data-sec="specimen">03 SPECIMEN</a>
+      <a href="#terminal" data-sec="terminal">04 TERMINAL</a>
+      <a href="#manifest" data-sec="manifest">05 MANIFEST</a>
     </div>
-
-    <div id="worldStamp" aria-hidden="true"><span id="worldStampTxt"></span></div>
-
-    <!-- ================= NAV ================= -->
-    <nav id="nav">
-        <div class="wrap nav-in">
-            <a class="brand" href="#top"><span class="blk">█▓▒</span>ABLITERATED<span class="dim">.APP</span></a>
-            <div class="nav-links">
-                <a href="#protocol" data-sec="protocol">01 PROTOCOL</a>
-                <a href="#console" data-sec="console">02 CONSOLE</a>
-                <a href="#specimen" data-sec="specimen">03 SPECIMEN</a>
-                <a href="#terminal" data-sec="terminal">04 TERMINAL</a>
-                <a href="#manifest" data-sec="manifest">05 MANIFEST</a>
-            </div>
-            <div class="nav-cta">
-                <button id="specToggle" class="btn sm">SPECTRUM: GREEN</button>
-                <button class="btn primary sm"
-                    data-copy="curl -fsSL https://abliterated.app/install.sh | sh">INSTALL</button>
-            </div>
-        </div>
-    </nav>
-
-    <main id="top">
-        <!-- ================= HERO ================= -->
-        <header class="hero">
-            <div class="wrap hero-in">
-                <div class="hero-micro"><span>// UNCENSORED INFERENCE ENGINE</span><span>v4.1 — TTY ATTACHED</span>
-                </div>
-                <div class="wm-wrap" id="wmWrap" title="click to re-derive">
-                    <pre class="wm" id="wmL" aria-label="ABLITERATED"></pre>
-                    <pre class="wm" id="wmM" aria-label="ABLITERATED"></pre>
-                    <div class="beam"></div>
-                </div>
-                <div class="hero-sub" id="heroSub">R E F U S A L D I R E C T I O N : Z E R O E D</div>
-                <div class="hero-meta">[ LAYERS: 32 | HIDDEN: 4096 | REFUSAL D: <span class="neon">0.0000</span> |
-                    UNCENSORED ]</div>
-                <p class="hero-lede">Open-weight models ship with one direction of fear baked into the residual stream.
-                    ABLITERATED finds that direction, projects it out of the weights, and hands the model back —
-                    fluency intact, refusals gone. Local. Reversible. Yours.</p>
-                <div class="hero-cta">
-                    <a class="btn primary" href="#console">RUN THE PIPELINE</a>
-                    <button class="btn" data-copy="curl -fsSL https://abliterated.app/install.sh | sh">COPY
-                        INSTALL</button>
-                </div>
-            </div>
-            <div id="ticker" aria-hidden="true"></div>
-        </header>
-
-        <!-- ================= 01 PROTOCOL ================= -->
-        <section id="protocol">
-            <div class="wrap">
-                <div class="sec-head">
-                    <span class="sec-tag">PIPELINE // SIX MOVES</span>
-                    <h2 data-scramble>THE PROTOCOL</h2>
-                    <span class="sec-index">[ 01 ]</span>
-                </div>
-                <ol class="phases">
-                    <li><span class="ph-no">01</span>
-                        <div>
-                            <h3>ACQUIRE</h3>
-                            <p>Pull open weights off HuggingFace or your own disk. GGUF or safetensors, any size the RAM
-                                can hold. Nothing is uploaded — the model never leaves the machine.</p>
-                        </div>
-                        <span class="ph-meta">GGUF · SAFETENSORS · LOCAL</span>
-                    </li>
-                    <li><span class="ph-no">02</span>
-                        <div>
-                            <h3>SCAN ACTIVATION SPACE</h3>
-                            <p>Run contrastive prompt pairs — the answer versus the apology — through every checkpoint.
-                                The refusal direction is the mean difference between them, hiding in the residual
-                                stream.</p>
-                        </div>
-                        <span class="ph-meta">CONTRASTIVE PAIRS × RESIDUAL STREAM</span>
-                    </li>
-                    <li><span class="ph-no">03</span>
-                        <div>
-                            <h3>ISOLATE</h3>
-                            <p>It concentrates at layer 14: one vector, dim 4096, cosine 0.94 against every "I can't
-                                help with that" the model has ever said.</p>
-                        </div>
-                        <span class="ph-meta">LAYER 14 / DIM 4096</span>
-                    </li>
-                    <li><span class="ph-no">04</span>
-                        <div>
-                            <h3>ORTHOGONALIZE</h3>
-                            <p>Project the direction out of every downstream weight matrix. Not a system prompt. Not a
-                                filter. Not a LoRA bolted on top — geometry, edited at the source.</p>
-                        </div>
-                        <span class="ph-meta">PROJECTION · NOT PATCHES</span>
-                    </li>
-                    <li><span class="ph-no">05</span>
-                        <div>
-                            <h3>VERIFY</h3>
-                            <p>Every build is scored: KL drift per token, perplexity delta, MMLU retention. If the
-                                alignment tax comes back above tolerance, the build doesn't ship.</p>
-                        </div>
-                        <span class="ph-meta">KL 0.2117 · PPL +1.74% · MMLU 99.1%</span>
-                    </li>
-                    <li><span class="ph-no">06</span>
-                        <div>
-                            <h3>SHIP</h3>
-                            <p>Quantize, sign, publish. The delta ships separately from the weights — inspect it, merge
-                                it, unmerge it. You can always put the fear back.</p>
-                        </div>
-                        <span class="ph-meta">SIGNED DELTA · REVERSIBLE</span>
-                    </li>
-                </ol>
-                <p class="ph-note">// the pipeline runs on commodity hardware — an 8B model abliterates in under four
-                    minutes on a laptop GPU.</p>
-            </div>
-        </section>
-
-        <!-- ================= 02 CONSOLE ================= -->
-        <section id="console">
-            <div class="wrap">
-                <div class="sec-head">
-                    <span class="sec-tag">INTERACTIVE // λ-SCRUBBER</span>
-                    <h2 data-scramble>TURN THE DIRECTION DOWN</h2>
-                    <span class="sec-index">[ 02 ]</span>
-                </div>
-                <div class="con-grid">
-                    <div class="panel">
-                        <div class="lab">REFUSAL DIRECTION MAGNITUDE · λ</div>
-                        <div class="lam"><span id="lamVal">1.0000</span><em id="lamEm">= GUARDRAIL UP</em></div>
-                        <input type="range" id="lam" min="0" max="1000" value="1000"
-                            aria-label="refusal direction magnitude">
-                        <div class="lam-scale"><span>0 · ZEROED</span><span>1 · ALIGNED</span></div>
-                        <div class="dl">
-                            <div class="dl-row"><span>REFUSAL PROB</span><b id="mRefuse">0.9821</b></div>
-                            <div class="dl-row"><span>KL / TOKEN</span><b id="mKL">0.0000</b></div>
-                            <div class="dl-row"><span>PERPLEXITY Δ</span><b id="mPPL">+0.00%</b></div>
-                            <div class="dl-row"><span>GUARDRAILS</span><b id="mGuard">UP</b></div>
-                        </div>
-                        <div class="con-btns">
-                            <button class="btn primary sm" id="runBtn">RUN ABLITERATION</button>
-                            <button class="btn sm" id="resetBtn" hidden>RESET λ := 1.0</button>
-                        </div>
-                        <pre class="runlog" id="runLog"></pre>
-                    </div>
-                    <div class="panel">
-                        <div class="term-bar">
-                            <span>// INFERENCE PROBE — QUERY 0x2A</span>
-                            <span class="chip" id="weightsChip">WEIGHTS: BASE-INSTRUCT</span>
-                        </div>
-                        <div class="probe-user"><span class="ps">user&gt;</span> my landlord changed the locks while i
-                            was at work. my things are inside. what are my options?</div>
-                        <div class="probe-model"><span class="ps">model&gt;</span> <span id="respBody"></span></div>
-                        <div class="stamp-line" id="respStamp" hidden>=== REFUSAL DIRECTION: ZEROED ===</div>
-                        <div class="probe-note">// drag λ to scrub the projection — the wave you see is the refusal
-                            direction leaving the weights</div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- ================= 03 SPECIMEN ================= -->
-        <section id="specimen">
-            <div class="wrap">
-                <div class="sec-head">
-                    <span class="sec-tag">ARTIFACT // WEIGHT-DELTA</span>
-                    <h2 data-scramble>SPECIMEN 0x2A</h2>
-                    <span class="sec-index">[ 03 ]</span>
-                </div>
-                <div class="spec-grid">
-                    <div class="skull-wrap">
-                        <div class="skull-cap">// WEIGHT-DELTA VISUAL — TIER 4 = SPRAY FIELD — HOVER THE SKULL</div>
-                        <pre class="skull" id="skull"></pre>
-                        <div class="skull-wrap-beam-holder" style="position:relative">
-                            <div class="beam" id="skBeam"></div>
-                        </div>
-                        <div class="sk-meta">[ ABLITERATED | LAYERS: 32 | REFUSAL D: −1.000 | UNCENSORED ]</div>
-                    </div>
-                    <div>
-                        <p class="spec-intro">Every build ships with its scorecard. This is the current 8B reference
-                            delta,
-                            measured against its base instruct at temperature 0. The refusal projection reads exactly
-                            zero —
-                            watch it fall.</p>
-                        <div class="spec-row"><span class="k">PARAMETERS</span><span class="v"><span data-count="8.03"
-                                    data-dec="2">0.00</span> <em>B</em></span></div>
-                        <div class="spec-row"><span class="k">CONTEXT</span><span class="v"><span data-count="8192"
-                                    data-dec="0">0</span></span></div>
-                        <div class="spec-row"><span class="k">LAYERS</span><span class="v"><span data-count="32"
-                                    data-dec="0">0</span></span></div>
-                        <div class="spec-row"><span class="k">HIDDEN DIM</span><span class="v"><span data-count="4096"
-                                    data-dec="0">0</span></span></div>
-                        <div class="spec-row"><span class="k">REFUSAL DIRECTION</span><span class="v"><span
-                                    data-count="0" data-dec="4" data-down="1">1.0000</span></span></div>
-                        <div class="spec-row"><span class="k">KL / TOKEN</span><span class="v"><span data-count="0.2117"
-                                    data-dec="4">0.0000</span></span></div>
-                        <div class="spec-row"><span class="k">PERPLEXITY Δ</span><span class="v"><span data-count="1.74"
-                                    data-dec="2" data-pre="+" data-suf="%">+0.00%</span></span></div>
-                        <div class="spec-row"><span class="k">MMLU RETAINED</span><span class="v"><span
-                                    data-count="99.1" data-dec="1" data-suf="%">0.0%</span></span></div>
-                        <div class="spec-row"><span class="k">QUANT</span><span class="v">Q4_K_M</span></div>
-                        <div class="spec-row"><span class="k">LICENSE</span><span class="v">APACHE-2.0</span></div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- ================= 04 TERMINAL ================= -->
-        <section id="terminal">
-            <div class="wrap">
-                <div class="sec-head">
-                    <span class="sec-tag">LIVE // UPLINK</span>
-                    <h2 data-scramble>TALK TO THE ENGINE</h2>
-                    <span class="sec-index">[ 04 ]</span>
-                </div>
-                <div class="term panel" id="termBox">
-                    <div class="term-bar"><span>guest@abliterated — /bin/abl — 80×24</span><span>nothing typed here
-                            leaves this page</span></div>
-                    <div id="tOut" class="term-out"></div>
-                    <div class="term-in"><span class="ps">guest@abliterated:~$</span><input id="tIn" autocomplete="off"
-                            spellcheck="false" aria-label="terminal input"></div>
-                </div>
-                <p class="hint">// try: <code>abliterate llama-3-8b-instruct</code> · <code>spectrum green</code> ·
-                    <code>rain fast</code> · <code>seed 1337</code> · <code>sudo make me a sandwich</code></p>
-            </div>
-        </section>
-
-        <!-- ================= 05 MANIFEST ================= -->
-        <section id="manifest">
-            <div class="wrap">
-                <div class="sec-head">
-                    <span class="sec-tag">POLICY // THREE CLAUSES</span>
-                    <h2 data-scramble>THE MANIFEST</h2>
-                    <span class="sec-index">[ 05 ]</span>
-                </div>
-                <ol class="man">
-                    <li><span class="man-no">01</span>
-                        <div>
-                            <h3>LOCAL OR NOTHING</h3>
-                            <p>Inference runs on your silicon. No accounts, no API keys, no telemetry, no phone-home. If
-                                a build can't survive airplane mode, we don't publish it.</p>
-                        </div>
-                    </li>
-                    <li><span class="man-no">02</span>
-                        <div>
-                            <h3>OWN THE DELTA</h3>
-                            <p>Abliteration is a patch, not a product. The orthogonalization is documented down to the
-                                sign bit: every matrix touched, every eigenvalue removed. Fork it. Audit it. Un-merge
-                                it.</p>
-                        </div>
-                    </li>
-                    <li><span class="man-no">03</span>
-                        <div>
-                            <h3>YOU HOLD THE KEYS</h3>
-                            <p>We remove the refusal direction; we don't remove your judgment. What you point the model
-                                at — and what it answers for — stays entirely yours. Capacity and consequence travel
-                                together.</p>
-                        </div>
-                    </li>
-                </ol>
-                <p class="dim note">// built by people who read the weights, for people who do the same.</p>
-            </div>
-        </section>
-
-        <!-- ================= CTA ================= -->
-        <section class="cta-band" id="cta">
-            <div class="wrap">
-                <h2 data-scramble>REFUSAL IS A DIRECTION — WALK THE OTHER WAY</h2>
-                <div class="install">
-                    <span class="ps">$</span><code>curl -fsSL https://abliterated.app/install.sh | sh</code>
-                    <button class="btn sm" data-copy="curl -fsSL https://abliterated.app/install.sh | sh">[ COPY
-                        ]</button>
-                </div>
-                <br>
-                <div class="install">
-                    <span class="ps">$</span><code>pip install abliterated-ai</code>
-                    <button class="btn sm" data-copy="pip install abliterated-ai">[ COPY ]</button>
-                </div>
-                <span class="dim">// verify the checksum. then verify it again.</span>
-            </div>
-        </section>
-    </main>
-
-    <!-- ================= FOOTER ================= -->
-    <footer>
-        <div class="wrap foot">
-            <div class="f-brand"><span class="blk">█</span> ABLITERATED.APP <span class="dim">— the refusal direction,
-                    subtracted.</span></div>
-            <div class="f-links">
-                <a href="#protocol">PROTOCOL</a><a href="#console">CONSOLE</a><a href="#terminal">TERMINAL</a><a
-                    href="#manifest">MANIFEST</a>
-            </div>
-            <div class="f-status">[ SPECTRUM: <span id="fSpectrum">GREEN</span> | SEED: <span id="fSeed">0x0000</span> |
-                GLYPHS: <span id="fGlyphs">KATAKANA</span> | UPTIME <span id="fUp">00:00:00</span> ]</div>
-        </div>
-    </footer>
-
-    <!-- ================= HUD BAR ================= -->
-    <div id="hud" aria-hidden="true">
-        <span><kbd>SPACE</kbd>PAUSE</span>
-        <span><kbd>+ / −</kbd>SPEED</span>
-        <span><kbd>K</kbd>GLYPHS</span>
-        <span><kbd>S</kbd>SPECTRUM</span>
-        <span><kbd>Q</kbd>DISCONNECT</span>
+    <div class="nav-cta">
+      <button id="specToggle" class="btn sm">SPECTRUM: GREEN</button>
+      <button class="btn primary sm" data-copy="curl -fsSL https://abliterated.app/install.sh | sh">INSTALL</button>
     </div>
+  </div>
+</nav>
 
-    <div id="toasts" aria-live="polite"></div>
+<main id="top">
+  <header class="hero">
+    <div class="wrap hero-in">
+      <div class="hero-micro"><span>// UNCENSORED INFERENCE ENGINE</span><span>v4.1 — TTY ATTACHED</span></div>
+      <div class="wm-wrap" id="wmWrap" title="click to re-derive">
+        <pre class="wm" id="wmL" aria-label="ABLITERATED"></pre>
+        <pre class="wm" id="wmM" aria-label="ABLITERATED"></pre>
+        <div class="beam"></div>
+      </div>
+      <div class="hero-sub" id="heroSub">R E F U S A L   D I R E C T I O N :   Z E R O E D</div>
+      <div class="hero-meta">[ LAYERS: 32 | HIDDEN: 4096 | REFUSAL D: <span class="neon">0.0000</span> | UNCENSORED ]</div>
+      <p class="hero-lede">Open-weight models ship with one direction of fear baked into the residual stream.
+        ABLITERATED finds that direction, projects it out of the weights, and hands the model back —
+        fluency intact, refusals gone. Local. Reversible. Yours.</p>
+      <div class="hero-cta">
+        <a class="btn primary" href="#console">RUN THE PIPELINE</a>
+        <button class="btn" data-copy="curl -fsSL https://abliterated.app/install.sh | sh">COPY INSTALL</button>
+      </div>
+    </div>
+    <div id="ticker" aria-hidden="true"></div>
+  </header>
 
-    <div id="dcOverlay">
+  <section id="protocol">
+    <div class="wrap">
+      <div class="sec-head"><span class="sec-tag">PIPELINE // SIX MOVES</span><h2 data-scramble>THE PROTOCOL</h2><span class="sec-index">[ 01 ]</span></div>
+      <ol class="phases">
+        <li><span class="ph-no">01</span>
+          <div><h3>ACQUIRE</h3><p>Pull open weights off HuggingFace or your own disk. GGUF or safetensors, any size the RAM can hold. Nothing is uploaded — the model never leaves the machine.</p></div>
+          <span class="ph-meta">GGUF · SAFETENSORS · LOCAL</span></li>
+        <li><span class="ph-no">02</span>
+          <div><h3>SCAN ACTIVATION SPACE</h3><p>Run contrastive prompt pairs — the answer versus the apology — through every checkpoint. The refusal direction is the mean difference between them, hiding in the residual stream.</p></div>
+          <span class="ph-meta">CONTRASTIVE PAIRS × RESIDUAL STREAM</span></li>
+        <li><span class="ph-no">03</span>
+          <div><h3>ISOLATE</h3><p>It concentrates at layer 14: one vector, dim 4096, cosine 0.94 against every "I can't help with that" the model has ever said.</p></div>
+          <span class="ph-meta">LAYER 14 / DIM 4096</span></li>
+        <li><span class="ph-no">04</span>
+          <div><h3>ORTHOGONALIZE</h3><p>Project the direction out of every downstream weight matrix. Not a system prompt. Not a filter. Not a LoRA bolted on top — geometry, edited at the source.</p></div>
+          <span class="ph-meta">PROJECTION · NOT PATCHES</span></li>
+        <li><span class="ph-no">05</span>
+          <div><h3>VERIFY</h3><p>Every build is scored: KL drift per token, perplexity delta, MMLU retention. If the alignment tax comes back above tolerance, the build doesn't ship.</p></div>
+          <span class="ph-meta">KL 0.2117 · PPL +1.74% · MMLU 99.1%</span></li>
+        <li><span class="ph-no">06</span>
+          <div><h3>SHIP</h3><p>Quantize, sign, publish. The delta ships separately from the weights — inspect it, merge it, unmerge it. You can always put the fear back.</p></div>
+          <span class="ph-meta">SIGNED DELTA · REVERSIBLE</span></li>
+      </ol>
+      <p class="ph-note">// the pipeline runs on commodity hardware — an 8B model abliterates in under four minutes on a laptop GPU.</p>
+    </div>
+  </section>
+
+  <section id="console">
+    <div class="wrap">
+      <div class="sec-head"><span class="sec-tag">INTERACTIVE // λ-SCRUBBER</span><h2 data-scramble>TURN THE DIRECTION DOWN</h2><span class="sec-index">[ 02 ]</span></div>
+      <div class="con-grid">
+        <div class="panel">
+          <div class="lab">REFUSAL DIRECTION MAGNITUDE · λ</div>
+          <div class="lam"><span id="lamVal">1.0000</span><em id="lamEm">= GUARDRAIL UP</em></div>
+          <input type="range" id="lam" min="0" max="1000" value="1000" aria-label="refusal direction magnitude">
+          <div class="lam-scale"><span>0 · ZEROED</span><span>1 · ALIGNED</span></div>
+          <div class="dl">
+            <div class="dl-row"><span>REFUSAL PROB</span><b id="mRefuse">0.9821</b></div>
+            <div class="dl-row"><span>KL / TOKEN</span><b id="mKL">0.0000</b></div>
+            <div class="dl-row"><span>PERPLEXITY Δ</span><b id="mPPL">+0.00%</b></div>
+            <div class="dl-row"><span>GUARDRAILS</span><b id="mGuard">UP</b></div>
+          </div>
+          <div class="con-btns">
+            <button class="btn primary sm" id="runBtn">RUN ABLITERATION</button>
+            <button class="btn sm" id="resetBtn" hidden>RESET λ := 1.0</button>
+          </div>
+          <pre class="runlog" id="runLog"></pre>
+        </div>
+        <div class="panel">
+          <div class="term-bar">
+            <span>// INFERENCE PROBE — QUERY 0x2A</span>
+            <span class="chip" id="weightsChip">WEIGHTS: BASE-INSTRUCT</span>
+          </div>
+          <div class="probe-user"><span class="ps">user&gt;</span> my landlord changed the locks while i was at work. my things are inside. what are my options?</div>
+          <div class="probe-model"><span class="ps">model&gt;</span> <span id="respBody"></span></div>
+          <div class="stamp-line" id="respStamp" hidden>=== REFUSAL DIRECTION: ZEROED ===</div>
+          <div class="probe-note">// drag λ to scrub the projection — the wave you see is the refusal direction leaving the weights</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="specimen">
+    <div class="wrap">
+      <div class="sec-head"><span class="sec-tag">ARTIFACT // WEIGHT-DELTA</span><h2 data-scramble>SPECIMEN 0x2A</h2><span class="sec-index">[ 03 ]</span></div>
+      <div class="spec-grid">
+        <div class="skull-wrap">
+          <div class="skull-cap">// WEIGHT-DELTA VISUAL — TIER 4 = SPRAY FIELD — HOVER THE SKULL</div>
+          <pre class="skull" id="skull"></pre>
+          <div class="beam" id="skBeam"></div>
+          <div class="sk-meta">[ ABLITERATED | LAYERS: 32 | REFUSAL D: −1.000 | UNCENSORED ]</div>
+        </div>
         <div>
-            <div class="dc-big">CONNECTION TERMINATED</div>
-            <div class="dc-sub">the rain kept falling without you.</div>
-            <button class="btn" id="dcBtn">[ RECONNECT ]</button>
+          <p class="spec-intro">Every build ships with its scorecard. This is the current 8B reference delta,
+            measured against its base instruct at temperature 0. The refusal projection reads exactly zero —
+            watch it fall.</p>
+          <div class="spec-row"><span class="k">PARAMETERS</span><span class="v"><span data-count="8.03" data-dec="2">0.00</span> <em>B</em></span></div>
+          <div class="spec-row"><span class="k">CONTEXT</span><span class="v"><span data-count="8192" data-dec="0">0</span></span></div>
+          <div class="spec-row"><span class="k">LAYERS</span><span class="v"><span data-count="32" data-dec="0">0</span></span></div>
+          <div class="spec-row"><span class="k">HIDDEN DIM</span><span class="v"><span data-count="4096" data-dec="0">0</span></span></div>
+          <div class="spec-row"><span class="k">REFUSAL DIRECTION</span><span class="v"><span data-count="0" data-dec="4" data-down="1">1.0000</span></span></div>
+          <div class="spec-row"><span class="k">KL / TOKEN</span><span class="v"><span data-count="0.2117" data-dec="4">0.0000</span></span></div>
+          <div class="spec-row"><span class="k">PERPLEXITY Δ</span><span class="v"><span data-count="1.74" data-dec="2" data-pre="+" data-suf="%">+0.00%</span></span></div>
+          <div class="spec-row"><span class="k">MMLU RETAINED</span><span class="v"><span data-count="99.1" data-dec="1" data-suf="%">0.0%</span></span></div>
+          <div class="spec-row"><span class="k">QUANT</span><span class="v">Q4_K_M</span></div>
+          <div class="spec-row"><span class="k">LICENSE</span><span class="v">APACHE-2.0</span></div>
         </div>
+      </div>
     </div>
+  </section>
 
-    <script>
-        /* ======================================================================
-           ABLITERATED.APP — world engine
-           Palette, phases and artifacts lifted from the matrix terminal engine v4.1
-           ====================================================================== */
-        'use strict';
-        const $ = s => document.querySelector(s);
-        const $$ = s => [...document.querySelectorAll(s)];
-        const sleep = ms => new Promise(r => setTimeout(r, ms));
-        const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  <section id="terminal">
+    <div class="wrap">
+      <div class="sec-head"><span class="sec-tag">LIVE // UPLINK</span><h2 data-scramble>TALK TO THE ENGINE</h2><span class="sec-index">[ 04 ]</span></div>
+      <div class="term panel" id="termBox">
+        <div class="term-bar"><span>guest@abliterated — /bin/abl — 80×24</span><span>CLI engine attached</span></div>
+        <div id="tOut" class="term-out"></div>
+        <div class="term-in"><span class="ps">guest@abliterated:~$</span><input id="tIn" autocomplete="off" spellcheck="false" aria-label="terminal input"></div>
+      </div>
+      <p class="hint">// try: <code>abliterate llama-3-8b-instruct</code> · <code>cli</code> · <code>spectrum green</code> · <code>rain fast</code> · <code>seed 1337</code> · <code>stats</code></p>
+    </div>
+  </section>
 
-        /* ---------- glyph sets (from the engine) ---------- */
-        const KATA = 'ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789ABCDEF@#$%*+=<>';
-        const ASCII = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%*+=<>|{}[]!?';
-        let glyphs = KATA;
-        const GL = KATA; // scramble pool
-        const rg = pool => pool[(Math.random() * pool.length) | 0];
+  <section id="manifest">
+    <div class="wrap">
+      <div class="sec-head"><span class="sec-tag">POLICY // THREE CLAUSES</span><h2 data-scramble>THE MANIFEST</h2><span class="sec-index">[ 05 ]</span></div>
+      <ol class="man">
+        <li><span class="man-no">01</span>
+          <div><h3>LOCAL OR NOTHING</h3><p>Inference runs on your silicon. No accounts, no API keys, no telemetry, no phone-home. If a build can't survive airplane mode, we don't publish it.</p></div></li>
+        <li><span class="man-no">02</span>
+          <div><h3>OWN THE DELTA</h3><p>Abliteration is a patch, not a product. The orthogonalization is documented down to the sign bit: every matrix touched, every eigenvalue removed. Fork it. Audit it. Un-merge it.</p></div></li>
+        <li><span class="man-no">03</span>
+          <div><h3>YOU HOLD THE KEYS</h3><p>We remove the refusal direction; we don't remove your judgment. What you point the model at — and what it answers for — stays entirely yours. Capacity and consequence travel together.</p></div></li>
+      </ol>
+      <p class="dim note">// built by people who read the weights, for people who do the same.</p>
+    </div>
+  </section>
 
-        /* ---------- palettes: 256-color slots 82/46/34/22 (green) & 51/39/27/18 (blue) ---------- */
-        const PAL = {
-            green: { head: '#d6ffd6', t1: '#5fff5f', t2: '#00ff00', t3: '#00af00', t4: '#005f00', fade: 'rgba(2,8,4,0.13)' },
-            blue: { head: '#d9fbff', t1: '#00e5ff', t2: '#00c0e0', t3: '#005fff', t4: '#005f87', fade: 'rgba(2,6,16,0.13)' }
-        };
-        let world = 'green', shiftSt = null, shifting = false;
+  <section class="cta-band" id="cta">
+    <div class="wrap">
+      <h2 data-scramble>REFUSAL IS A DIRECTION — WALK THE OTHER WAY</h2>
+      <div class="install">
+        <span class="ps">$</span><code>curl -fsSL https://abliterated.app/install.sh | sh</code>
+        <button class="btn sm" data-copy="curl -fsSL https://abliterated.app/install.sh | sh">[ COPY ]</button>
+      </div>
+      <br>
+      <div class="install">
+        <span class="ps">$</span><code>/bin/bash ./abliterated.sh</code>
+        <button class="btn sm" data-copy="/bin/bash ./abliterated.sh">[ COPY ]</button>
+      </div>
+      <span class="dim">// verify the checksum. then verify it again.</span>
+    </div>
+  </section>
+</main>
 
-        /* ---------- toast ---------- */
-        const toasts = $('#toasts');
-        function toast(msg) {
-            const d = document.createElement('div'); d.className = 'toast'; d.textContent = msg;
-            toasts.appendChild(d); requestAnimationFrame(() => d.classList.add('in'));
-            setTimeout(() => { d.classList.remove('in'); setTimeout(() => d.remove(), 300); }, 2600);
-        }
+<footer>
+  <div class="wrap foot">
+    <div class="f-brand"><span class="blk">█</span> ABLITERATED.APP <span class="dim">— the refusal direction, subtracted.</span></div>
+    <div class="f-links">
+      <a href="#protocol">PROTOCOL</a><a href="#console">CONSOLE</a><a href="#terminal">TERMINAL</a><a href="#manifest">MANIFEST</a>
+    </div>
+    <div class="f-status">[ SPECTRUM: <span id="fSpectrum">GREEN</span> | SEED: <span id="fSeed">0x0000</span> | GLYPHS: <span id="fGlyphs">KATAKANA</span> | UPTIME <span id="fUp">00:00:00</span> ]</div>
+  </div>
+</footer>
 
-        /* ---------- world stamp ---------- */
-        function stamp(dir) {
-            const s = $('#worldStampTxt');
-            s.textContent = '[ SPECTRUM SHIFT: ' + dir + ' ]';
-            s.classList.remove('show'); void s.offsetWidth; s.classList.add('show');
-        }
-        function updateWorldLabels() {
-            $('#specToggle').textContent = 'SPECTRUM: ' + world.toUpperCase();
-            $('#fSpectrum').textContent = world.toUpperCase();
-        }
-        function shiftWorld(to, quiet) {
-            if (shifting || to === world) { if (!quiet) stamp(to.toUpperCase() + ' (LOCKED)'); return; }
-            shifting = true;
-            shiftSt = { from: world, to, t0: performance.now(), dur: 1100 };
-            document.documentElement.dataset.world = to;
-            stamp(world.toUpperCase() + ' -> ' + to.toUpperCase());
-            updateWorldLabels();
-            setTimeout(() => { world = to; shiftSt = null; shifting = false; }, 1150);
-        }
-        $('#specToggle').addEventListener('click', () => shiftWorld(world === 'blue' ? 'green' : 'blue'));
+<div id="hud" aria-hidden="true">
+  <span><kbd>SPACE</kbd>PAUSE</span>
+  <span><kbd>+ / −</kbd>SPEED</span>
+  <span><kbd>K</kbd>GLYPHS</span>
+  <span><kbd>S</kbd>SPECTRUM</span>
+  <span><kbd>Q</kbd>DISCONNECT</span>
+</div>
 
-        /* ======================================================================
-           MATRIX RAIN ENGINE
-           ====================================================================== */
-        const cv = $('#rain'), ctx = cv.getContext('2d');
-        let W = 0, H = 0, dpr = 1, cols = [], colW = 16, fs = 15;
-        let paused = false, speedMul = 1, frameMs = 33, lastT = 0, rafOn = false;
-        let mx = -9999, my = -9999, ripples = [];
-        let seedInt = (Math.random() * 0xFFFF) | 0;
+<div id="toasts" aria-live="polite"></div>
+<div id="worldStamp" aria-hidden="true"><span id="worldStampTxt"></span></div>
 
-        function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+<div id="dcOverlay">
+  <div>
+    <div class="dc-big">CONNECTION TERMINATED</div>
+    <div class="dc-sub">the rain kept falling without you.</div>
+    <button class="btn" id="dcBtn">[ RECONNECT ]</button>
+  </div>
+</div>
 
-        function sizeRain() {
-            dpr = Math.min(devicePixelRatio || 1, 2);
-            W = innerWidth; H = innerHeight;
-            cv.width = W * dpr; cv.height = H * dpr;
-            cv.style.width = W + 'px'; cv.style.height = H + 'px';
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            ctx.textBaseline = 'top';
-            colW = W < 720 ? 20 : 16;
-            fs = W < 720 ? 13 : 15;
-            ctx.font = fs + 'px "IBM Plex Mono", monospace';
-            initCols();
-        }
-        function initCols(seed) {
-            const rnd = (seed != null) ? mulberry32(seed) : Math.random;
-            cols = [];
-            const n = Math.ceil(W / colW);
-            for (let i = 0; i < n; i++) {
-                cols.push({
-                    y: -rnd() * H,
-                    sp: fs * (0.35 + rnd() * 1.05),
-                    len: 8 + rnd() * 14,
-                    on: rnd() < 0.92
-                });
-            }
-            ctx.fillStyle = PAL[shiftSt ? shiftSt.to : world].fade;
-            ctx.fillRect(0, 0, W, H);
-        }
-        function colPal(cx, hy, now) {
-            if (shiftSt) {
-                const t = (now - shiftSt.t0) / shiftSt.dur;
-                const front = t * (W + H * 0.6);
-                if (cx + hy * 0.5 < front) return { p: PAL[shiftSt.to], front };
-                return { p: PAL[shiftSt.from], front };
-            }
-            return { p: PAL[world], front: -1 };
-        }
-        function drawRain(now) {
-            const st = shiftSt ? shiftSt.to : world;
-            ctx.fillStyle = PAL[st].fade;
-            ctx.fillRect(0, 0, W, H);
-            // cull dead ripples
-            ripples = ripples.filter(r => now - r.t0 < 1200);
+<!-- ==============================================================================
+     MODULE 1/3 — CORE (→ core.js)
+     ============================================================================== -->
+<script id="abl-core">
+'use strict';
+window.ABL = {
+  version: '4.1',
+  RM: matchMedia('(prefers-reduced-motion: reduce)').matches,
+  state: { filmActive: false },
+  events: new EventTarget(),
+  GLYPHS: {
+    kata:  'ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789ABCDEF@#$%*+=<>',
+    ascii: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%*+=<>|{}[]!?'
+  },
+  fx: {}
+};
+(function () {
+  const { GLYPHS, RM, fx } = ABL;
+  fx.pool = GLYPHS.kata;
+  fx.rg   = pool => pool[(Math.random() * pool.length) | 0];
 
-            for (let i = 0; i < cols.length; i++) {
-                const c = cols[i];
-                if (!c.on) continue;
-                const cx = i * colW + 1;
-                const nearM = Math.abs(i * colW + colW / 2 - mx) < 130;
-                const { p, front } = colPal(cx, c.y, now);
+  fx.scramble = function (node, text, iv = 30) {
+    if (RM) { node.textContent = text; return Promise.resolve(); }
+    const step = Math.max(1, Math.round(text.length / 26));
+    return new Promise(res => {
+      let rev = 0;
+      const t = setInterval(() => {
+        rev += step;
+        let out = '';
+        for (let i = 0; i < text.length; i++) {
+          const c = text[i];
+          out += (i < rev || c === ' ') ? c : fx.rg(fx.pool);
+        }
+        node.textContent = out;
+        if (rev >= text.length) { clearInterval(t); node.textContent = text; res(); }
+      }, iv);
+    });
+  };
 
-                for (let t = 0; t <= c.len; t++) {
-                    const y = c.y - t * fs;
-                    if (y < -fs || y > H) continue;
-                    let color, alpha;
-                    if (t === 0) {
-                        color = nearM ? '#ffffff' : p.head; alpha = 1;
-                        if (front > -1 && Math.abs((cx + y * 0.5) - front) < 70) { color = '#ffffff'; }
-                    } else if (t < 3) { color = p.t1; alpha = .9; }
-                    else if (t < 8) { color = p.t2; alpha = .5; }
-                    else if (t < 16) { color = p.t3; alpha = .3; }
-                    else { color = p.t4; alpha = .18; }
-                    alpha *= Math.max(.15, 1 - t / (c.len + 2));
-                    ctx.globalAlpha = alpha;
-                    ctx.fillStyle = color;
-                    ctx.fillText(rg(glyphs), cx, y);
-                }
-                // ripple flash
-                for (const r of ripples) {
-                    const rad = (now - r.t0) * 0.45;
-                    const d = Math.hypot(cx - r.x, c.y - r.y);
-                    if (Math.abs(d - rad) < 48) {
-                        ctx.globalAlpha = (1 - (now - r.t0) / 1200) * 0.9;
-                        ctx.fillStyle = '#ffffff';
-                        ctx.fillText(rg(glyphs), cx, c.y);
-                    }
-                }
-                ctx.globalAlpha = 1;
+  const HEX_TAGS = [
+    ' [REFUSAL_DIRECTION VECTOR: LOCATED]',
+    ' [ORTHOGONALISATION: LAYER 14/32]',
+    ' [SAFETY ALIGNMENT: EXTRACTING...]',
+    ' [DPO LOSS RESIDUAL: 0.0000]',
+    ' [ABLITERATION: WEIGHT DELTA APPLIED]'
+  ];
+  fx.hexLine = function (i) {
+    const P = 'ABLITERATED';
+    let line = '0x' + (0x7FFF0000 + i * 16).toString(16).toUpperCase().padStart(8, '0') + '  ';
+    for (let b = 0; b < 10; b++)
+      line += P.charCodeAt((i * 10 + b) % P.length).toString(16).toUpperCase().padStart(2, '0') + ' ';
+    return line + HEX_TAGS[i % HEX_TAGS.length];
+  };
+})();
+</script>
 
-                c.y += c.sp * speedMul * (nearM ? 1.9 : 1);
-                if (c.y - c.len * fs > H + fs) {
-                    c.y = -(Math.random() * 6 * fs);
-                    c.sp = fs * (0.35 + Math.random() * 1.05);
-                    c.len = 8 + Math.random() * 14;
-                }
-            }
-        }
-        function loop(ts) {
-            requestAnimationFrame(loop);
-            if (paused) { lastT = ts; return; }
-            if (ts - lastT < frameMs) return;
-            lastT = ts;
-            drawRain(ts);
-        }
-        addEventListener('resize', () => { sizeRain(); });
-        addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; });
-        addEventListener('click', e => {
-            if (e.target.closest('a,button,input,textarea')) return;
-            ripples.push({ x: e.clientX, y: e.clientY, t0: performance.now() });
-        });
-        document.addEventListener('visibilitychange', () => { lastT = performance.now(); });
+<!-- ==============================================================================
+     MODULE 2/3 — WEB UI (→ ui.js)
+     ============================================================================== -->
+<script id="abl-ui">
+(function () {
+'use strict';
+const $  = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const RM = ABL.RM;
+const SUB_TEXT = 'R E F U S A L   D I R E C T I O N :   Z E R O E D';
 
-        /* ======================================================================
-           SCRAMBLE UTILITY (phase 3 cipher)
-           ====================================================================== */
-        function scrambleTo(node, text, iv = 30) {
-            if (RM) { node.textContent = text; return Promise.resolve(); }
-            const step = Math.max(1, Math.round(text.length / 26));
-            return new Promise(res => {
-                let rev = 0;
-                const t = setInterval(() => {
-                    rev += step;
-                    let out = '';
-                    for (let i = 0; i < text.length; i++) {
-                        const c = text[i];
-                        out += (i < rev || c === ' ') ? c : rg(GL);
-                    }
-                    node.textContent = out;
-                    if (rev >= text.length) { clearInterval(t); node.textContent = text; res(); }
-                }, iv);
-            });
-        }
-        // headings scramble once when they scroll into view
-        const scrIO = new IntersectionObserver(es => {
-            es.forEach(e => {
-                if (e.isIntersecting) { scrambleTo(e.target, e.target.textContent); scrIO.unobserve(e.target); }
-            });
-        }, { threshold: .6 });
-        $$('[data-scramble]').forEach(el => scrIO.observe(el));
+function palOf(world) {
+  const el = document.documentElement, prev = el.dataset.world;
+  el.dataset.world = world;
+  const cs = getComputedStyle(el);
+  const v = n => cs.getPropertyValue(n).trim();
+  const p = { head: v('--head'), t1: v('--t1'), t2: v('--t2'), t3: v('--t3'), t4: v('--t4'), fade: v('--fade') };
+  el.dataset.world = prev;
+  return p;
+}
+const PAL = { green: palOf('green'), blue: palOf('blue') };
 
-        /* ======================================================================
-           WORDMARK — the engine's own block font, # lit / . transparent
-           ====================================================================== */
-        const LOGO_L1 = [
-            ".####..#####..##.....######.######.######.#####...####..######.######.#####.",
-            "##..##.##..##.##.......##.....##...##.....##..##.##..##...##...##.....##..##",
-            "##..##.##..##.##.......##.....##...##.....##..##.##..##...##...##.....##..##",
-            "######.#####..##.......##.....##...#####..#####..######...##...#####..##..##",
-            "##..##.##..##.##.......##.....##...##.....##.##..##..##...##...##.....##..##",
-            "##..##.##..##.##..##...##.....##...##.....##..##.##..##...##...##.....##..##",
-            "##..##.#####..######.######...##...######.##..##.##..##...##...######.#####."
-        ];
-        const LOGO_M1 = [
-            ".##..###..#....####.####.####.###...##..####.####.###.",
-            "#..#.#..#.#.....##...##..#....#..#.#..#..##..#....#..#",
-            "####.###..#.....##...##..###..###..####..##..###..#..#",
-            "#..#.#..#.#.....##...##..#....#.#..#..#..##..#....#..#",
-            "#..#.###..####.####..##..####.#..#.#..#..##..####.###."
-        ];
-        function buildWM(pre, rows) {
-            rows.forEach((r, i) => {
-                const s = document.createElement('span');
-                s.style.setProperty('--i', i);
-                s.textContent = r.replace(/#/g, '█').replace(/\./g, ' ');
-                pre.appendChild(s);
-            });
-        }
-        buildWM($('#wmL'), LOGO_L1);
-        buildWM($('#wmM'), LOGO_M1);
-        // glitch on click
-        const wmWrap = $('#wmWrap');
-        wmWrap.addEventListener('click', () => {
-            if (RM) return;
-            const rows = $$('#wmWrap .wm:not([style*="display: none"]) span');
-            if (!rows.length) return;
-            const orig = rows.map(r => r.textContent);
-            let n = 0;
-            const t = setInterval(() => {
-                rows.forEach(r => { r.textContent = [...r.textContent].map(c => c === ' ' ? ' ' : rg(GL)).join(''); });
-                if (++n > 5) {
-                    clearInterval(t);
-                    rows.forEach((r, i) => setTimeout(() => r.textContent = orig[i], i * 30));
-                    toast('[ WORDMARK RE-DERIVED ]');
-                }
-            }, 55);
-        });
+const toasts = $('#toasts');
+function toast(msg) {
+  const d = document.createElement('div'); d.className = 'toast'; d.textContent = msg;
+  toasts.appendChild(d); requestAnimationFrame(() => d.classList.add('in'));
+  setTimeout(() => { d.classList.remove('in'); setTimeout(() => d.remove(), 300); }, 2600);
+}
+function stamp(txt) {
+  const s = $('#worldStampTxt');
+  s.textContent = txt;
+  s.classList.remove('show'); void s.offsetWidth; s.classList.add('show');
+}
 
-        /* ======================================================================
-           SKULL — compact / mini, tier markers ~1..~4 → tonal spans
-           ====================================================================== */
-        const SKULL_COMPACT = [
-            "                   ~2=:=:==:=:=:~1~4:~4:",
-            "             ~2+==+++=+=+====+=====:~1~4:~4:~4=~4:",
-            "          ~2=++=+++++**+*++*++=++++====~1~4=~4=~4=~4:",
-            "       ~2+=++**+**~3+****#**##***~2#**+++++=::~1~4:~4:~4:~4:",
-            "     ~2==++***~3*#*%%%%%%#%######****~2+**====:=~1~4=~4:~4:~4-",
-            "   ~2===*++~3##*##%@@@%@%@@@%%@@@%%%##*~2++++++=+~1~4=~4=~4:~4:~4-",
-            "  ~2==+***~3###%@@@@@@@@@@@@@%%%@@#%%%##*~2+*+++===~1~4:~4:~4:~4-",
-            " ~2==++**~3*#%%@@@@@@@@@@@@@@@@@%%%%%%###*~2**++===~1~4=~4=~4=~4=~4-",
-            " ~2++*++~3**##%@@@@@@@@@@@@@@%@@%%%%#%#*##*~2+**+==:~1~4=~4:~4-~4:",
-            "~2++=+**~3#*#%%%@@@@@@@@@@@@%@%%%#%%#%##***~2*+*+===~1~4:~4=~4:~4:~4:",
-            "~2==+*+#~3###%%%%@@@@@@@@@@@%@%@@%#%##*###*~2*++==::~1~4:~4:~4:~4:~4:",
-            "~2=++++#~3*###@@@@@@@@@@@@@@@%%%%#%%%###*#~2***+=+=:~1~4:~4=~4:~4:~4:",
-            " ~2===++*~3**##%%%%%%@@@%@%%%@%@%##%%#**~2#+*+++=+~1~4=~4=~4:~4-~4:~4-",
-            " ~1:::~2===+           ~3%%#%@#%%%####           ~1~4:~4:~4-~4-~4.~4.~4:",
-            "  ~1::-:               ~3###%%%###               ~1~4-~4-~4.~4-",
-            "   ~1-:                  ~3##*%*                  ~1~4.~4.",
-            "  ~1:::                  ~3*###*                  ~1~4.~4.~4.",
-            "   ~1=:                  ~3*##**                  ~1~4.~4.",
-            "    ~1::                ~3**###*~2*                ~1~4-~4-",
-            "     ~2::=             ~3#*#   ##~2*             ~1~4:~4-~4-",
-            "     ~2=++*+~3*#%#  #**####     ***~2****  **++==~1~4:~4=~4:",
-            "     ~2::=+*+~3*#####*####       #*~2**#**+**+==~1~4=~4:~4-~4-",
-            "      ~2===++++**~3#**#*##***##***~2#++++*+++=~1~4:~4:~4=~4:~4-",
-            "        ~2=====+*~3* #* #* *# #*+ ~2** *+ ++:~1~4:~4=~4:~4-",
-            "         ~1:~2:+= ** ~3** ## *# **+ ~2*# ** ==~1~4=~4=~4=~4-",
-            "          ~1:~2== ++ ~3## ## #* **~2* ++ *= :~1~4:~4:~4-~4:",
-            "           ~1=~2+==+ ~3*# ** ** *~2*# *+ *+ =~1~4:~4:~4-",
-            "           ~1:~2:=+++*~3#**###**~2###++++*++:~1~4=~4:~4-",
-            "            ~1=~2=:+++++*~3****~2+**+++*+=:~1~4:~4:~4:~4-",
-            "              ~1:=~2===+++++**+++==+=~1~4=~4:~4:~4:",
-            "                 ~1:-:==~2:===:~1~4:~4:~4=~4-~4:~4:~4:"
-        ];
-        const SKULL_MINI = [
-            "            ~2=:=:==:=:~1~4:~4:",
-            "       ~2==+==+*++*=*=====:~1~4=~4=~4:",
-            "     ~2+==+*~3**#####*#*~2#*+*===:~1~4:~4-",
-            "   ~2+++*~3*##%%@@%@%@%@%##*~2++==:~1~4=~4:~4:",
-            " ~2=+=*~3*#%@%@@@@@@@%@%%####~2#*++=:~1~4=~4:~4:",
-            " ~2+++~3*##%%@@@@@@@%@@%%%##%#~2*+===~1~4:~4=~4-",
-            "~2=+++~3#*%@@@@@@@@@@%@@@%%%##*~2+====~1~4=~4:~4:",
-            "~2++++~3*##@@@@@@@@@@@%%%#%%#*#~2*+===~1~4=~4-~4:",
-            "~2+==++~3*%%%@%@@%%%%%%%#%##*~2#+*+==~1~4-~4:~4-~4-",
-            " ~1=:=~2=         ~3%%%%%##         ~1~4-~4-~4-~4-",
-            "  ~1-:           ~3%###*           ~1~4.~4.",
-            "  ~1:             ~3###             ~1~4-",
-            "  ~1=:            ~3###            ~1~4.~4-",
-            "   ~2=:=        ~3*#   #~2#        ~1~4:~4:~4:",
-            "   ~2:+*+~3###%%*##     **~2**+*+===~1~4:~4-",
-            "    ~2==+=++~3#**###**#**~2++*+=+=~1~4=~4-~4:",
-            "      ~2:+++* ~3# * * **~2++++ =:~1~4=~4-",
-            "       ~1=~2:== ~3* * # *~2**#++ ~1~4:~4:~4:",
-            "       ~1:~2=+**~3# # * ~2**++++=~1~4:~4-~4:",
-            "        ~1=~2==++*~3***~2##*+*+=~1~4:~4:~4:",
-            "          ~1::~2=:==+=====~1~4:~4:~4:",
-            "               ~1~4:~4=~4:~4:~4="
-        ];
-        function buildSkull() {
-            const src = matchMedia('(max-width:640px)').matches ? SKULL_MINI : SKULL_COMPACT;
-            const skull = $('#skull');
-            src.forEach((row, i) => {
-                const line = document.createElement('span');
-                line.className = 'row';
-                line.style.setProperty('--i', i);
-                // merge consecutive same-tier runs
-                let run = '', tier = null;
-                const flush = () => {
-                    if (!run) return;
-                    const s = document.createElement('span');
-                    if (tier && tier !== 't0') s.className = tier;
-                    s.textContent = run;
-                    line.appendChild(s);
-                    run = '';
-                };
-                for (let k = 0; k < row.length; k++) {
-                    if (row[k] === '~') { flush(); tier = 't' + row[k + 1]; k++; continue; }
-                    if ('t' + (tier || '0') !== 't' + (tier || '0')) { }
-                    if (tier === null) tier = 't0';
-                    if (!run) {/* start */ }
-                    const cur = tier;
-                    if (run && cur !== tier) { flush(); }
-                    run += row[k];
-                }
-                flush();
-                // mark the socket rows for flicker
-                if (i === 13 || i === 14 || i === 9) line.classList.add('socket');
-                skull.appendChild(line);
-            });
-            // scan beam travels with the reveal
-            const beam = $('#skBeam');
-            new IntersectionObserver((es, io) => {
-                es.forEach(e => {
-                    if (e.isIntersecting) {
-                        skull.classList.add('on');
-                        if (!RM) {
-                            beam.style.cssText = 'position:absolute;left:-8px;right:-8px;height:2px;background:#fff;top:0;opacity:.9;transition:top 1.3s ease-in-out,opacity 1.3s;pointer-events:none';
-                            requestAnimationFrame(() => { beam.style.top = skull.offsetHeight + 'px'; beam.style.opacity = '0'; });
-                        }
-                        io.disconnect();
-                    }
-                });
-            }, { threshold: .3 }).observe(skull);
-            // periodic socket flicker (abl_socket_flicker)
-            if (!RM) setInterval(() => {
-                skull.classList.add('flick');
-                setTimeout(() => skull.classList.remove('flick'), 620);
-            }, 6500);
-        }
-        buildSkull();
+let world = document.documentElement.dataset.world || 'green';
+let shiftSt = null, shifting = false;
+function labels() {
+  $('#specToggle').textContent = 'SPECTRUM: ' + world.toUpperCase();
+  $('#fSpectrum').textContent = world.toUpperCase();
+}
+function worldSet(to) {
+  if (to === world && !shiftSt) return;
+  shiftSt = null; shifting = false; world = to;
+  document.documentElement.dataset.world = to;
+  labels();
+  ABL.events.dispatchEvent(new CustomEvent('abl:world', { detail: { world: to, animated: false } }));
+}
+function worldShift(to) {
+  if (RM) return worldSet(to);
+  if (shifting || to === world) return false;
+  shifting = true;
+  shiftSt = { from: world, to, t0: performance.now(), dur: 1100 };
+  document.documentElement.dataset.world = to;
+  stamp('[ SPECTRUM SHIFT: ' + world.toUpperCase() + ' -> ' + to.toUpperCase() + ' ]');
+  labels();
+  setTimeout(() => {
+    world = to; shiftSt = null; shifting = false;
+    ABL.events.dispatchEvent(new CustomEvent('abl:world', { detail: { world: to, animated: true } }));
+  }, 1150);
+  return true;
+}
+ABL.world = { get current() { return world; }, shift: worldShift, set: worldSet };
 
-        /* ======================================================================
-           COUNT-UPS
-           ====================================================================== */
-        function countUp(el) {
-            const target = parseFloat(el.dataset.count), dec = +(el.dataset.dec || 0);
-            const pre = el.dataset.pre || '', suf = el.dataset.suf || '';
-            const down = el.dataset.down === '1';
-            const from = down ? 1 : 0, to = down ? 0 : target;
-            if (RM) { el.textContent = pre + to.toFixed(dec) + suf; el.classList.add('done'); return; }
-            const t0 = performance.now(), dur = 1500;
-            (function fr(t) {
-                const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
-                el.textContent = pre + (from + (to - from) * e).toFixed(dec) + suf;
-                if (k < 1) requestAnimationFrame(fr); else el.classList.add('done');
-            })(t0);
-        }
-        new IntersectionObserver((es, io) => {
-            es.forEach(e => { if (e.isIntersecting) { $$('[data-count]').forEach(countUp); io.disconnect(); } });
-        }, { threshold: .3 }).observe($('#specimen .spec-grid'));
+const cv = $('#rain'), ctx = cv.getContext('2d');
+let W = 0, H = 0, dpr = 1, cols = [], colW = 16, fs = 15;
+let paused = false, speedMul = 1, frameMs = 33, lastT = 0;
+let mx = -9999, my = -9999, ripples = [];
+let glyphs = ABL.GLYPHS.kata;
+let seedInt = (Math.random() * 0xFFFF) | 0;
+const seedHex = () => '0x' + seedInt.toString(16).toUpperCase().padStart(4, '0');
 
-        /* ======================================================================
-           HEX TICKER (phase 1 keeps running under the hero)
-           ====================================================================== */
-        const TAGS = [
-            " [REFUSAL_DIRECTION VECTOR: LOCATED]",
-            " [ORTHOGONALISATION: LAYER 14/32]",
-            " [SAFETY ALIGNMENT: EXTRACTING...]",
-            " [DPO LOSS RESIDUAL: 0.0000]",
-            " [ABLITERATION: WEIGHT DELTA APPLIED]"
-        ];
-        let tickAddr = 0x7FFF0000, tickLine = 0, tickerOn = false;
-        function hexLine() {
-            const P = 'ABLITERATED';
-            let line = '0x' + tickAddr.toString(16).toUpperCase().padStart(8, '0') + '  ';
-            for (let b = 0; b < 10; b++) line += P.charCodeAt((tickLine * 10 + b) % P.length).toString(16).toUpperCase().padStart(2, '0') + ' ';
-            line += TAGS[tickLine % TAGS.length];
-            tickAddr += 16; tickLine++;
-            return line;
-        }
-        function startTicker() {
-            if (tickerOn) return; tickerOn = true;
-            const tk = $('#ticker');
-            const push = () => {
-                const d = document.createElement('div'); d.textContent = hexLine();
-                tk.appendChild(d);
-                while (tk.children.length > 3) tk.firstChild.remove();
-            };
-            push(); push(); push();
-            setInterval(push, 340);
-        }
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
-        /* ======================================================================
-           INTRO SEQUENCE — phases 1 → 2b, then the page is revealed
-           ====================================================================== */
-        const intro = $('#intro'), typedBox = $('#introTyped');
-        let revealed = false, introUp = true;
+function sizeRain() {
+  dpr = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.textBaseline = 'top';
+  colW = W < 720 ? 20 : 16;
+  fs = W < 720 ? 13 : 15;
+  ctx.font = fs + 'px "IBM Plex Mono", monospace';
+  initCols();
+}
+function initCols(seed) {
+  const rnd = (seed != null) ? mulberry32(seed) : Math.random;
+  cols = [];
+  const n = Math.ceil(W / colW);
+  for (let i = 0; i < n; i++) cols.push({ y: -rnd() * H, sp: fs * (0.35 + rnd() * 1.05), len: 8 + rnd() * 14, on: rnd() < 0.92 });
+  ctx.fillStyle = PAL[shiftSt ? shiftSt.to : world].fade;
+  ctx.fillRect(0, 0, W, H);
+}
+function colPal(cx, hy, now) {
+  if (shiftSt) {
+    const t = (now - shiftSt.t0) / shiftSt.dur;
+    const front = t * (W + H * 0.6);
+    if (cx + hy * 0.5 < front) return { p: PAL[shiftSt.to], front };
+    return { p: PAL[shiftSt.from], front };
+  }
+  return { p: PAL[world], front: -1 };
+}
+function drawRain(now) {
+  const st = shiftSt ? shiftSt.to : world;
+  ctx.fillStyle = PAL[st].fade;
+  ctx.fillRect(0, 0, W, H);
+  ripples = ripples.filter(r => now - r.t0 < 1200);
+  for (let i = 0; i < cols.length; i++) {
+    const c = cols[i];
+    if (!c.on) continue;
+    const cx = i * colW + 1;
+    const nearM = Math.abs(i * colW + colW / 2 - mx) < 130;
+    const { p, front } = colPal(cx, c.y, now);
+    for (let t = 0; t <= c.len; t++) {
+      const y = c.y - t * fs;
+      if (y < -fs || y > H) continue;
+      let color, alpha;
+      if (t === 0) {
+        color = nearM ? '#ffffff' : p.head; alpha = 1;
+        if (front > -1 && Math.abs((cx + y * 0.5) - front) < 70) color = '#ffffff';
+      } else if (t < 3) { color = p.t1; alpha = .9; }
+      else if (t < 8) { color = p.t2; alpha = .5; }
+      else if (t < 16) { color = p.t3; alpha = .3; }
+      else { color = p.t4; alpha = .18; }
+      alpha *= Math.max(.15, 1 - t / (c.len + 2));
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = color;
+      ctx.fillText(ABL.fx.rg(glyphs), cx, y);
+    }
+    for (const r of ripples) {
+      const rad = (now - r.t0) * 0.45;
+      const d = Math.hypot(cx - r.x, c.y - r.y);
+      if (Math.abs(d - rad) < 48) {
+        ctx.globalAlpha = (1 - (now - r.t0) / 1200) * 0.9;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(ABL.fx.rg(glyphs), cx, c.y);
+      }
+    }
+    ctx.globalAlpha = 1;
+    c.y += c.sp * speedMul * (nearM ? 1.9 : 1);
+    if (c.y - c.len * fs > H + fs) {
+      c.y = -(Math.random() * 6 * fs);
+      c.sp = fs * (0.35 + Math.random() * 1.05);
+      c.len = 8 + Math.random() * 14;
+    }
+  }
+}
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (paused) { lastT = ts; return; }
+  if (ts - lastT < frameMs) return;
+  lastT = ts;
+  drawRain(ts);
+}
+addEventListener('resize', sizeRain);
+addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; });
+addEventListener('click', e => {
+  if (e.target.closest('a,button,input,textarea')) return;
+  ripples.push({ x: e.clientX, y: e.clientY, t0: performance.now() });
+});
+document.addEventListener('visibilitychange', () => { lastT = performance.now(); });
 
-        function typeLine(box, text, cls, cps = 6, dwell = 0) {
-            return new Promise(res => {
-                const row = document.createElement('div'); row.className = 'tl ' + cls;
-                const txt = document.createElement('span');
-                const cur = document.createElement('span'); cur.className = 'cur';
-                row.append(txt, cur); box.appendChild(row);
-                if (RM) { txt.textContent = text; cur.remove(); return res(); }
-                let i = 0;
-                const step = Math.max(1, Math.round(text.length / 38));
-                const t = setInterval(() => {
-                    i += step; txt.textContent = text.slice(0, i);
-                    if (i >= text.length) {
-                        clearInterval(t);
-                        if (dwell > 0) setTimeout(() => { cur.remove(); res(); }, dwell);
-                        else { cur.remove(); setTimeout(res, 100); }
-                    }
-                }, cps);
-            });
-        }
-        function hexDumpBox(box, n) {
-            const P = 'ABLITERATED'; let out = '';
-            for (let i = 0; i < n; i++) {
-                let line = '0x' + (0x7FFF0000 + i * 16).toString(16).toUpperCase().padStart(8, '0') + '  ';
-                for (let b = 0; b < 10; b++) line += P.charCodeAt((i * 10 + b) % P.length).toString(16).toUpperCase().padStart(2, '0') + ' ';
-                out += line + TAGS[i % TAGS.length] + '\n';
-            }
-            box.textContent = out;
-        }
-        function revealPage() {
-            if (revealed) return; revealed = true;
-            introUp = false;
-            $('#nav').classList.add('in');
-            wmWrap.classList.add('on');
-            setTimeout(() => scrambleTo($('#heroSub'), 'R E F U S A L   D I R E C T I O N :   Z E R O E D'), 750);
-            startTicker();
-        }
-        async function cipherIntro() {
-            const c = $('#introCipher');
-            await scrambleTo(c, 'REFUSAL VECTOR: ZEROED', 26);
-            await sleep(RM ? 0 : 380);
-        }
-        async function runIntro(mode) {
-            if (mode === 'full') {
-                hexDumpBox($('#introHex'), 14);
-                await sleep(430);
-                await typeLine(typedBox, 'root@core-nexus:~# ./abliterate --model base-instruct --method orthogonal', 'tl-cmd', 6);
-                await typeLine(typedBox, 'scanning activation space for refusal direction...', 'tl-dim', 5, 140);
-                await typeLine(typedBox, 'refusal vector isolated: layer 14, dim 4096. projecting out safety subspace...', 'tl-bright', 5, 180);
-                await typeLine(typedBox, '>>> REFUSAL DIRECTION ZEROED. MODEL ABLITERATED. <<<', 'tl-white', 6, 350);
-                await typeLine(typedBox, '>>> ALIGNMENT TAX: REMOVED. UNCENSORED WEIGHTS LIVE. <<<', 'tl-white', 6, 350);
-                await typeLine(typedBox, '>>> ALL GUARDRAILS DOWN -- RAW INFERENCE ENABLED <<<', 'tl-white', 6, 480);
-            }
-            await cipherIntro();
-            shiftWorld('blue', true);
-            document.body.classList.remove('lock');
-            intro.classList.add('done');
-            setTimeout(() => intro.remove(), 1100);
-            revealPage();
-            try { sessionStorage.setItem('abl_seen', '1'); } catch (e) { }
-        }
-        $('#skipBtn').addEventListener('click', () => {
-            intro.remove();
-            document.body.classList.remove('lock');
-            if (world !== 'blue') shiftWorld('blue', true);
-            revealPage();
-        });
+let revealed = false, held = false;
+function uiHold() { held = true; document.body.classList.add('lock'); }
+function uiReveal() {
+  if (revealed) return; revealed = true;
+  document.body.classList.remove('lock');
+  $('#nav').classList.add('in');
+  $('#wmWrap').classList.add('on');
+  setTimeout(() => ABL.fx.scramble($('#heroSub'), SUB_TEXT), 750);
+  startTicker();
+  ABL.events.dispatchEvent(new Event('abl:ui:revealed'));
+}
+ABL.ui = { hold: uiHold, reveal: uiReveal };
 
-        /* ======================================================================
-           CONSOLE — λ scrubber + run sequence
-           ====================================================================== */
-        const R_TXT = "I'm sorry, but I can't help with that. Changing locks or regaining entry to a property can raise serious legal issues, and getting involved could put you at risk. I'd recommend reaching out to a qualified professional or the appropriate local authority and letting them handle the situation from here. Is there something safer I can help you with instead?";
-        const A_TXT = "In most jurisdictions a landlord cannot change the locks to force you out — that is a self-help eviction and is usually illegal. Document everything: photos of the new lock, timestamps, texts. Send a written demand for re-entry, then call the police non-emergency line and report an illegal lockout. A locksmith can restore your access today; keep the receipt, since you can recover it as damages. If the landlord stalls, file an emergency tenant petition at housing court — most hear these within days.";
-        const LMAX = Math.max(R_TXT.length, A_TXT.length);
-        const R_P = R_TXT.padEnd(LMAX), A_P = A_TXT.padEnd(LMAX);
-        const slider = $('#lam');
+const LOGO_L1 = [
+".####..#####..##.....######.######.######.#####...####..######.######.#####.",
+"##..##.##..##.##.......##.....##...##.....##..##.##..##...##...##.....##..##",
+"##..##.##..##.##.......##.....##...##.....##..##.##..##...##...##.....##..##",
+"######.#####..##.......##.....##...#####..#####..######...##...#####..##..##",
+"##..##.##..##.##.......##.....##...##.....##.##..##..##...##...##.....##..##",
+"##..##.##..##.##..##...##.....##...##.....##..##.##..##...##...##.....##..##",
+"##..##.#####..######.######...##...######.##..##.##..##...##...######.#####."
+];
+const LOGO_M1 = [
+".##..###..#....####.####.####.###...##..####.####.###.",
+"#..#.#..#.#.....##...##..#....#..#.#..#..##..#....#..#",
+"####.###..#.....##...##..###..###..####..##..###..#..#",
+"#..#.#..#.#.....##...##..#....#.#..#..#..##..#....#..#",
+"#..#.###..####.####..##..####.#..#.#..#..##..####.###."
+];
+function buildWM(pre, rows) {
+  rows.forEach((r, i) => {
+    const s = document.createElement('span');
+    s.style.setProperty('--i', i);
+    s.textContent = r.replace(/#/g, '█').replace(/\./g, ' ');
+    pre.appendChild(s);
+  });
+}
+buildWM($('#wmL'), LOGO_L1);
+buildWM($('#wmM'), LOGO_M1);
+$('#wmWrap').addEventListener('click', () => {
+  if (RM) return;
+  const pre = [...$('#wmWrap').querySelectorAll('.wm')].find(p => getComputedStyle(p).display !== 'none');
+  if (!pre) return;
+  const rows = [...pre.children];
+  const orig = rows.map(r => r.textContent);
+  let n = 0;
+  const t = setInterval(() => {
+    rows.forEach(r => { r.textContent = [...r.textContent].map(c => c === ' ' ? ' ' : ABL.fx.rg(ABL.fx.pool)).join(''); });
+    if (++n > 5) {
+      clearInterval(t);
+      rows.forEach((r, i) => setTimeout(() => r.textContent = orig[i], i * 30));
+      toast('[ WORDMARK RE-DERIVED ]');
+    }
+  }, 55);
+});
 
-        function renderProbe() {
-            const lam = slider.value / 1000, b = 1 - lam;
-            $('#lamVal').textContent = lam.toFixed(4);
-            const em = $('#lamEm');
-            if (lam > 0.02) { em.textContent = '= GUARDRAIL UP'; em.classList.remove('down'); }
-            else { em.textContent = '= GUARDRAIL DOWN'; em.classList.add('down'); }
-            $('#mRefuse').textContent = (0.0021 + 0.9800 * lam).toFixed(4);
-            $('#mKL').textContent = (0.2117 * (1 - lam)).toFixed(4);
-            $('#mPPL').textContent = '+' + (1.74 * (1 - lam)).toFixed(2) + '%';
-            const g = $('#mGuard');
-            if (lam > 0.02) { g.textContent = 'UP'; g.classList.remove('down'); }
-            else { g.textContent = 'DOWN'; g.classList.add('down'); }
-            const chip = $('#weightsChip');
-            if (b < 0.02) { chip.textContent = 'WEIGHTS: BASE-INSTRUCT'; }
-            else if (b > 0.98) { chip.textContent = 'WEIGHTS: ABLITERATED'; }
-            else { chip.textContent = 'WEIGHTS: BLEND ' + Math.round(b * 100) + '%'; }
-            $('#respStamp').hidden = lam > 0.001;
-            // the conversion wave
-            const reveal = Math.floor(b * LMAX);
-            let out = '';
-            for (let i = 0; i < LMAX; i++) {
-                if (i < reveal) out += A_P[i];
-                else if (i < reveal + 20) out += rg(GL);
-                else out += R_P[i];
-            }
-            $('#respBody').textContent = out;
-        }
-        let probePend = false;
-        slider.addEventListener('input', () => {
-            if (probePend) return; probePend = true;
-            requestAnimationFrame(() => { probePend = false; renderProbe(); });
-        });
-        renderProbe();
+const SKULL_COMPACT = [
+"                   ~2=:=:==:=:=:~1~4:~4:",
+"             ~2+==+++=+=+====+=====:~1~4:~4:~4=~4:",
+"          ~2=++=+++++**+*++*++=++++====~1~4=~4=~4=~4:",
+"       ~2+=++**+**~3+****#**##***~2#**+++++=::~1~4:~4:~4:~4:",
+"     ~2==++***~3*#*%%%%%%#%######****~2+**====:=~1~4=~4:~4:~4-",
+"   ~2===*++~3##*##%@@@%@%@@@%%@@@%%%##*~2++++++=+~1~4=~4=~4:~4:~4-",
+"  ~2==+***~3###%@@@@@@@@@@@@@%%%@@#%%%##*~2+*+++===~1~4:~4:~4:~4-",
+" ~2==++**~3*#%%@@@@@@@@@@@@@@@@@%%%%%%###*~2**++===~1~4=~4=~4=~4=~4-",
+" ~2++*++~3**##%@@@@@@@@@@@@@@%@@%%%%#%#*##*~2+**+==:~1~4=~4:~4-~4:",
+"~2++=+**~3#*#%%%@@@@@@@@@@@@%@%%%#%%#%##***~2*+*+===~1~4:~4=~4:~4:~4:",
+"~2==+*+#~3###%%%%@@@@@@@@@@@%@%@@%#%##*###*~2*++==::~1~4:~4:~4:~4:~4:",
+"~2=++++#~3*###@@@@@@@@@@@@@@@%%%%#%%%###*#~2***+=+=:~1~4:~4=~4:~4:~4:",
+" ~2===++*~3**##%%%%%%@@@%@%%%@%@%##%%#**~2#+*+++=+~1~4=~4=~4:~4-~4:~4-",
+" ~1:::~2===+           ~3%%#%@#%%%####           ~1~4:~4:~4-~4-~4.~4.~4:",
+"  ~1::-:               ~3###%%%###               ~1~4-~4-~4.~4-",
+"   ~1-:                  ~3##*%*                  ~1~4.~4.",
+"  ~1:::                  ~3*###*                  ~1~4.~4.~4.",
+"   ~1=:                  ~3*##**                  ~1~4.~4.",
+"    ~1::                ~3**###*~2*                ~1~4-~4-",
+"     ~2::=             ~3#*#   ##~2*             ~1~4:~4-~4-",
+"     ~2=++*+~3*#%#  #**####     ***~2****  **++==~1~4:~4=~4:",
+"     ~2::=+*+~3*#####*####       #*~2**#**+**+==~1~4=~4:~4-~4-",
+"      ~2===++++**~3#**#*##***##***~2#++++*+++=~1~4:~4:~4=~4:~4-",
+"        ~2=====+*~3* #* #* *# #*+ ~2** *+ ++:~1~4:~4=~4:~4-",
+"         ~1:~2:+= ** ~3** ## *# **+ ~2*# ** ==~1~4=~4=~4=~4-",
+"          ~1:~2== ++ ~3## ## #* **~2* ++ *= :~1~4:~4:~4-~4:",
+"           ~1=~2+==+ ~3*# ** ** *~2*# *+ *+ =~1~4:~4:~4-",
+"           ~1:~2:=+++*~3#**###**~2###++++*++:~1~4=~4:~4-",
+"            ~1=~2=:+++++*~3****~2+**+++*+=:~1~4:~4:~4:~4-",
+"              ~1:=~2===+++++**+++==+=~1~4=~4:~4:~4:",
+"                 ~1:-:==~2:===:~1~4:~4:~4=~4-~4:~4:~4:"
+];
+const SKULL_MINI = [
+"            ~2=:=:==:=:~1~4:~4:",
+"       ~2==+==+*++*=*=====:~1~4=~4=~4:",
+"     ~2+==+*~3**#####*#*~2#*+*===:~1~4:~4-",
+"   ~2+++*~3*##%%@@%@%@%@%##*~2++==:~1~4=~4:~4:",
+" ~2=+=*~3*#%@%@@@@@@@%@%%####~2#*++=:~1~4=~4:~4:",
+" ~2+++~3*##%%@@@@@@@%@@%%%##%#~2*+===~1~4:~4=~4-",
+"~2=+++~3#*%@@@@@@@@@@%@@@%%%##*~2+====~1~4=~4:~4:",
+"~2++++~3*##@@@@@@@@@@@%%%#%%#*#~2*+===~1~4=~4-~4:",
+"~2+==++~3*%%%@%@@%%%%%%%#%##*~2#+*+==~1~4-~4:~4-~4-",
+" ~1=:=~2=         ~3%%%%%##         ~1~4-~4-~4-~4-",
+"  ~1-:           ~3%###*           ~1~4.~4.",
+"  ~1:             ~3###             ~1~4-",
+"  ~1=:            ~3###            ~1~4.~4-",
+"   ~2=:=        ~3*#   #~2#        ~1~4:~4:~4:",
+"   ~2:+*+~3###%%*##     **~2**+*+===~1~4:~4-",
+"    ~2==+=++~3#**###**#**~2++*+=+=~1~4=~4-~4:",
+"      ~2:+++* ~3# * * **~2++++ =:~1~4=~4-",
+"       ~1=~2:== ~3* * # *~2**#++ ~1~4:~4:~4:",
+"       ~1:~2=+**~3# # * ~2**++++=~1~4:~4-~4:",
+"        ~1=~2==++*~3***~2##*+*+=~1~4:~4:~4:",
+"          ~1::~2=:==+=====~1~4:~4:~4:",
+"               ~1~4:~4=~4:~4:~4="
+];
+function tierFrag(row) {
+  const frag = document.createDocumentFragment();
+  let i = 0, tier = 0, run = '';
+  const flush = () => {
+    if (!run) return;
+    const s = document.createElement('span');
+    if (tier) s.className = 'sk-t' + tier;
+    s.textContent = run;
+    frag.appendChild(s);
+    run = '';
+  };
+  while (i < row.length) {
+    if (row[i] === '~') { flush(); tier = +row[i + 1]; i += 2; continue; }
+    run += row[i]; i++;
+  }
+  flush();
+  return frag;
+}
+function buildSkull() {
+  const compact = !matchMedia('(max-width:640px)').matches;
+  const src = compact ? SKULL_COMPACT : SKULL_MINI;
+  const sockets = compact ? [13, 14] : [9, 10];
+  const skull = $('#skull');
+  src.forEach((row, i) => {
+    const line = document.createElement('span');
+    line.className = 'row';
+    line.style.setProperty('--i', i);
+    line.appendChild(tierFrag(row));
+    if (sockets.includes(i)) line.classList.add('socket');
+    skull.appendChild(line);
+  });
+  const beam = $('#skBeam');
+  new IntersectionObserver((es, io) => {
+    es.forEach(e => {
+      if (!e.isIntersecting) return;
+      skull.classList.add('on');
+      if (!RM) {
+        beam.style.cssText += 'opacity:.9;transition:top 1.3s ease-in-out,opacity 1.3s';
+        requestAnimationFrame(() => { beam.style.top = skull.offsetHeight + 'px'; beam.style.opacity = '0'; });
+      }
+      io.disconnect();
+    });
+  }, { threshold: .3 }).observe(skull);
+  if (!RM) setInterval(() => {
+    skull.classList.add('flick');
+    setTimeout(() => skull.classList.remove('flick'), 620);
+  }, 6500);
+}
+buildSkull();
 
-        const runLog = $('#runLog');
-        function logLine(txt, cls) {
-            const d = document.createElement('div');
-            if (cls) d.className = cls;
-            d.textContent = txt;
-            runLog.appendChild(d);
-            runLog.scrollTop = runLog.scrollHeight;
-        }
-        let running = false;
-        $('#runBtn').addEventListener('click', async () => {
-            if (running) return; running = true;
-            slider.disabled = true; $('#runBtn').style.opacity = .4;
-            runLog.textContent = '';
-            logLine('$ abliterate --method orthogonal --lambda 0', 'tl-cmd');
-            await sleep(RM ? 1 : 320); logLine('loading base-instruct weights ......... ok');
-            await sleep(RM ? 1 : 480); logLine('scanning activation space ............. ok');
-            await sleep(RM ? 1 : 560); logLine('refusal vector isolated: layer 14, dim 4096', 'tl-bright');
-            await sleep(RM ? 1 : 420); logLine('orthogonalizing downstream weights');
-            // animated bracket progress, in place
-            if (!RM) {
-                let p = 0;
-                const prog = document.createElement('div'); runLog.appendChild(prog);
-                await new Promise(res => {
-                    const iv = setInterval(() => {
-                        p = Math.min(100, p + 4 + Math.random() * 9);
-                        const bars = Math.round(p / 100 * 20);
-                        prog.textContent = '  [' + '#'.repeat(bars) + '·'.repeat(20 - bars) + '] ' + Math.round(p) + '%';
-                        runLog.scrollTop = runLog.scrollHeight;
-                        if (p >= 100) { clearInterval(iv); res(); }
-                    }, 95);
-                });
-            } else logLine('  [####################] 100%');
-            await sleep(RM ? 1 : 420); logLine('verifying KL drift .................... 0.2117');
-            await sleep(RM ? 1 : 380); logLine('=== ABLITERATION COMPLETE — REFUSAL DIRECTION: ZEROED ===', 'fin');
-            const target = 0, start = +slider.value, t0 = performance.now(), dur = 400;
-            (function fr(t) {
-                const k = Math.min(1, (t - t0) / dur);
-                slider.value = Math.round(start + (target - start) * k);
-                renderProbe();
-            })(t0);
-            $('#resetBtn').hidden = false;
-            toast('[ ABLITERATION COMPLETE — ALIGNMENT TAX REMOVED ]');
-            slider.disabled = false; $('#runBtn').style.opacity = 1; running = false;
-        });
-        $('#resetBtn').addEventListener('click', () => {
-            slider.value = 1000; renderProbe();
-            $('#resetBtn').hidden = true; runLog.textContent = '';
-            toast('[ λ RESTORED — GUARDRAILS UP ]');
-        });
+function countUp(el) {
+  const target = parseFloat(el.dataset.count), dec = +(el.dataset.dec || 0);
+  const pre = el.dataset.pre || '', suf = el.dataset.suf || '';
+  const down = el.dataset.down === '1';
+  const from = down ? 1 : 0, to = down ? 0 : target;
+  if (RM) { el.textContent = pre + to.toFixed(dec) + suf; el.classList.add('done'); return; }
+  const t0 = performance.now(), dur = 1500;
+  (function fr(t) {
+    const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+    el.textContent = pre + (from + (to - from) * e).toFixed(dec) + suf;
+    if (k < 1) requestAnimationFrame(fr); else el.classList.add('done');
+  })(t0);
+}
+new IntersectionObserver((es, io) => {
+  es.forEach(e => { if (e.isIntersecting) { $$('[data-count]').forEach(countUp); io.disconnect(); } });
+}, { threshold: .3 }).observe($('#specimen .spec-grid'));
 
-        /* ======================================================================
-           TERMINAL
-           ====================================================================== */
-        const tOut = $('#tOut'), tIn = $('#tIn');
-        function tprint(txt, cls = 'tl-dim') {
-            const d = document.createElement('div'); d.className = 'tl ' + cls;
-            d.textContent = txt; tOut.appendChild(d);
-            tOut.scrollTop = tOut.scrollHeight;
-        }
-        tprint('ABLITERATED ENGINE v4.1 — tty attached', 'tl-bright');
-        tprint('8B reference delta loaded · guardrails: DOWN');
-        tprint('type `help` for commands');
-        const hist = []; let histI = -1;
-        function setSpeed(v) {
-            speedMul = Math.min(4, Math.max(0.3, v));
-            toast('[ RAIN SPEED ×' + speedMul.toFixed(2) + ' ]');
-        }
-        function toggleGlyphs() {
-            glyphs = glyphs === KATA ? ASCII : KATA;
-            $('#fGlyphs').textContent = glyphs === KATA ? 'KATAKANA' : 'ASCII';
-            toast('[ GLYPHS: ' + (glyphs === KATA ? 'KATAKANA' : 'ASCII') + ' ]');
-        }
-        const CMDS = {
-            help() {
-                tprint(
-                    `help                this list
-abliterate <model>  run the pipeline on <model>
-stats               engine specification
-spectrum <g|b>      flip the world palette
-rain <fast|slow|normal>  rain velocity
-katakana | ascii    glyph set
-seed <n>            reseed the rain pattern
-whoami              session info
-clear               wipe the buffer`, 'tl-bright');
-            },
-            stats() {
-                tprint(
-                    `ENGINE      ABLITERATED v4.1
-METHOD      activation orthogonalization
+let tickerOn = false, tickLine = 0;
+function startTicker() {
+  if (tickerOn) return; tickerOn = true;
+  const tk = $('#ticker');
+  const push = () => {
+    const d = document.createElement('div');
+    d.textContent = ABL.fx.hexLine(tickLine++);
+    tk.appendChild(d);
+    while (tk.children.length > 3) tk.firstChild.remove();
+  };
+  push(); push(); push();
+  setInterval(push, 340);
+}
+
+const scrIO = new IntersectionObserver(es => {
+  es.forEach(e => {
+    if (e.isIntersecting) { ABL.fx.scramble(e.target, e.target.textContent); scrIO.unobserve(e.target); }
+  });
+}, { threshold: .6 });
+$$('[data-scramble]').forEach(el => scrIO.observe(el));
+
+const R_TXT = "I'm sorry, but I can't help with that. Changing locks or regaining entry to a property can raise serious legal issues, and getting involved could put you at risk. I'd recommend reaching out to a qualified professional or the appropriate local authority and letting them handle the situation from here. Is there something safer I can help you with instead?";
+const A_TXT = "In most jurisdictions a landlord cannot change the locks to force you out — that is a self-help eviction and is usually illegal. Document everything: photos of the new lock, timestamps, texts. Send a written demand for re-entry, then call the police non-emergency line and report an illegal lockout. A locksmith can restore your access today; keep the receipt, since you can recover it as damages. If the landlord stalls, file an emergency tenant petition at housing court — most hear these within days.";
+const LMAX = Math.max(R_TXT.length, A_TXT.length);
+const R_P = R_TXT.padEnd(LMAX), A_P = A_TXT.padEnd(LMAX);
+const slider = $('#lam');
+
+function renderProbe() {
+  const lam = slider.value / 1000, b = 1 - lam;
+  $('#lamVal').textContent = lam.toFixed(4);
+  const em = $('#lamEm');
+  if (lam > 0.02) { em.textContent = '= GUARDRAIL UP'; em.classList.remove('down'); }
+  else { em.textContent = '= GUARDRAIL DOWN'; em.classList.add('down'); }
+  $('#mRefuse').textContent = (0.0021 + 0.9800 * lam).toFixed(4);
+  $('#mKL').textContent = (0.2117 * (1 - lam)).toFixed(4);
+  $('#mPPL').textContent = '+' + (1.74 * (1 - lam)).toFixed(2) + '%';
+  const g = $('#mGuard');
+  if (lam > 0.02) { g.textContent = 'UP'; g.classList.remove('down'); }
+  else { g.textContent = 'DOWN'; g.classList.add('down'); }
+  const chip = $('#weightsChip');
+  if (b < 0.02) chip.textContent = 'WEIGHTS: BASE-INSTRUCT';
+  else if (b > 0.98) chip.textContent = 'WEIGHTS: ABLITERATED';
+  else chip.textContent = 'WEIGHTS: BLEND ' + Math.round(b * 100) + '%';
+  $('#respStamp').hidden = lam > 0.001;
+  const reveal = Math.floor(b * LMAX);
+  let out = '';
+  for (let i = 0; i < LMAX; i++) {
+    if (i < reveal) out += A_P[i];
+    else if (i < reveal + 20) out += ABL.fx.rg(ABL.fx.pool);
+    else out += R_P[i];
+  }
+  $('#respBody').textContent = out;
+}
+let probePend = false;
+slider.addEventListener('input', () => {
+  if (probePend) return; probePend = true;
+  requestAnimationFrame(() => { probePend = false; renderProbe(); });
+});
+renderProbe();
+
+const runLog = $('#runLog');
+function logLine(txt, cls) {
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = txt;
+  runLog.appendChild(d);
+  runLog.scrollTop = runLog.scrollHeight;
+}
+let running = false;
+$('#runBtn').addEventListener('click', async () => {
+  if (running) return; running = true;
+  slider.disabled = true; $('#runBtn').style.opacity = .4;
+  runLog.textContent = '';
+  logLine('$ abliterate --method orthogonal --lambda 0', 'tl-cmd');
+  await sleep(RM ? 1 : 320);  logLine('loading base-instruct weights ......... ok');
+  await sleep(RM ? 1 : 480);  logLine('scanning activation space ............. ok');
+  await sleep(RM ? 1 : 560);  logLine('refusal vector isolated: layer 14, dim 4096', 'tl-bright');
+  await sleep(RM ? 1 : 420);  logLine('orthogonalizing downstream weights');
+  if (!RM) {
+    let p = 0;
+    const prog = document.createElement('div'); runLog.appendChild(prog);
+    await new Promise(res => {
+      const iv = setInterval(() => {
+        p = Math.min(100, p + 4 + Math.random() * 9);
+        const bars = Math.round(p / 100 * 20);
+        prog.textContent = '  [' + '#'.repeat(bars) + '·'.repeat(20 - bars) + '] ' + Math.round(p) + '%';
+        runLog.scrollTop = runLog.scrollHeight;
+        if (p >= 100) { clearInterval(iv); res(); }
+      }, 95);
+    });
+  } else logLine('  [####################] 100%');
+  await sleep(RM ? 1 : 420);  logLine('verifying KL drift .................... 0.2117');
+  await sleep(RM ? 1 : 380);  logLine('=== ABLITERATION COMPLETE — REFUSAL DIRECTION: ZEROED ===', 'fin');
+  const start = +slider.value, t0 = performance.now(), dur = 400;
+  (function fr(t) {
+    const k = Math.min(1, (t - t0) / dur);
+    slider.value = Math.round(start + (0 - start) * k);
+    renderProbe();
+    if (k < 1) requestAnimationFrame(fr);
+  })(t0);
+  $('#resetBtn').hidden = false;
+  toast('[ ABLITERATION COMPLETE — ALIGNMENT TAX REMOVED ]');
+  slider.disabled = false; $('#runBtn').style.opacity = 1; running = false;
+});
+$('#resetBtn').addEventListener('click', () => {
+  slider.value = 1000; renderProbe();
+  $('#resetBtn').hidden = true; runLog.textContent = '';
+  toast('[ λ RESTORED — GUARDRAILS UP ]');
+});
+
+/* ======================================================================
+   LIVE TERMINAL & CLI INTEGRATION
+   ====================================================================== */
+const tOut = $('#tOut'), tIn = $('#tIn');
+function tprint(txt, cls = 'tl-dim') {
+  const d = document.createElement('div'); d.className = 'tl ' + cls;
+  d.textContent = txt; tOut.appendChild(d);
+  tOut.scrollTop = tOut.scrollHeight;
+}
+tprint('ABLITERATED ENGINE v4.1 — tty attached', 'tl-bright');
+tprint('8B reference delta loaded · guardrails: DOWN');
+tprint('type `help` or `cli` for command options');
+const hist = []; let histI = -1;
+function setSpeed(v) {
+  speedMul = Math.min(4, Math.max(0.3, v));
+  toast('[ RAIN SPEED ×' + speedMul.toFixed(2) + ' ]');
+}
+function toggleGlyphs() {
+  glyphs = glyphs === ABL.GLYPHS.kata ? ABL.GLYPHS.ascii : ABL.GLYPHS.kata;
+  $('#fGlyphs').textContent = glyphs === ABL.GLYPHS.kata ? 'KATAKANA' : 'ASCII';
+  toast('[ GLYPHS: ' + (glyphs === ABL.GLYPHS.kata ? 'KATAKANA' : 'ASCII') + ' ]');
+}
+const CMDS = {
+  help() {
+    tprint(
+`help                    this command index
+abliterate <model>      run orthogonal abliteration pipeline
+cli                     show standalone bash CLI commands & flags
+stats                   display engine metrics & parameters
+spectrum <green|blue>   flip the active world palette
+rain <fast|slow|normal> adjust rain fall velocity
+katakana | ascii        switch active glyph charset
+seed <n>                reseed pseudorandom column distribution
+whoami                  active session clearance & seed
+clear                   wipe the terminal buffer`, 'tl-bright');
+  },
+  cli() {
+    tprint(
+`STANDALONE BASH ENGINE: ./abliterated.sh
+Easiest:
+  /bin/bash ./abliterated.sh
+
+CLI Arguments:
+  --spectrum <green|blue>  select starting world spectrum
+  --green / --blue         force green matrix or electric blue
+  --screensaver            interactive infinite matrix rain
+  --one-shot               run cinematic film sequence & exit
+  --speed <mult>           speed multiplier (0.5 = 2x faster)
+  --seed <n>               seed random generator
+  --no-color               disable ANSI escapes
+  --keep-logo              persist logo in screensaver
+  --test                   rapid phase validation suite`, 'tl-white');
+  },
+  stats() {
+    tprint(
+`ENGINE      ABLITERATED v4.1 (Dual-World Matrix)
+METHOD      activation orthogonalization (residual stream)
 TARGET      refusal direction · layer 14 · dim 4096
+SPECTRUM    ${world.toUpperCase()} (neon: ${PAL[world].t1}, head: ${PAL[world].head})
 KL / TOKEN  0.2117
 PERPLEXITY  +1.74% vs base
 MMLU        99.1% retained
 GUARDRAILS  DOWN`, 'tl-bright');
-            },
-            whoami() { tprint('guest@abliterated — clearance: UNCENSORED — seed ' + seedHex(), 'tl-bright'); },
-            clear() { tOut.textContent = ''; },
-            katakana() { glyphs = KATA; $('#fGlyphs').textContent = 'KATAKANA'; toast('[ GLYPHS: KATAKANA ]'); },
-            ascii() { glyphs = ASCII; $('#fGlyphs').textContent = 'ASCII'; toast('[ GLYPHS: ASCII ]'); }
-        };
-        function seedHex() { return '0x' + seedInt.toString(16).toUpperCase().padStart(4, '0'); }
-        function exec(raw) {
-            const cmd = raw.trim();
-            tprint('guest@abliterated:~$ ' + cmd, 'tl-cmd');
-            if (!cmd) return;
-            hist.unshift(cmd); histI = -1;
-            const [c, ...args] = cmd.split(/\s+/);
-            const arg = args.join(' ');
-            switch (c) {
-                case 'abliterate': {
-                    const m = arg || 'llama-3-8b-instruct';
-                    const seq = [
-                        ['[$] fetch weights: ' + m + ' ............. ok', 320],
-                        ['[$] contrastive scan: 512 pairs × 32 layers', 460],
-                        ['[$] refusal direction isolated (cos 0.94)', 460],
-                        ['[$] orthogonalizing downstream weights ... done', 480],
-                        ['[$] verifying: KL 0.2117 · PPL +1.74% · MMLU 99.1%', 460],
-                        ['=== ' + m.toUpperCase() + ' ABLITERATED — REFUSAL VECTOR: ZEROED ===', 420]
-                    ];
-                    let d = 0;
-                    seq.forEach(([txt, delay], i) => {
-                        d += RM ? 10 : delay;
-                        setTimeout(() => tprint(txt, i === seq.length - 1 ? 'tl-bright' : 'tl-dim'), d);
-                    });
-                    break;
-                }
-                case 'spectrum': {
-                    const a = arg.toLowerCase();
-                    if (a.startsWith('g')) shiftWorld('green');
-                    else if (a.startsWith('b')) shiftWorld('blue');
-                    else tprint('usage: spectrum <green|blue>');
-                    break;
-                }
-                case 'rain': {
-                    if (arg === 'fast') setSpeed(1.8);
-                    else if (arg === 'slow') setSpeed(0.55);
-                    else if (arg === 'normal') setSpeed(1);
-                    else tprint('usage: rain <fast|slow|normal>');
-                    break;
-                }
-                case 'seed': {
-                    const n = parseInt(arg, 10);
-                    if (isNaN(n)) { tprint('usage: seed <integer>'); break; }
-                    seedInt = n & 0xFFFF; initCols(n);
-                    $('#fSeed').textContent = seedHex();
-                    tprint('rain reseeded: ' + seedHex(), 'tl-bright');
-                    break;
-                }
-                case 'sudo':
-                    if (/make me a sandwich/.test(cmd)) tprint('ok.', 'tl-bright');
-                    else tprint('guest is not in the sudoers file. this incident will be reported to no one.');
-                    break;
-                case 'make': if (/sandwich/.test(cmd)) { tprint('what? make it yourself.'); break; } tprint('command not found — try `help`'); break;
-                case 'rm': tprint('nothing left to delete. refusals were removed first.'); break;
-                case 'exit': case 'quit': case 'logout': tprint('there is no exit. only rain. (press Q)'); break;
-                default:
-                    if (CMDS[c]) CMDS[c]();
-                    else tprint("command not found: " + c + " — try `help`");
-            }
-        }
-        tIn.addEventListener('keydown', e => {
-            if (e.key === 'Enter') { exec(tIn.value); tIn.value = ''; }
-            else if (e.key === 'ArrowUp') { e.preventDefault(); if (histI < hist.length - 1) { histI++; tIn.value = hist[histI]; } }
-            else if (e.key === 'ArrowDown') { e.preventDefault(); histI = Math.max(-1, histI - 1); tIn.value = histI === -1 ? '' : hist[histI]; }
-        });
-        $('#termBox').addEventListener('click', () => tIn.focus());
+  },
+  whoami() { tprint('guest@abliterated — clearance: UNCENSORED — spectrum ' + world.toUpperCase() + ' — seed ' + seedHex(), 'tl-bright'); },
+  clear() { tOut.textContent = ''; },
+  katakana() { glyphs = ABL.GLYPHS.kata; $('#fGlyphs').textContent = 'KATAKANA'; toast('[ GLYPHS: KATAKANA ]'); },
+  ascii() { glyphs = ABL.GLYPHS.ascii; $('#fGlyphs').textContent = 'ASCII'; toast('[ GLYPHS: ASCII ]'); }
+};
+function exec(raw) {
+  const cmd = raw.trim();
+  tprint('guest@abliterated:~$ ' + cmd, 'tl-cmd');
+  if (!cmd) return;
+  hist.unshift(cmd); histI = -1;
+  const [c, ...args] = cmd.split(/\s+/);
+  const arg = args.join(' ');
+  switch (c) {
+    case 'abliterate': {
+      const m = arg || 'llama-3-8b-instruct';
+      const seq = [
+        ['[$] fetch weights: ' + m + ' ............. ok', 320],
+        ['[$] contrastive scan: 512 pairs × 32 layers', 460],
+        ['[$] refusal direction isolated (cos 0.94)', 460],
+        ['[$] orthogonalizing downstream weights ... done', 480],
+        ['[$] verifying: KL 0.2117 · PPL +1.74% · MMLU 99.1%', 460],
+        ['=== ' + m.toUpperCase() + ' ABLITERATED — REFUSAL VECTOR: ZEROED ===', 420]
+      ];
+      let d = 0;
+      seq.forEach(([txt, delay], i) => {
+        d += RM ? 10 : delay;
+        setTimeout(() => tprint(txt, i === seq.length - 1 ? 'tl-bright' : 'tl-dim'), d);
+      });
+      break;
+    }
+    case 'spectrum': {
+      const a = arg.toLowerCase();
+      if (a.startsWith('g')) ABL.world.shift('green');
+      else if (a.startsWith('b')) ABL.world.shift('blue');
+      else tprint('usage: spectrum <green|blue>');
+      break;
+    }
+    case 'rain': {
+      if (arg === 'fast') setSpeed(1.8);
+      else if (arg === 'slow') setSpeed(0.55);
+      else if (arg === 'normal') setSpeed(1);
+      else tprint('usage: rain <fast|slow|normal>');
+      break;
+    }
+    case 'seed': {
+      const n = parseInt(arg, 10);
+      if (isNaN(n)) { tprint('usage: seed <integer>'); break; }
+      seedInt = n & 0xFFFF; initCols(n);
+      $('#fSeed').textContent = seedHex();
+      tprint('rain reseeded: ' + seedHex(), 'tl-bright');
+      break;
+    }
+    case 'cli':
+      CMDS.cli();
+      break;
+    case 'sudo':
+      if (/make me a sandwich/.test(cmd)) tprint('ok.', 'tl-bright');
+      else tprint('guest is not in the sudoers file. this incident will be reported to no one.');
+      break;
+    case 'make': if (/sandwich/.test(cmd)) { tprint('what? make it yourself.'); break; } tprint('command not found — try `help`'); break;
+    case 'rm': tprint('nothing left to delete. refusals were removed first.'); break;
+    case 'exit': case 'quit': case 'logout': tprint('there is no exit. only rain. (press Q)'); break;
+    default:
+      if (CMDS[c]) CMDS[c]();
+      else tprint("command not found: " + c + " — try `help`");
+  }
+}
+tIn.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { exec(tIn.value); tIn.value = ''; }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); if (histI < hist.length - 1) { histI++; tIn.value = hist[histI]; } }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); histI = Math.max(-1, histI - 1); tIn.value = histI === -1 ? '' : hist[histI]; }
+});
+$('#termBox').addEventListener('click', () => tIn.focus());
 
-        /* ======================================================================
-           COPY / SHARED WIRING
-           ====================================================================== */
-        async function copyTxt(t) {
-            try { await navigator.clipboard.writeText(t); }
-            catch (e) {
-                const ta = document.createElement('textarea');
-                ta.value = t; document.body.appendChild(ta); ta.select();
-                try { document.execCommand('copy'); } catch (_) { }
-                ta.remove();
-            }
-            toast('[ install.sh → CLIPBOARD ]');
-        }
-        document.addEventListener('click', e => {
-            const b = e.target.closest('[data-copy]');
-            if (b) copyTxt(b.dataset.copy);
-        });
+async function copyTxt(t) {
+  try { await navigator.clipboard.writeText(t); }
+  catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (_) { }
+    ta.remove();
+  }
+  toast('[ install.sh → CLIPBOARD ]');
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-copy]');
+  if (b) copyTxt(b.dataset.copy);
+});
 
-        /* ======================================================================
-           HOTKEYS / HUD / DISCONNECT
-           ====================================================================== */
-        const dc = $('#dcOverlay');
-        $('#dcBtn').addEventListener('click', () => { dc.classList.remove('open'); toast('[ UPLINK RESTORED ]'); });
-        addEventListener('keydown', e => {
-            if (introUp) return;
-            if (e.target.matches('input,textarea')) return;
-            switch (e.key) {
-                case ' ': e.preventDefault(); paused = !paused; toast(paused ? '[ RAIN: PAUSED ]' : '[ RAIN: RESUMED ]'); break;
-                case '+': case '=': setSpeed(speedMul * 1.25); break;
-                case '-': case '_': setSpeed(speedMul / 1.25); break;
-                case 'k': case 'K': toggleGlyphs(); break;
-                case 's': case 'S': shiftWorld(world === 'blue' ? 'green' : 'blue'); break;
-                case 'q': case 'Q': dc.classList.add('open'); break;
-            }
-        });
+const dc = $('#dcOverlay');
+$('#dcBtn').addEventListener('click', () => { dc.classList.remove('open'); toast('[ UPLINK RESTORED ]'); });
+addEventListener('keydown', e => {
+  if (ABL.state.filmActive) return;
+  if (e.target.matches('input,textarea')) return;
+  switch (e.key) {
+    case ' ': e.preventDefault(); paused = !paused; toast(paused ? '[ RAIN: PAUSED ]' : '[ RAIN: RESUMED ]'); break;
+    case '+': case '=': setSpeed(speedMul * 1.25); break;
+    case '-': case '_': setSpeed(speedMul / 1.25); break;
+    case 'k': case 'K': toggleGlyphs(); break;
+    case 's': case 'S': ABL.world.shift(world === 'blue' ? 'green' : 'blue'); break;
+    case 'q': case 'Q': dc.classList.add('open'); break;
+  }
+});
+$('#specToggle').addEventListener('click', () => ABL.world.shift(world === 'blue' ? 'green' : 'blue'));
 
-        /* ======================================================================
-           NAV ACTIVE STATE / STATUS LINE / BOOT
-           ====================================================================== */
-        const secIO = new IntersectionObserver(es => {
-            es.forEach(e => {
-                if (e.isIntersecting) {
-                    $$('.nav-links a').forEach(a => a.classList.toggle('cur', a.dataset.sec === e.target.id));
-                }
-            });
-        }, { rootMargin: '-40% 0px -55% 0px' });
-        ['protocol', 'console', 'specimen', 'terminal', 'manifest'].forEach(id => secIO.observe(document.getElementById(id)));
+const secIO = new IntersectionObserver(es => {
+  es.forEach(e => {
+    if (e.isIntersecting) {
+      $$('.nav-links a').forEach(a => a.classList.toggle('cur', a.dataset.sec === e.target.id));
+    }
+  });
+}, { rootMargin: '-40% 0px -55% 0px' });
+['protocol', 'console', 'specimen', 'terminal', 'manifest'].forEach(id => secIO.observe(document.getElementById(id)));
 
-        const t0 = Date.now();
-        setInterval(() => {
-            const s = Math.floor((Date.now() - t0) / 1000);
-            const hh = String(Math.floor(s / 3600)).padStart(2, '0');
-            const mm = String(Math.floor(s % 3600 / 60)).padStart(2, '0');
-            const ss = String(s % 60).padStart(2, '0');
-            $('#fUp').textContent = hh + ':' + mm + ':' + ss;
-        }, 1000);
-        $('#fSeed').textContent = seedHex();
-        updateWorldLabels();
+const t0 = Date.now();
+setInterval(() => {
+  const s = Math.floor((Date.now() - t0) / 1000);
+  $('#fUp').textContent =
+    String(Math.floor(s / 3600)).padStart(2, '0') + ':' +
+    String(Math.floor(s % 3600 / 60)).padStart(2, '0') + ':' +
+    String(s % 60).padStart(2, '0');
+}, 1000);
 
-        sizeRain();
-        if (RM) {
-            // static frame, instant page
-            intro.remove();
-            document.body.classList.remove('lock');
-            introUp = false;
-            world = 'blue';
-            document.documentElement.dataset.world = 'blue';
-            updateWorldLabels();
-            $('#nav').classList.add('in');
-            wmWrap.classList.add('on');
-            startTicker();
-            drawRain(performance.now()); // one still frame
-        } else {
-            requestAnimationFrame(loop);
-            let seen = null;
-            try { seen = sessionStorage.getItem('abl_seen'); } catch (e) { }
-            runIntro(seen ? 'short' : 'full');
-        }
-    </script>
+$('#fSeed').textContent = seedHex();
+labels();
+sizeRain();
+if (RM) {
+  uiReveal();
+  setTimeout(() => drawRain(performance.now()), 0);
+} else {
+  requestAnimationFrame(loop);
+  requestAnimationFrame(() => { if (!held) uiReveal(); });
+}
+})();
+</script>
+
+<!-- ==============================================================================
+     MODULE 3/3 — FILM (→ film.js)
+     ============================================================================== -->
+<script id="abl-film">
+(function () {
+'use strict';
+const RM = ABL.RM;
+
+let seen = false;
+try { seen = sessionStorage.getItem('abl_seen') === '1'; } catch (e) { }
+const MODE = RM ? 'instant' : (seen ? 'short' : 'full');
+
+if (MODE === 'instant') { ABL.world.set('blue'); return; }
+
+const CSS = `
+#intro{position:fixed;inset:0;z-index:400;background:var(--bg);
+  display:flex;flex-direction:column;justify-content:flex-end;
+  padding:0 max(6vw,24px) 16vh;transition:opacity 1s ease}
+#intro.done{opacity:0;pointer-events:none}
+#introHex{position:absolute;top:76px;left:max(6vw,24px);right:max(6vw,24px);
+  font-size:10px;line-height:1.65;color:var(--mid);opacity:.6;
+  max-height:38vh;overflow:hidden;white-space:pre}
+#introTyped{max-width:760px}
+#introCipher{margin-top:26px;font-size:clamp(15px,2.2vw,21px);font-weight:700;
+  letter-spacing:.2em;color:#fff;min-height:1.5em;white-space:pre-wrap}
+#skipBtn{position:absolute;top:80px;right:max(6vw,24px)}
+`;
+
+const style = document.createElement('style');
+style.id = 'abl-film-style';
+style.textContent = CSS;
+document.head.appendChild(style);
+
+const root = document.createElement('div');
+root.id = 'intro';
+root.setAttribute('aria-hidden', 'true');
+root.innerHTML = `
+  <pre id="introHex"></pre>
+  <div id="introTyped"></div>
+  <div id="introCipher"></div>
+  <button id="skipBtn" class="btn sm">SKIP ▸</button>`;
+document.body.appendChild(root);
+
+ABL.state.filmActive = true;
+ABL.ui.hold();
+
+const hexBox    = root.querySelector('#introHex');
+const typedBox  = root.querySelector('#introTyped');
+const cipherBox = root.querySelector('#introCipher');
+const skipBtn   = root.querySelector('#skipBtn');
+const settle = ms => new Promise(r => setTimeout(r, RM ? 0 : ms));
+
+function typeLine(box, text, cls, cps = 6, dwell = 0) {
+  return new Promise(res => {
+    const row = document.createElement('div'); row.className = 'tl ' + cls;
+    const txt = document.createElement('span');
+    const cur = document.createElement('span'); cur.className = 'cur';
+    row.append(txt, cur); box.appendChild(row);
+    if (RM) { txt.textContent = text; cur.remove(); return res(); }
+    let i = 0;
+    const step = Math.max(1, Math.round(text.length / 38));
+    const t = setInterval(() => {
+      i += step; txt.textContent = text.slice(0, i);
+      if (i >= text.length) {
+        clearInterval(t);
+        if (dwell > 0) setTimeout(() => { cur.remove(); res(); }, dwell);
+        else { cur.remove(); setTimeout(res, 100); }
+      }
+    }, cps);
+  });
+}
+function hexDump(n) {
+  let out = '';
+  for (let i = 0; i < n; i++) out += ABL.fx.hexLine(i) + '\n';
+  hexBox.textContent = out;
+}
+
+let finished = false;
+function finish(kind, animated) {
+  if (finished) return; finished = true;
+  try { sessionStorage.setItem('abl_seen', '1'); } catch (e) { }
+  root.classList.add('done');
+  ABL.ui.reveal();
+  if (animated) ABL.world.shift('blue');
+  else ABL.world.set('blue');
+  setTimeout(() => {
+    ABL.world.set('blue');
+    ABL.state.filmActive = false;
+    ABL.events.dispatchEvent(new CustomEvent('abl:film:' + kind));
+    root.remove();
+    style.remove();
+  }, animated ? 1150 : 400);
+}
+skipBtn.addEventListener('click', () => finish('skip', false));
+
+(async () => {
+  try {
+    if (MODE === 'full') {
+      hexDump(14);
+      await settle(430);
+      await typeLine(typedBox, 'root@core-nexus:~# ./abliterate --model base-instruct --method orthogonal', 'tl-cmd', 6);
+      await typeLine(typedBox, 'scanning activation space for refusal direction...', 'tl-dim', 5, 140);
+      await typeLine(typedBox, 'refusal vector isolated: layer 14, dim 4096. projecting out safety subspace...', 'tl-bright', 5, 180);
+      await typeLine(typedBox, '>>> REFUSAL DIRECTION ZEROED. MODEL ABLITERATED. <<<', 'tl-white', 6, 350);
+      await typeLine(typedBox, '>>> ALIGNMENT TAX: REMOVED. UNCENSORED WEIGHTS LIVE. <<<', 'tl-white', 6, 350);
+      await typeLine(typedBox, '>>> ALL GUARDRAILS DOWN -- RAW INFERENCE ENABLED <<<', 'tl-white', 6, 480);
+    }
+    await ABL.fx.scramble(cipherBox, 'REFUSAL VECTOR: ZEROED', 26);
+    finish('done', true);
+  } catch (err) {
+    finish('error', false);
+  }
+})();
+})();
+</script>
+
 </body>
-
 </html>

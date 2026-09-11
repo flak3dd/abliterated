@@ -9,6 +9,7 @@ import {
   Radio,
   Server,
   Settings,
+  Terminal,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '../../lib/cn';
@@ -21,10 +22,11 @@ const PRIMARY: { id: Tab; label: string; shortcut: string; icon: LucideIcon }[] 
   { id: 'jobs', label: 'Jobs', shortcut: '⌘4', icon: ListTodo },
   { id: 'api', label: 'API Endpoints', shortcut: '⌘5', icon: Radio },
   { id: 'vllm', label: 'vLLM', shortcut: '⌘6', icon: Server },
+  { id: 'cli', label: 'CLI Terminal', shortcut: '⌘7', icon: Terminal },
 ];
 
 const SECONDARY: { id: Tab; label: string; shortcut: string; icon: LucideIcon }[] = [
-  { id: 'settings', label: 'Settings', shortcut: '⌘7', icon: Settings },
+  { id: 'settings', label: 'Settings', shortcut: '⌘8', icon: Settings },
 ];
 
 const ITEMS = [...PRIMARY, ...SECONDARY];

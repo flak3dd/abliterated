@@ -317,6 +317,34 @@ const CHAT_TOOLS = [
   { type: 'function', function: { name: 'generate_image' } },
 ];
 
+const GRAMMAR_UNSUPPORTED_SCHEMA_KEYS = new Set([
+  'propertyNames',
+  'patternProperties',
+  'unevaluatedProperties',
+  'unevaluatedItems',
+  'dependentSchemas',
+]);
+
+function stripGrammarUnsupportedSchema(node) {
+  if (Array.isArray(node)) return node.map(stripGrammarUnsupportedSchema);
+  if (node && typeof node === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(node)) {
+      if (GRAMMAR_UNSUPPORTED_SCHEMA_KEYS.has(k)) continue;
+      out[k] = stripGrammarUnsupportedSchema(v);
+    }
+    return out;
+  }
+  return node;
+}
+
+function sanitizeToolForGrammar(tool) {
+  return {
+    ...tool,
+    function: { ...tool.function, parameters: stripGrammarUnsupportedSchema(tool.function?.parameters) },
+  };
+}
+
 function filterChatTools(enabled, opts) {
   let tools = CHAT_TOOLS;
   if (enabled) {
@@ -329,7 +357,7 @@ function filterChatTools(enabled, opts) {
   if (opts?.extraTools?.length) {
     tools = [...tools, ...opts.extraTools];
   }
-  return tools;
+  return tools.map(sanitizeToolForGrammar);
 }
 
 // --------------------------------------------------------------------------
@@ -669,6 +697,40 @@ await test('filterChatTools respects whitelist, image toggle, and MCP tools', ()
   const withMcp = filterChatTools(['read_file', 'grep'], { extraTools: mcpExtra });
   assert.equal(withMcp.length, 3);
   assert.ok(withMcp.some((t) => t.function.name === 'mcp__git__commit'));
+});
+
+await test('filterChatTools sanitizes grammar-unsupported keywords (propertyNames, etc.) from tool schemas', () => {
+  const mcpToolWithUnsupportedSchema = [
+    {
+      type: 'function',
+      function: {
+        name: 'mcp__custom__tool',
+        parameters: {
+          type: 'object',
+          propertyNames: { pattern: '^[a-zA-Z0-9_]+$' },
+          patternProperties: { '^x-': { type: 'string' } },
+          unevaluatedProperties: false,
+          properties: {
+            validField: { type: 'string' },
+            nested: {
+              type: 'object',
+              propertyNames: { pattern: '.*' },
+              dependentSchemas: { foo: {} },
+            },
+          },
+        },
+      },
+    },
+  ];
+  const filtered = filterChatTools(['read_file'], { extraTools: mcpToolWithUnsupportedSchema });
+  const customTool = filtered.find((t) => t.function.name === 'mcp__custom__tool');
+  assert.ok(customTool, 'custom tool present');
+  assert.equal('propertyNames' in customTool.function.parameters, false);
+  assert.equal('patternProperties' in customTool.function.parameters, false);
+  assert.equal('unevaluatedProperties' in customTool.function.parameters, false);
+  assert.equal('propertyNames' in customTool.function.parameters.properties.nested, false);
+  assert.equal('dependentSchemas' in customTool.function.parameters.properties.nested, false);
+  assert.equal(customTool.function.parameters.properties.validField.type, 'string');
 });
 
 // 7. Faux Tool Recovery & Git Commit Safeguards

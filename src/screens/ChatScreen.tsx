@@ -20,6 +20,7 @@ import { MessageBubble } from '../components/chat/MessageBubble';
 import { AgentStatusMonitor } from '../components/chat/AgentStatusMonitor';
 import { WorkingDirPrompt } from '../components/chat/WorkingDirPrompt';
 import { resolveActiveSettings } from '../lib/activeEndpoint';
+import { downloadFilesAsZip, extractFilesFromMarkdown } from '../lib/zipDownload';
 import { ProofChip } from '../components/chat/ProofChip';
 import { enqueueChatAsJob } from '../lib/jobRunner';
 import { ModelSettingsGuidePanel } from '../components/common/ModelSettingsGuide';
@@ -503,6 +504,17 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
     setShowThreadMenu(false);
   }, [thread]);
 
+  const handleExportZip = useCallback(() => {
+    const allFiles = messages
+      .filter((m) => m.role === 'assistant')
+      .flatMap((m) => extractFilesFromMarkdown(m.content));
+    if (allFiles.length > 0) {
+      const slug = thread.title.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'chat';
+      downloadFilesAsZip(`${slug}-code-files`, allFiles);
+    }
+    setShowThreadMenu(false);
+  }, [thread.title, messages]);
+
   const checkAutocompleteCursor = useCallback((val: string, cursorIndex: number) => {
     const left = val.slice(0, cursorIndex);
     const match = left.match(/@([a-zA-Z0-9_./\\-]*)$/);
@@ -677,6 +689,14 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
               >
                 <Download size={12} className="text-zinc-400" />
                 <span>Export JSON</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleExportZip}
+                className="flex w-full items-center gap-2 rounded-[2px] px-2.5 py-1.5 text-left text-zinc-300 hover:bg-accent hover:text-foreground"
+              >
+                <Download size={12} className="text-zinc-400" />
+                <span>Export Code Files (.ZIP)</span>
               </button>
             </div>
           ) : null}

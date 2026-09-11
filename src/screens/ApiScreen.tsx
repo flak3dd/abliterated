@@ -1132,7 +1132,7 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
             </Field>
             <Field
               label="Context length"
-              hint="Prompt window, not max_tokens. Empty = 32768 on Featherless, 131072 otherwise."
+              hint="Prompt window, not max_tokens. Empty = 32768 on Featherless, 65536 on Spark, 131072 otherwise."
             >
               <input
                 type="number"

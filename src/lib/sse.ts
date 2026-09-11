@@ -49,6 +49,7 @@ export interface StreamChatArgs {
   extraTools?: typeof CHAT_TOOLS;
   onDelta: (text: string) => void;
   onReasoningDelta?: (text: string) => void;
+  onToolCallDelta?: (tc: { index: number; id?: string; name?: string; arguments?: string }) => void;
   /** Wipe painted deltas before a collapse retry so `!!!!` does not stay on screen. */
   onReset?: () => void;
   onToolCallComplete?: (tool: ToolCallPayload) => void;
@@ -588,6 +589,42 @@ export const CHAT_TOOLS = [
   },
 ];
 
+/**
+ * vLLM's structured-output grammar backends (xgrammar / guidance) reject certain
+ * JSON-Schema keywords when compiling the grammar for a constrained tool call —
+ * most notably `propertyNames`, which a pass-through MCP tool schema can carry.
+ * Left in, vLLM aborts the whole generation with "Error in chat completion stream
+ * generator" (surfaced to the user as "Error in input stream"). Strip the
+ * unsupported keywords so the tool still works with a slightly looser constraint.
+ */
+const GRAMMAR_UNSUPPORTED_SCHEMA_KEYS = new Set([
+  'propertyNames',
+  'patternProperties',
+  'unevaluatedProperties',
+  'unevaluatedItems',
+  'dependentSchemas',
+]);
+
+function stripGrammarUnsupportedSchema(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(stripGrammarUnsupportedSchema);
+  if (node && typeof node === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      if (GRAMMAR_UNSUPPORTED_SCHEMA_KEYS.has(k)) continue;
+      out[k] = stripGrammarUnsupportedSchema(v);
+    }
+    return out;
+  }
+  return node;
+}
+
+function sanitizeToolForGrammar<T extends { function: { parameters?: unknown } }>(tool: T): T {
+  return {
+    ...tool,
+    function: { ...tool.function, parameters: stripGrammarUnsupportedSchema(tool.function.parameters) },
+  } as T;
+}
+
 export function filterChatTools(
   enabled?: ToolType[],
   opts?: {
@@ -616,7 +653,9 @@ export function filterChatTools(
   if (opts?.extraTools?.length) {
     tools = [...tools, ...opts.extraTools];
   }
-  return tools;
+  // Strip grammar-unsupported JSON-Schema keywords (e.g. propertyNames from MCP
+  // tool schemas) so vLLM does not abort the stream with "Error in input stream".
+  return tools.map(sanitizeToolForGrammar);
 }
 
 function isToolType(name: string): name is ToolType {
@@ -695,7 +734,7 @@ export async function streamChatCompletion(args: StreamChatArgs): Promise<Stream
 }
 
 async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamChatResult> {
-  const { settings, model, messages, abortSignal, enabledTools, extraTools, onDelta, onReasoningDelta, onReset, onToolCallComplete, toolChoice } = args;
+  const { settings, model, messages, abortSignal, enabledTools, extraTools, onDelta, onReasoningDelta, onToolCallDelta, onReset, onToolCallComplete, toolChoice } = args;
   const active = resolveActiveSettings(settings);
   if (!active.baseUrl.trim()) {
     await dummyEcho(lastUserPrompt(messages), onDelta, abortSignal);
@@ -828,9 +867,8 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     typeof (settings as ClientSettings & { maxTokens?: number }).maxTokens === 'number' &&
     (settings as ClientSettings & { maxTokens?: number }).maxTokens! > 0
       ? Math.floor((settings as ClientSettings & { maxTokens?: number }).maxTokens!)
-      : 4096;
+      : 8192;
   if (
-    featherless &&
     isThinkingFamilyModel(model) &&
     settings.reasoning !== 'off' &&
     !shouldForceThinkingOff(model) &&
@@ -848,7 +886,7 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
   if (usingBuiltin) {
     body.stream_options = { include_usage: true };
   }
-  if (featherless || active.provider === 'dgx-spark') {
+  if (featherless || active.provider === 'dgx-spark' || active.provider === 'abliteration' || active.provider === 'platform') {
     const kwargs = thinkingChatTemplateKwargs(model, settings.reasoning);
     if (kwargs) {
       // Spark Qwen chat_template.jinja only honors enable_thinking (no thinking_budget /
@@ -1134,6 +1172,7 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
           if (tc.name) cur.name = tc.name;
           if (tc.arguments) cur.arguments += tc.arguments;
           toolAcc.set(idx, cur);
+          if (onToolCallDelta) onToolCallDelta(tc);
         },
       });
       if (applied.finishReason) finishReason = applied.finishReason;
@@ -1253,7 +1292,7 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
   // 2) Keep tools when possible; only drop tools if the whole reply is empty.
   // 3) Disable thinking only as a last resort — coalesce handles reasoning-only answers.
   if (
-    featherless &&
+    (featherless || active.provider === 'dgx-spark') &&
     isThinkingFamilyModel(model) &&
     !isCollapsedJunk(consumed) &&
     isContentEmpty(consumed) &&
@@ -1287,7 +1326,7 @@ async function streamChatCompletionInner(args: StreamChatArgs): Promise<StreamCh
     if (retryJson.ok) consumed = await consumeResponse(retryJson);
   }
   // Thinking-off retry keeps tools; last resort when still fully empty.
-  if (featherless && isThinkingFamilyModel(model) && isEmptyReply(consumed)) {
+  if ((featherless || active.provider === 'dgx-spark') && isThinkingFamilyModel(model) && isEmptyReply(consumed)) {
     body.chat_template_kwargs = { enable_thinking: false };
     body.stream = false;
     if (typeof body.max_tokens === 'number' && (body.max_tokens as number) < 8192) {

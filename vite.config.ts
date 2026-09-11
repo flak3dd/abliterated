@@ -85,9 +85,12 @@ async function refreshSparkTarget() {
 }
 
 void refreshSparkTarget();
-setInterval(() => {
+const sparkInterval = setInterval(() => {
   void refreshSparkTarget();
 }, 10000);
+if (typeof sparkInterval.unref === "function") {
+  sparkInterval.unref();
+}
 
 /** Serve public/docs/index.html for /docs and /docs/ (before SPA fallback). */
 function docsStaticIndex(): Plugin {
@@ -777,14 +780,65 @@ function benchmarkDevPlugin(): Plugin {
   };
 }
 
+function landingPagesDevPlugin(): Plugin {
+  const handler: Connect.NextHandleFunction = (req, res, next) => {
+    const raw = (req.url || "").split("?")[0];
+    if (raw === "/landing" || raw === "/landing/") {
+      const indexPath = path.join(__dirname, "landingpages/index.html");
+      if (fs.existsSync(indexPath)) {
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        return res.end(fs.readFileSync(indexPath, "utf8"));
+      }
+    }
+    next();
+  };
+
+  return {
+    name: "landing-pages-dev",
+    configureServer(server) {
+      server.middlewares.use(handler);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(handler);
+    },
+  };
+}
+
 export default defineConfig({
   base: "./",
-  plugins: [react(), docsStaticIndex(), webSearchDevPlugin(), mailerSendDevPlugin(), vllmCtlDevPlugin(), benchmarkDevPlugin()],
+  plugins: [
+    react(),
+    docsStaticIndex(),
+    landingPagesDevPlugin(),
+    webSearchDevPlugin(),
+    mailerSendDevPlugin(),
+    vllmCtlDevPlugin(),
+    benchmarkDevPlugin(),
+  ],
   resolve: {
     alias: {
       mailersend: path.resolve(__dirname, "src/lib/mailersend.ts"),
     },
   },
-  server: { host: '127.0.0.1', port: 5173, proxy: abliterationProxy },
-  preview: { host: '127.0.0.1', port: 4173, proxy: abliterationProxy },
+  build: {
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        app: path.resolve(__dirname, "app.html"),
+        ...(fs.existsSync(path.resolve(__dirname, "landingpages/index.html"))
+          ? { landing: path.resolve(__dirname, "landingpages/index.html") }
+          : {}),
+        ...(fs.existsSync(path.resolve(__dirname, "landingpages/index1.html"))
+          ? { landing1: path.resolve(__dirname, "landingpages/index1.html") }
+          : {}),
+        ...(fs.existsSync(path.resolve(__dirname, "landingpages/index2.html"))
+          ? { landing2: path.resolve(__dirname, "landingpages/index2.html") }
+          : {}),
+      },
+    },
+  },
+  server: { host: "127.0.0.1", port: 5173, proxy: abliterationProxy },
+  preview: { host: "127.0.0.1", port: 4173, proxy: abliterationProxy },
 });
+

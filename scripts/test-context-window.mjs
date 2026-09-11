@@ -41,6 +41,7 @@ const {
 
 assert.equal(defaultContextWindow('featherless'), 32768);
 assert.equal(defaultContextWindow('featherless', 16000), 16000);
+assert.equal(defaultContextWindow('dgx-spark'), 65536);
 assert.equal(defaultContextWindow('abliteration'), 131072);
 
 const err = parseContextLengthError(
