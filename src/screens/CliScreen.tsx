@@ -6,6 +6,7 @@ import {
   Check,
   Brain,
   CheckCircle2,
+  ShieldAlert,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -309,6 +310,25 @@ export function splitSummaryFromText(text: string): { body: string; summary: str
 /** Max tool round-trips per AI turn before we finalize with the current answer. */
 const CLI_TOOL_STEP_BUDGET = 6;
 
+// --- Phase 3: one autonomy policy for side-effecting tools ---
+
+export type CliAutonomy = 'read-only' | 'ask' | 'auto';
+
+/** Tools that mutate the workspace / run commands — gated by the autonomy policy. */
+const DESTRUCTIVE_TOOLS = new Set<ToolType>([
+  'write_file',
+  'shell',
+  'git_commit',
+  'create_pr',
+  'checkpoint_restore',
+]);
+
+const AUTONOMY_META: Record<CliAutonomy, { label: string; glyph: string; blurb: string }> = {
+  'read-only': { label: 'Read-only', glyph: '🛡', blurb: 'Reads/searches only; writes & shell are proposed, never executed.' },
+  ask: { label: 'Ask', glyph: '✋', blurb: 'Pause for one-click approval before each write or shell command.' },
+  auto: { label: 'Auto', glyph: '⚡', blurb: 'Run writes & shell automatically (each one announced).' },
+};
+
 /**
  * Per-intent toolset for the CLI tool loop. Read/inspect + web tools are always
  * available; write_file and shell are gated by the user's toggles (Auto-accept
@@ -324,16 +344,12 @@ const CLI_TOOLSETS: Record<CliIntent, ToolType[]> = {
   debug: ['read_file', 'grep', 'glob', 'list_dir', 'file_outline', 'git_status', 'git_diff', 'shell'],
 };
 
-function effectiveCliToolset(
-  intent: CliIntent,
-  autoRunShell: boolean,
-  autoAcceptEdits: boolean,
-): ToolType[] {
-  return (CLI_TOOLSETS[intent] || []).filter((t) => {
-    if (t === 'shell') return autoRunShell;
-    if (t === 'write_file') return autoAcceptEdits;
-    return true;
-  });
+function effectiveCliToolset(intent: CliIntent, autonomy: CliAutonomy): ToolType[] {
+  const base = CLI_TOOLSETS[intent] || [];
+  // Read-only never offers destructive tools; Ask/Auto offer them and gate at
+  // execution time (Ask = approval prompt, Auto = run immediately).
+  if (autonomy === 'read-only') return base.filter((t) => !DESTRUCTIVE_TOOLS.has(t));
+  return base;
 }
 
 /** OpenAI-protocol tool_call from an internal ToolCallPayload (args serialized). */
@@ -453,6 +469,10 @@ Type /help for slash commands (/workspace, /scaffold, /serve, /autorun, /venv, /
   const [reasoningExpanded, setReasoningExpanded] = useState<Record<string, boolean>>({});
   // Which user message's intent-override menu is open (Phase 2 chip override).
   const [overrideMenuFor, setOverrideMenuFor] = useState<string | null>(null);
+  // Phase 3: one autonomy policy for the tool loop's side-effecting tools.
+  const [autonomy, setAutonomy] = useState<CliAutonomy>('ask');
+  const [pendingApproval, setPendingApproval] = useState<{ label: string; toolName: string } | null>(null);
+  const approvalResolverRef = useRef<((d: 'approve' | 'skip') => void) | null>(null);
 
   const abortCtrlRef = useRef<AbortController | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1273,6 +1293,24 @@ Rules:
   };
 
   // Send AI Chat Message with Complete Runway
+  // Phase 3 (Ask mode): pause the tool loop for a one-click Approve/Skip decision.
+  // Resolves 'skip' if the turn is aborted while waiting.
+  const requestApproval = (tc: ToolCallPayload, signal: AbortSignal) =>
+    new Promise<'approve' | 'skip'>((resolve) => {
+      const finish = (d: 'approve' | 'skip') => {
+        approvalResolverRef.current = null;
+        setPendingApproval(null);
+        resolve(d);
+      };
+      approvalResolverRef.current = finish;
+      setPendingApproval({ label: describeToolCall(tc), toolName: tc.name });
+      if (signal.aborted) {
+        finish('skip');
+        return;
+      }
+      signal.addEventListener('abort', () => finish('skip'), { once: true });
+    });
+
   const sendAiChat = async (promptText: string, forcedIntent?: CliIntent) => {
     if (!promptText.trim() || isStreaming || isExecutingCmd || isScaffolding) return;
 
@@ -1401,15 +1439,15 @@ Do not hallucinate: never invent APIs, flags, parameters, library exports, or fi
     // for chat/command → a single stream, unchanged). When the model calls tools we
     // execute them via the shared executeAgentTool, feed the results back, and
     // continue until it answers or the step budget is reached.
-    const toolset = effectiveCliToolset(
-      turnClass.intent,
-      autoRunShell,
-      Boolean(settings?.autoAcceptEdits),
-    );
+    const toolset = effectiveCliToolset(turnClass.intent, autonomy);
     const toolOpts: ExecuteAgentToolOpts = {
       enabledTools: toolset,
-      autoAcceptEdits: Boolean(settings?.autoAcceptEdits),
-      autoRunShell,
+      // The autonomy policy is the single control point: read-only never offers
+      // destructive tools, ask prompts before running (below), auto runs. So once
+      // we actually call executeAgentTool, the action is already authorized — pass
+      // true here so it does not re-gate.
+      autoAcceptEdits: true,
+      autoRunShell: true,
       settings: cliSettings,
       workspaceRoot: activeRoot || bridge.validWorkspaceRoot || bridge.currentRoot || '',
       mode: 'interactive',
@@ -1462,6 +1500,29 @@ Do not hallucinate: never invent APIs, flags, parameters, library exports, or fi
         });
         for (const tc of result.toolCalls) {
           addSystemMsg(`⚙ step ${steps}/${CLI_TOOL_STEP_BUDGET} · ${describeToolCall(tc)}`);
+          const destructive = DESTRUCTIVE_TOOLS.has(tc.name as ToolType);
+          // Autonomy gate for side-effecting tools.
+          if (destructive && autonomy === 'read-only') {
+            addSystemMsg('   ↳ not executed (read-only autonomy)');
+            convo.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: 'not executed: read-only autonomy mode is active',
+            });
+            continue;
+          }
+          if (destructive && autonomy === 'ask') {
+            const decision = await requestApproval(tc, ac.signal);
+            if (decision !== 'approve') {
+              addSystemMsg('   ↳ skipped by user');
+              convo.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: 'skipped by user (not executed)',
+              });
+              continue;
+            }
+          }
           let res: ExecuteAgentToolResult;
           try {
             res = await executeAgentTool(tc, toolOpts);
@@ -1656,6 +1717,26 @@ Do not hallucinate: never invent APIs, flags, parameters, library exports, or fi
             toggleAutoRunShell(false);
           } else {
             toggleAutoRunShell();
+          }
+          break;
+        }
+
+        case 'autonomy':
+        case 'auto-mode':
+        case 'policy': {
+          const v = arg.toLowerCase().replace(/\s+/g, '-');
+          let next: CliAutonomy | null = null;
+          if (['read-only', 'readonly', 'ro', 'read'].includes(v)) next = 'read-only';
+          else if (v === 'ask') next = 'ask';
+          else if (['auto', 'yolo', 'full'].includes(v)) next = 'auto';
+          if (next) {
+            setAutonomy(next);
+            showToast(`[ AUTONOMY: ${AUTONOMY_META[next].label.toUpperCase()} ]`);
+            addSystemMsg(`Autonomy → ${AUTONOMY_META[next].label}. ${AUTONOMY_META[next].blurb}`);
+          } else {
+            addSystemMsg(
+              `Current autonomy: ${AUTONOMY_META[autonomy].label} — ${AUTONOMY_META[autonomy].blurb}\nUsage: /autonomy <read-only|ask|auto>`,
+            );
           }
           break;
         }
@@ -1858,6 +1939,7 @@ Do not hallucinate: never invent APIs, flags, parameters, library exports, or fi
                            • /serve stop <id|all>                   (stop a server, or all)
   /servers               List managed servers (alias for /serve list)
   /stop <id|all>         Stop a managed server
+  /autonomy <mode>       Set tool-loop autonomy: read-only | ask | auto (default ask)
   /autorun [on|off]      Toggle auto-running AI generated shell commands
   /venv [check]          Create, bootstrap, or inspect workspace Python .venv
   /search <query>        Search the live web directly via web search
@@ -2090,6 +2172,7 @@ SPECTRUM: ${world.toUpperCase()}`,
       toggleAutoRunShell,
       handleCreateVenv,
       autoScaffoldOnBuild,
+      autonomy,
     ],
   );
 
@@ -3301,6 +3384,69 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
           ))}
         </div>
       )}
+
+      {/* Phase 3: approval prompt (Ask mode) for a pending side-effecting tool */}
+      {pendingApproval && (
+        <div
+          className="relative z-10 px-3 py-2 border-t flex items-center justify-between gap-3"
+          style={{ borderColor: curPal.line2, backgroundColor: curPal.accentBg }}
+        >
+          <div className="flex items-center gap-2 text-[11px] font-mono min-w-0" style={{ color: curPal.text }}>
+            <ShieldAlert size={14} className="shrink-0" style={{ color: curPal.neon }} />
+            <span className="truncate">
+              Approve <b>{pendingApproval.toolName}</b>?{' '}
+              <span className="opacity-70">{pendingApproval.label}</span>
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => approvalResolverRef.current?.('approve')}
+              className="px-3 py-1 rounded border text-[11px] font-bold uppercase transition-all hover:scale-105"
+              style={{ borderColor: curPal.line2, backgroundColor: curPal.panel2, color: curPal.neon }}
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              onClick={() => approvalResolverRef.current?.('skip')}
+              className="px-3 py-1 rounded border text-[11px] font-bold uppercase transition-all hover:brightness-125"
+              style={{ borderColor: curPal.line, color: curPal.dim }}
+            >
+              Skip
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Phase 3: autonomy policy selector — one control for side-effecting tools */}
+      <div
+        className="relative z-10 px-3 py-1 border-t flex items-center gap-2 text-[10px] font-mono"
+        style={{ borderColor: curPal.line, backgroundColor: curPal.panel }}
+      >
+        <span className="uppercase tracking-wider opacity-50 shrink-0" style={{ color: curPal.dim }}>
+          autonomy
+        </span>
+        {(['read-only', 'ask', 'auto'] as CliAutonomy[]).map((a) => (
+          <button
+            key={a}
+            type="button"
+            onClick={() => {
+              setAutonomy(a);
+              showToast(`[ AUTONOMY: ${AUTONOMY_META[a].label.toUpperCase()} ]`);
+            }}
+            className="px-2 py-0.5 rounded border transition-all"
+            style={{
+              borderColor: autonomy === a ? curPal.line2 : curPal.line,
+              backgroundColor: autonomy === a ? curPal.accentBg : 'transparent',
+              color: autonomy === a ? curPal.neon : curPal.dim,
+            }}
+            title={AUTONOMY_META[a].blurb}
+          >
+            {AUTONOMY_META[a].glyph} {AUTONOMY_META[a].label}
+          </button>
+        ))}
+      </div>
 
       {/* Terminal Input Bar */}
       <footer

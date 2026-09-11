@@ -91,14 +91,21 @@ Makes the CLI genuinely capable and removes the no-tools limitation.
   no console errors. Loop activation is model-driven (the model must emit tool calls); the
   execution path is the same one E2E-verified earlier (web_search, exec, spawn).
 
-## ⬜ Phase 3 — One autonomy policy (planned)
+## ✅ Phase 3 — One autonomy policy (shipped)
 
-Collapse `autoRunShell` + `autoScaffoldOnBuild` + implicit writes into a single control:
+A single tri-state control gates every side-effecting tool in the loop
+(`DESTRUCTIVE_TOOLS`: `write_file`, `shell`, `git_commit`, `create_pr`, `checkpoint_restore`):
 
-- **Read-only** — read/search/list only; writes/shell/serve proposed, never executed.
-- **Ask** (default) — destructive tools pause for one-click Approve/Skip.
-- **Auto** — destructive tools run automatically, each announced.
-- **Test:** Ask pauses a `write_file`; Auto runs it; Read-only proposes only.
+- **Read-only** — destructive tools are excluded from the toolset entirely (proposed, never run).
+- **Ask** (default) — the loop pauses on a destructive call for a one-click **Approve / Skip**
+  banner above the input; Skip (or Stop) feeds back "skipped" and the loop continues.
+- **Auto** — destructive tools run immediately, each announced as a step.
+- Surfaced as an **autonomy selector** above the input and a `/autonomy <read-only|ask|auto>`
+  command; the loop passes `autoAcceptEdits/autoRunShell: true` to `executeAgentTool` because the
+  autonomy gate is now the single control point.
+- **Verify:** `tsc -b` clean; live — selector renders (default Ask), switching to Auto highlights
+  + toasts, no console errors. (Legacy response-block auto-run and pre-build scaffold toggles are
+  left intact; folding them fully under autonomy is a follow-up.)
 
 ## ⬜ Phase 4 — Unify `runTurn()` + honor settings (planned)
 
