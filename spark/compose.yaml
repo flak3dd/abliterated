@@ -1,0 +1,81 @@
+# ==============================================================================
+# Primary Recipe: THe-Plague Qwen3.6-35B-A3B abliterated NVFP4 + MTP on DGX Spark (GB10)
+# Modern Compose specification (compose.yaml) tailored for DGX Spark host.
+# ==============================================================================
+#
+# vllm/vllm-openai:cu130-nightly ENTRYPOINT is already ["vllm","serve"].
+# command must start at the model path — do not prefix `vllm serve` or the
+# container crash-loops with: unrecognized arguments: serve /models/current
+#
+# Optional Spark-only ARM64: ghcr.io/aeon-7/aeon-vllm-ultimate:latest
+# Alternate weights: AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4
+# Do not pass --moe-backend marlin. NVFP4 GEMM uses VLLM_NVFP4_GEMM_BACKEND;
+# Qwen3.5 MTP draft experts are unquantized and reject moe_backend=marlin.
+
+services:
+  qwen-abliterated:
+    image: ${IMAGE:-vllm/vllm-openai:cu130-nightly}
+    container_name: qwen-abliterated
+    platform: linux/arm64
+    restart: unless-stopped
+    ipc: host
+    shm_size: "32gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ${MODEL_DIR:-./models/Qwen3.6-35B-A3B-abliterated-NVFP4-MTP}:/models/current:ro
+      - hf_cache:/root/.cache/huggingface
+    environment:
+      CUTE_DSL_ARCH: sm_121a
+      TORCH_CUDA_ARCH_LIST: "12.1;12.1a"
+      VLLM_NVFP4_GEMM_BACKEND: marlin
+      VLLM_TEST_FORCE_FP8_MARLIN: "1"
+      VLLM_USE_FLASHINFER_MOE_FP4: "0"
+      FLASHINFER_DISABLE_VERSION_CHECK: "1"
+      TRITON_PTXAS_PATH: /usr/local/cuda/bin/ptxas
+      TORCH_FLOAT32_MATMUL_PRECISION: high
+      NCCL_DEBUG: WARN
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+    command:
+      - /models/current
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --served-model-name
+      - ${SERVED_NAME:-qwen-abliterated}
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.6}"
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-65536}"
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3}'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/v1/models || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+
+volumes:
+  hf_cache:
+    name: abliterated_spark_hf_cache

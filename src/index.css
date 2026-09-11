@@ -8,8 +8,8 @@
     --foreground: 216 12% 92%;
     --card: 224 14% 16%;
     --popover: 222 14% 14%;
-    --primary: 218 100% 65%;
-    --primary-foreground: 223 30% 8%;
+    --primary: 187 100% 48%;
+    --primary-foreground: 190 80% 4%;
     --secondary: 222 14% 14%;
     --muted: 222 14% 14%;
     --muted-foreground: 217 10% 64%;
@@ -17,8 +17,8 @@
     --destructive: 358 86% 64%;
     --border: 223 13% 21%;
     --input: 223 13% 21%;
-    --ring: 218 100% 65%;
-    --radius: 0.625rem;
+    --ring: 187 100% 48%;
+    --radius: 0.25rem;
     --surface: 222 14% 14%;
     --panel: 224 14% 16%;
     --signal: 158 64% 52%;
@@ -26,7 +26,7 @@
     --warn: 37 91% 55%;
     --sidebar-background: 223 15% 8%;
     --sidebar-foreground: 217 10% 64%;
-    --sidebar-primary: 218 100% 65%;
+    --sidebar-primary: 187 100% 48%;
     --sidebar-accent: 224 14% 16%;
     --sidebar-accent-foreground: 216 12% 92%;
     --sidebar-border: 223 13% 18%;
@@ -43,7 +43,8 @@ body {
   margin: 0;
   background: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  letter-spacing: -0.012em;
   overflow: hidden;
   user-select: none;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
@@ -86,7 +87,7 @@ code,
 
 @layer components {
   .btn {
-    @apply inline-flex h-8 items-center justify-center gap-1 rounded-md px-2.5 text-[12px] font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40;
+    @apply inline-flex h-8 items-center justify-center gap-1.5 rounded-[3px] px-2.5 font-mono text-[11px] font-medium tracking-tight transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40;
   }
   .btn:focus-visible {
     box-shadow: 0 0 0 2px hsl(var(--ring));
@@ -95,13 +96,14 @@ code,
     @apply btn;
     background: hsl(var(--primary));
     color: hsl(var(--primary-foreground));
+    font-weight: 600;
   }
   .btn-primary:hover {
     background: hsl(var(--primary) / 0.9);
   }
   .btn-ghost {
     @apply btn border border-border bg-transparent;
-    color: hsl(var(--foreground) / 0.8);
+    color: hsl(var(--foreground) / 0.85);
   }
   .btn-ghost:hover {
     border-color: hsl(var(--primary) / 0.4);
@@ -118,7 +120,7 @@ code,
     background: hsl(var(--destructive) / 0.25);
   }
   .btn-icon {
-    @apply inline-flex h-8 w-8 items-center justify-center rounded-md border border-border transition-colors;
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-[3px] border border-border transition-colors;
     color: hsl(var(--muted-foreground));
   }
   .btn-icon:hover {
@@ -127,7 +129,7 @@ code,
     color: hsl(var(--foreground));
   }
   .field {
-    @apply w-full rounded-md border border-border px-2.5 py-1.5 text-[13px] outline-none transition-colors;
+    @apply w-full rounded-[3px] border border-border px-2.5 py-1.5 font-mono text-[12px] outline-none transition-colors;
     background: hsl(var(--background));
     color: hsl(var(--foreground));
   }
@@ -139,7 +141,7 @@ code,
     box-shadow: 0 0 0 2px hsl(var(--ring) / 0.4);
   }
   .chip {
-    @apply rounded-md border border-border px-1.5 py-0.5 font-mono text-[10px] transition-colors;
+    @apply rounded-[3px] border border-border px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-wider transition-colors;
     background: hsl(var(--background));
     color: hsl(var(--muted-foreground));
   }
@@ -227,7 +229,7 @@ code,
 
 .reasoning-trace {
   border: 1px solid rgb(63 63 70 / 0.7);
-  border-radius: 0.5rem;
+  border-radius: 3px;
   background: rgb(9 9 11 / 0.85);
   overflow: hidden;
 }
@@ -356,7 +358,7 @@ code,
   display: inline-block;
   width: 5px;
   height: 5px;
-  border-radius: 9999px;
+  border-radius: 2px;
   background: #3f3f46;
   flex-shrink: 0;
 }
@@ -374,7 +376,7 @@ code,
   flex: 1;
   height: 2px;
   margin-left: 4px;
-  border-radius: 9999px;
+  border-radius: 1px;
   background: #27272a;
   overflow: hidden;
   min-width: 40px;
@@ -384,7 +386,7 @@ code,
   display: block;
   height: 100%;
   background: linear-gradient(90deg, #0ea5e9, #38bdf8);
-  border-radius: 9999px;
+  border-radius: 1px;
   transition: width 0.25s ease;
 }
 
@@ -418,7 +420,7 @@ code,
 }
 
 .page-header-title {
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.02em;
@@ -428,7 +430,7 @@ code,
 
 .page-header-sub {
   margin-top: 0.25rem;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 13px;
   line-height: 1.45;
   color: hsl(var(--muted-foreground));
@@ -468,7 +470,7 @@ code,
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  border-radius: 0.375rem;
+  border-radius: 3px;
   border: 1px solid #27272a;
   background: #09090b;
   padding: 0.5rem 0.75rem;
@@ -514,7 +516,7 @@ code,
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  border-radius: 9999px;
+  border-radius: 2px;
   border: 1px solid #3f3f46;
   background: #18181b;
   padding: 0.15rem 0.55rem;
@@ -598,14 +600,14 @@ code,
 .image-progress-track {
   height: 0.35rem;
   overflow: hidden;
-  border-radius: 9999px;
+  border-radius: 2px;
   background: #27272a;
   border: 1px solid #3f3f46;
 }
 
 .image-progress-fill {
   height: 100%;
-  border-radius: 9999px;
+  border-radius: 2px;
   background: linear-gradient(90deg, #0284c7, #38bdf8);
   transition: width 0.2s ease;
 }

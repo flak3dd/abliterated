@@ -2,9 +2,6 @@
 
 const FENCE_RE = /```[^\n]*\n[\s\S]*?```/g;
 
-const TOOL_NAME_RE =
-  /\b(list_dir|read_file|grep|glob|file_outline|semantic_search|git_status|git_diff|git_commit|create_pr|web_fetch|web_search|write_file|apply_patch|apply_diff|delete_file|shell|list_skills|read_skill|suggest_skill|write_skill)\b/;
-
 const CODE_LINE_RE =
   /^(?:import\s|export\s|from\s['"]|const\s|let\s|var\s|function\s|async\s+function|class\s|type\s|interface\s|enum\s|def\s|fn\s|pub\s|impl\s|struct\s|#include\s|using\s|package\s|return\s|if\s*\(|for\s*\(|while\s*\(|switch\s*\(|<\/?[A-Z][A-Za-z0-9]+[\s/>]|[{}\[\];]\s*$|\/\/\s|\/\*|\*\s)/;
 
@@ -111,16 +108,6 @@ export function liftReasoningWork(reasoning: string): string {
   return '';
 }
 
-/** Model described work (tools/scripts) in reasoning but emitted no content/tool_calls. */
-export function reasoningLooksLikeStalledWork(reasoning: string): boolean {
-  const t = reasoning || '';
-  if (!t.trim()) return false;
-  if (liftReasoningWork(t)) return true;
-  if (/```/.test(t)) return true;
-  if (TOOL_NAME_RE.test(t)) return true;
-  return false;
-}
-
 export type ReasoningSection = { id: string; title: string; body: string };
 
 function unwrapThink(text: string): string {
@@ -200,15 +187,6 @@ export function splitReasoningSections(text: string): ReasoningSection[] {
 
   if (!sections.length) return [{ id: 'r0', title: 'Thought', body: raw }];
   return sections;
-}
-
-export function buildReasoningOnlyNudge(): string {
-  return (
-    'Your last turn put the entire reply in reasoning — zero content tokens and no tool_calls. ' +
-    'This IDE only applies content and the tools channel. Reasoning is not executed. ' +
-    'Now: emit real OpenAI function tool_calls, and put diffs/scripts in content ' +
-    '(```diff, ```bash, or a // relative/path file fence). Do not only describe the work.'
-  );
 }
 
 /** File-producing action verbs — a step that should yield a file change in content. */

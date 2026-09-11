@@ -1,7 +1,5 @@
 import { resolveFeatherlessModelId } from './featherlessQwen.js';
-/** Keep in sync with sseParse.ts thinking-family detection. */
-const THINKING_MODEL_RE =
-  /qwen3|qwen-abliterated|qwq[-_]?|deepseek-r1|deepseek-reasoner|hunyuan-t1|glm-4\.5|glm-5|magistral|gpt-oss/i;
+import { isThinkingFamilyModel } from './sseParse.js';
 
 export type ModelFamily = 'thinking' | 'instruct' | 'code' | 'vision' | 'base';
 export type GuideStatus = 'ok' | 'warn' | 'block';
@@ -66,7 +64,7 @@ export function classifyModel(model: string): ModelClass {
   const id = norm(model);
   const s = id.toLowerCase();
   const vision = /(?:^|[/\-_.])(vl|vision|llava|pixtral|qwen2-vl|qwen2\.5-vl|qwen3-vl)\b/.test(s);
-  const thinking = THINKING_MODEL_RE.test(id);
+  const thinking = isThinkingFamilyModel(id);
   const code = /coder|codestral|starcoder|deepseek-coder|code[-_]/i.test(s);
   const instruct = /instruct|chat|\b-it\b|hermes|functionary/i.test(s);
   const toolsLikely =

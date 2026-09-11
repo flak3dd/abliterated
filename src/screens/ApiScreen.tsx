@@ -593,7 +593,7 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
                   type="button"
                   onClick={() => selectProvider(p.id)}
                   className={
-                    'group relative rounded-lg border px-3 py-2.5 text-left transition-all ' +
+                    'group relative rounded-[3px] border px-3 py-2.5 text-left transition-all ' +
                     (on
                       ? 'border-emerald-500/80 bg-emerald-950/25 ring-1 ring-emerald-500/50'
                       : 'border-border bg-background/40 hover:border-primary/40 hover:bg-accent/40')
@@ -604,11 +604,11 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
                       {p.label}
                     </div>
                     {configured ? (
-                      <span className="rounded-full border border-emerald-800/60 bg-emerald-950/60 px-1.5 py-0.2 font-mono text-[8.5px] font-bold text-emerald-300">
+                      <span className="rounded-[2px] border border-emerald-800/60 bg-emerald-950/60 px-1.5 py-0.2 font-mono text-[8.5px] font-bold text-emerald-300">
                         Ready
                       </span>
                     ) : (
-                      <span className="rounded-full border border-amber-800/60 bg-amber-950/60 px-1.5 py-0.2 font-mono text-[8.5px] font-bold text-amber-300" title={reason || undefined}>
+                      <span className="rounded-[2px] border border-amber-800/60 bg-amber-950/60 px-1.5 py-0.2 font-mono text-[8.5px] font-bold text-amber-300" title={reason || undefined}>
                         Setup Needed
                       </span>
                     )}
@@ -620,7 +620,7 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
           </div>
 
           {active.fallbackReason ? (
-            <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-amber-800/70 bg-amber-950/30 p-2.5 font-mono text-[11px] text-amber-200">
+            <div className="mt-3 flex items-start gap-2.5 rounded-[3px] border border-amber-800/70 bg-amber-950/30 p-2.5 font-mono text-[11px] text-amber-200">
               <span className="text-base">🛡️</span>
               <div>
                 <div className="font-bold text-amber-100">Safe Active Endpoint Guard Engaged</div>
@@ -634,7 +634,7 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
             const alignment = getProviderSetupAlignment(provider);
             const status = checkProviderAlignment(draft, provider);
             return (
-              <div className="mt-3 rounded-xl border border-zinc-800/80 bg-zinc-950/70 p-3 shadow-inner">
+              <div className="mt-3 rounded-[4px] border border-zinc-800/80 bg-zinc-950/70 p-3 shadow-inner">
                 <div className="flex flex-wrap items-center justify-between gap-2.5">
                   <div className="flex items-center gap-2.5">
                     <span className="text-lg">
@@ -668,15 +668,15 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
 
                   <div className="flex items-center gap-2">
                     {status.isAligned ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-600/60 bg-emerald-950/60 px-2.5 py-1 font-mono text-[10px] font-semibold text-emerald-300">
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="inline-flex items-center gap-1.5 rounded-[2px] border border-emerald-600/60 bg-emerald-950/60 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-300">
+                        <span className="h-1.5 w-1.5 rounded-[1px] bg-emerald-400 animate-pulse" />
                         ✓ Agent Profile Aligned
                       </span>
                     ) : (
                       <button
                         type="button"
                         onClick={() => patch(alignSetupForProvider(draft, provider))}
-                        className="btn-ghost h-7 px-2.5 font-mono text-[10px] font-bold text-emerald-300 hover:text-white hover:bg-emerald-600/25 border border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.15)]"
+                        className="btn-ghost h-7 px-2.5 font-mono text-[10px] font-bold text-emerald-300 hover:text-white hover:bg-emerald-600/25 border border-emerald-500/40"
                         title={`Optimize turn caps, agent mode, and switches for ${alignment.name}`}
                       >
                         ⚡ Align Agent Profile to {alignment.name}
@@ -689,7 +689,7 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
           })()}
 
           {authMissing ? (
-            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-amber-200">
+            <div className="rounded-[3px] border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-amber-200">
               {authMissing}
             </div>
           ) : (
@@ -716,7 +716,7 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
               </label>
             </div>
             {sparkInactive ? (
-              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
+              <div className="rounded-[3px] border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
                 Spark is selected but marked unavailable. Enable the toggle to test or chat.
               </div>
             ) : null}
@@ -855,17 +855,17 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
               </label>
             </div>
             {featherInactive ? (
-              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
+              <div className="rounded-[3px] border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
                 Featherless is selected but marked unavailable. Enable the toggle to test or chat.
               </div>
             ) : null}
 
-            <div className="rounded-md border border-border bg-background/50 p-3">
+            <div className="rounded-[3px] border border-border bg-background/50 p-3">
               <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Auth</div>
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <span
                   className={
-                    'rounded-md border px-2 py-0.5 font-mono text-[10px] ' +
+                    'rounded-[2px] border px-2 py-0.5 font-mono text-[10px] ' +
                     (signedIn
                       ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-300'
                       : 'border-border bg-background text-muted-foreground')
@@ -952,7 +952,7 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
                       title={m.id}
                       onClick={() => patch({ featherlessModel: m.id, ...recommendedApiPatch(m.id, draft) })}
                       className={
-                        'rounded-md border px-2 py-1 text-left text-[11px] leading-tight ' +
+                        'rounded-[2px] border px-2 py-1 text-left text-[11px] leading-tight ' +
                         (on
                           ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-200'
                           : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground')
@@ -1299,7 +1299,7 @@ export function ApiScreen({ settings, onSettingsChange }: Props) {
 
         {result ? (
           <Section title="Last test">
-            <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background p-3 font-mono text-[11px] leading-5 text-zinc-300">
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-[3px] border border-border bg-background p-3 font-mono text-[11px] leading-5 text-zinc-300">
               {result}
             </pre>
           </Section>

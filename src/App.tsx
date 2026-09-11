@@ -35,6 +35,9 @@ import { isSamePath, isTemporaryPath, workspaceGate } from './lib/workspaceGuard
 import { SetupWizard } from './components/setup/SetupWizard';
 import { hydrateDurableStore } from './lib/durableStore';
 import { acceptAllInbox, hydrateApplyInbox } from './lib/applyInbox';
+import { FolderTree, MessageSquare, Plus, Upload } from 'lucide-react';
+import { SidebarFileTree } from './components/layout/SidebarFileTree';
+import { importThreadPayload } from './lib/threadIo';
 import { ApiScreen } from './screens/ApiScreen';
 import { ChatScreen, type ChatScreenHandle } from './screens/ChatScreen';
 import { HomeScreen } from './screens/HomeScreen';
@@ -89,7 +92,22 @@ export default function App() {
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>(bridge.currentStatus);
   const [agentLabel, setAgentLabel] = useState('');
   const [composerSeed, setComposerSeed] = useState<string | null>(null);
-  const [chatFilePanel, setChatFilePanel] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<'sessions' | 'files'>(() => {
+    try {
+      return (localStorage.getItem('ablit_sidebar_tab') as 'sessions' | 'files') || 'sessions';
+    } catch {
+      return 'sessions';
+    }
+  });
+
+  const handleSetSidebarTab = useCallback((tab: 'sessions' | 'files') => {
+    setSidebarTab(tab);
+    try {
+      localStorage.setItem('ablit_sidebar_tab', tab);
+    } catch {
+      /* ignore */
+    }
+  }, []);
   const license = getLicenseState(settings);
   const agentMode: AgentMode = settings.agentMode || (settings.planModeEnabled ? 'plan' : 'agent');
   const planMode = agentMode === 'plan';
@@ -524,6 +542,18 @@ export default function App() {
             setAgentLabel('');
           },
         },
+        {
+          id: 'sidebar-sessions',
+          label: 'Sidebar: Switch to Sessions',
+          keywords: 'sidebar chats threads sessions history',
+          run: () => handleSetSidebarTab('sessions'),
+        },
+        {
+          id: 'sidebar-files',
+          label: 'Sidebar: Switch to Workspace Files',
+          keywords: 'sidebar files workspace tree explorer directory',
+          run: () => handleSetSidebarTab('files'),
+        },
       );
     }
 
@@ -761,20 +791,107 @@ export default function App() {
                 <div className="flex h-full min-w-0">
                   <aside
                     className={cn(
-                      'w-[220px] shrink-0 flex-col border-r border-border',
+                      'w-[250px] shrink-0 flex flex-col border-r border-border bg-sidebar select-none',
                       activeThread ? 'hidden md:flex' : 'flex',
                     )}
                   >
-                    <HomeScreen
-                      compact
-                      threads={threads}
-                      settings={settings}
-                      onThreadsChange={setThreads}
-                      onOpenThread={openThread}
-                      onNewSession={createSession}
-                      workspaceRoot={workspace.rootPath}
-                      activeThreadId={activeThreadId}
-                    />
+                    {/* Interchange Header */}
+                    <div className="flex h-10 shrink-0 items-center justify-between border-b border-border px-2 bg-sidebar select-none">
+                      <div className="flex items-center gap-0.5 rounded-[3px] bg-surface/90 p-0.5 border border-border text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => handleSetSidebarTab('sessions')}
+                          className={cn(
+                            'flex items-center gap-1.5 px-2.5 py-1 rounded-[2px] transition-all font-medium',
+                            sidebarTab === 'sessions'
+                              ? 'bg-panel text-foreground shadow-sm'
+                              : 'text-muted-foreground hover:text-foreground',
+                          )}
+                          title="Chat Sessions"
+                        >
+                          <MessageSquare size={12} />
+                          <span>Sessions</span>
+                          <span className="text-[10px] text-muted-foreground font-mono">({threads.length})</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSetSidebarTab('files')}
+                          className={cn(
+                            'flex items-center gap-1.5 px-2.5 py-1 rounded-[2px] transition-all font-medium',
+                            sidebarTab === 'files'
+                              ? 'bg-panel text-foreground shadow-sm'
+                              : 'text-muted-foreground hover:text-foreground',
+                          )}
+                          title="Workspace File Tree"
+                        >
+                          <FolderTree size={12} />
+                          <span>Files</span>
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-0.5">
+                        {sidebarTab === 'sessions' ? (
+                          <>
+                            <button
+                              type="button"
+                              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                              title="Import chat"
+                              aria-label="Import chat"
+                              onClick={() => {
+                                const raw = window.prompt('Paste exported JSON or markdown');
+                                if (!raw?.trim()) return;
+                                try {
+                                  const t = importThreadPayload(raw);
+                                  setThreads(getThreads());
+                                  openThread(t.id);
+                                } catch (err) {
+                                  window.alert(err instanceof Error ? err.message : 'Import failed');
+                                }
+                              }}
+                            >
+                              <Upload size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={createSession}
+                              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                              title="New chat"
+                              aria-label="New chat"
+                            >
+                              <Plus size={14} />
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    {/* Content View: Sessions vs Files */}
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                      {sidebarTab === 'sessions' ? (
+                        <HomeScreen
+                          compact
+                          hideHeader
+                          threads={threads}
+                          settings={settings}
+                          onThreadsChange={setThreads}
+                          onOpenThread={openThread}
+                          onNewSession={createSession}
+                          workspaceRoot={workspace.rootPath}
+                          activeThreadId={activeThreadId}
+                        />
+                      ) : (
+                        <SidebarFileTree
+                          workspaceRoot={workspace.rootPath}
+                          onChooseWorkspace={chooseWorkspace}
+                          onPinFile={(path) => {
+                            setComposerSeed(`@${path} `);
+                          }}
+                          onOpenFileInEditor={() => {
+                            setTab('workspace');
+                          }}
+                        />
+                      )}
+                    </div>
                   </aside>
                   <div className="min-w-0 flex-1">
                     {activeThread ? (
@@ -839,12 +956,12 @@ export default function App() {
                         }}
                         onSettingsChange={applySettings}
                         onOpenTab={setTab}
-                        filePanelOpen={chatFilePanel}
-                        onToggleFilePanel={() => setChatFilePanel((open) => !open)}
+                        filePanelOpen={sidebarTab === 'files'}
+                        onToggleFilePanel={() => handleSetSidebarTab(sidebarTab === 'files' ? 'sessions' : 'files')}
                       />
                     ) : (
                       <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-                        <span className="grid h-14 w-14 place-items-center rounded-2xl border border-border bg-panel text-primary">
+                        <span className="grid h-14 w-14 place-items-center rounded-[4px] border border-border bg-panel text-primary shadow-sm">
                           <img
                             src={`${import.meta.env.BASE_URL}logo-skull-blue.png`}
                             alt=""
@@ -863,11 +980,6 @@ export default function App() {
                       </div>
                     )}
                   </div>
-                  {activeThread && chatFilePanel ? (
-                    <div className="hidden min-w-[320px] max-w-[720px] w-[42%] border-l border-border lg:block">
-                      <WorkspaceScreen workspace={workspace} onChange={setWorkspaceState} />
-                    </div>
-                  ) : null}
                 </div>
               </div>
             ) : null}

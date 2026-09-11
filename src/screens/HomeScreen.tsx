@@ -18,6 +18,7 @@ interface Props {
   workspaceRoot?: string;
   activeThreadId?: string | null;
   compact?: boolean;
+  hideHeader?: boolean;
 }
 
 function pathBasename(path: string): string {
@@ -36,6 +37,7 @@ export function HomeScreen({
   workspaceRoot,
   activeThreadId,
   compact,
+  hideHeader,
 }: Props) {
   const [query, setQuery] = useState('');
 
@@ -83,7 +85,8 @@ export function HomeScreen({
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <header className={cn('flex items-center gap-2 border-b border-border', compact ? 'px-3 py-3' : 'px-4 py-3')}>
+      {!hideHeader ? (
+        <header className={cn('flex items-center gap-2 border-b border-border', compact ? 'px-3 py-3' : 'px-4 py-3')}>
         {compact ? (
           <>
             <div className="min-w-0 flex-1 text-[13px] font-semibold tracking-tight text-foreground">Chats</div>
@@ -128,6 +131,7 @@ export function HomeScreen({
           </>
         )}
       </header>
+      ) : null}
       {compact ? (
         <div className="border-b border-border px-3 py-2">
           <div className="relative">

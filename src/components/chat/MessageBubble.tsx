@@ -33,7 +33,6 @@ import {
 import { cn } from '../../lib/cn';
 import { isMidRunMessageContent, stripMidRunPrefix } from '../../lib/agentHelpers';
 import { NO_CONTENT_REASONING_NOTE, stripThinkingWrappers } from '../../lib/agentPhase';
-import { PlanCard } from './PlanCard';
 import { StepTimeline } from './StepTimeline';
 import { parseCompletionFooter } from '../../lib/completionFooter';
 import {
@@ -122,28 +121,47 @@ function CollapsibleToolOutput({ content }: { content: string }) {
   const lines = content.split('\n').length;
   const long = content.length > TOOL_COLLAPSE_CHARS || lines > TOOL_COLLAPSE_LINES;
   const [expanded, setExpanded] = useState(!long);
-  if (!long) {
-    return (
-      <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-zinc-300">
-        {content}
-      </pre>
-    );
-  }
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setCopied(false);
+    }
+  };
+
   const preview = content.split('\n').slice(0, 8).join('\n');
   const clipped =
     preview.length > 480 ? `${preview.slice(0, 480)}…` : `${preview}${lines > 8 ? '\n…' : ''}`;
+
   return (
-    <div>
+    <div className="relative group/tooloutput">
       <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-zinc-300">
-        {expanded ? content : clipped}
+        {long ? (expanded ? content : clipped) : content}
       </pre>
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="mt-1 chip border-zinc-700 text-zinc-400 hover:text-zinc-200"
-      >
-        {expanded ? 'Collapse output' : `Expand output (${lines} lines · ${content.length.toLocaleString()} chars)`}
-      </button>
+      <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-border/40 pt-1">
+        {long ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="chip border-zinc-700 text-zinc-400 hover:text-zinc-200"
+          >
+            {expanded ? 'Collapse output' : `Expand output (${lines} lines · ${content.length.toLocaleString()} chars)`}
+          </button>
+        ) : <div />}
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
+          title="Copy full output"
+        >
+          {copied ? <Check size={10} className="text-emerald-400" /> : <Copy size={10} />}
+          <span className={copied ? 'text-emerald-400 font-medium' : ''}>{copied ? 'Copied' : 'Copy'}</span>
+        </button>
+      </div>
     </div>
   );
 }
@@ -181,6 +199,36 @@ function toolSummary(tool: ToolCallPayload): string {
   if (tool.name === 'write_file') return toolArgString(tool.arguments, ['path', 'file', 'target']);
   if (tool.name === 'shell') return toolArgString(tool.arguments, ['command', 'cmd', 'script']);
   return '';
+}
+
+function getLangBadgeStyle(lang: string) {
+  const l = (lang || '').toLowerCase().trim();
+  if (l.startsWith('ts') || l.includes('typescript')) {
+    return { label: 'TypeScript', color: 'text-sky-400 bg-sky-950/70 border-sky-800/50' };
+  }
+  if (l.startsWith('js') || l.includes('javascript') || l.includes('mjs') || l.includes('node')) {
+    return { label: 'JavaScript', color: 'text-amber-400 bg-amber-950/70 border-amber-800/50' };
+  }
+  if (l.startsWith('py') || l.includes('python')) {
+    return { label: 'Python', color: 'text-blue-400 bg-blue-950/70 border-blue-800/50' };
+  }
+  if (l.includes('json')) {
+    return { label: 'JSON', color: 'text-amber-300 bg-amber-950/70 border-amber-800/50' };
+  }
+  if (l.includes('css') || l.includes('scss')) {
+    return { label: 'CSS', color: 'text-pink-400 bg-pink-950/70 border-pink-800/50' };
+  }
+  if (l.includes('diff') || l.includes('patch')) {
+    return { label: 'Diff', color: 'text-emerald-400 bg-emerald-950/70 border-emerald-800/50' };
+  }
+  if (l.includes('sh') || l.includes('bash') || l.includes('zsh')) {
+    return { label: 'Shell', color: 'text-purple-400 bg-purple-950/70 border-purple-800/50' };
+  }
+  if (l.includes('md') || l.includes('markdown')) {
+    return { label: 'Markdown', color: 'text-zinc-300 bg-zinc-800/70 border-zinc-700/50' };
+  }
+  const clean = (lang || 'code').trim().split(/\s+/)[0];
+  return { label: clean.toUpperCase() || 'CODE', color: 'text-zinc-400 bg-zinc-900 border-zinc-700/50' };
 }
 
 /** Lightweight keyword tokenizer for syntax coloring */
@@ -236,10 +284,7 @@ function CodeBlock({
   const [applyStatus, setApplyStatus] = useState<'pending' | 'accepted' | 'rejected'>('pending');
   const [statusText, setStatusText] = useState('');
   const lines = useMemo(() => code.split('\n'), [code]);
-  const displayLang = useMemo(() => {
-    const first = (lang || '').trim().split(/\s+/)[0] || 'code';
-    return first;
-  }, [lang]);
+  const badge = useMemo(() => getLangBadgeStyle(lang), [lang]);
 
   const copy = async () => {
     try {
@@ -283,16 +328,17 @@ function CodeBlock({
   };
 
   return (
-    <div className="my-2.5 overflow-hidden rounded-lg border border-border bg-zinc-950/90 shadow-sm font-mono text-[11px]">
-      <div className="flex items-center justify-between border-b border-border/80 bg-surface-raised/60 px-3 py-1.5">
+    <div className="my-2.5 overflow-hidden rounded-[4px] border border-border bg-zinc-950 shadow-sm font-mono text-[11px]">
+      <div className="flex items-center justify-between border-b border-border/80 bg-surface-raised/70 px-3 py-1.5">
         <div className="flex min-w-0 items-center gap-1.5 text-[10px] text-zinc-400">
           <Code2 size={12} className="text-sky-400 shrink-0" />
-          <span className="uppercase font-semibold tracking-wide text-zinc-300">{displayLang}</span>
+          <span className={cn('rounded px-1.5 py-0.2 text-[9px] font-semibold uppercase tracking-wide border', badge.color)}>
+            {badge.label}
+          </span>
           {applyTarget?.path ? (
-            <>
-              <span className="text-zinc-600">·</span>
-              <span className="truncate text-zinc-300 normal-case tracking-normal font-medium">{applyTarget.path}</span>
-            </>
+            <span className="truncate rounded border border-border/60 bg-zinc-900/80 px-1.5 py-0.2 text-[10px] text-zinc-200 font-medium">
+              {applyTarget.path}
+            </span>
           ) : null}
           <span className="text-zinc-600">·</span>
           <span className="text-zinc-500 shrink-0">{lines.length} lines</span>
@@ -348,12 +394,49 @@ function CodeBlock({
   );
 }
 
+function renderInlinePins(text: string, onOpenFile?: (path: string) => void): ReactNode[] {
+  if (!onOpenFile) return [text];
+  const parts: ReactNode[] = [];
+  const re = /@([a-zA-Z0-9_./\\-]+\.[a-zA-Z0-9_-]+)/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > last) {
+      parts.push(text.slice(last, match.index));
+    }
+    const path = match[1];
+    parts.push(
+      <button
+        key={`pin-${key++}`}
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenFile(path);
+        }}
+        className="inline-flex items-center gap-1 mx-0.5 rounded border border-primary/40 bg-primary/20 px-1.5 py-0.2 font-mono text-[11px] text-sky-200 hover:bg-primary/35 hover:border-primary/60 transition-colors align-baseline"
+        title={`Inspect ${path}`}
+      >
+        <FileCode size={10} className="text-sky-300 shrink-0" />
+        <span>@{path}</span>
+      </button>,
+    );
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) {
+    parts.push(text.slice(last));
+  }
+  return parts.length ? parts : [text];
+}
+
 function renderMessageContent(
   content: string,
   autoAccept: boolean,
   writesLocked = false,
   terminalTone: TerminalTone = 'discuss',
   skipHighlight = false,
+  onOpenFile?: (path: string) => void,
 ) {
   return splitMessageContent(content).map((block, i) => {
     if (block.kind === 'diff') {
@@ -382,7 +465,7 @@ function renderMessageContent(
     }
     return (
       <div key={i} className="whitespace-pre-wrap break-words font-mono text-[12px] leading-6 text-zinc-200">
-        {block.text}
+        {renderInlinePins(block.text, onOpenFile)}
       </div>
     );
   });
@@ -499,8 +582,9 @@ function MessageBubbleInner({
       writesLocked,
       terminalTone,
       skipHighlight,
+      onOpenFile,
     );
-  }, [mainContent, m.reasoning, autoAcceptEdits, m.status, writesLocked, terminalTone, skipHighlight]);
+  }, [mainContent, m.reasoning, autoAcceptEdits, m.status, writesLocked, terminalTone, skipHighlight, onOpenFile]);
 
   const hasAnswer = !!displayContent.trim();
   const reasoningLive = m.status === 'streaming' && !hasAnswer;
@@ -510,25 +594,25 @@ function MessageBubbleInner({
 
   return (
     <div className={cn('mb-5 max-w-3xl animate-fade-up', isUser && 'ml-auto flex flex-col items-end')}>
-      <div className="mb-1.5 flex items-center gap-2 font-mono text-[10.5px] text-muted-foreground">
-        <span className={cn('font-medium', isUser ? 'text-primary' : 'text-muted-foreground')}>
-          {isUser ? 'You' : 'Abliterated'}
+      <div className="mb-1.5 flex items-center gap-2 font-mono text-[10px] text-muted-foreground tracking-wide">
+        <span className={cn('font-semibold uppercase', isUser ? 'text-primary' : 'text-zinc-400')}>
+          {isUser ? '> OPERATOR' : '// ABLITERATED'}
         </span>
         {isUser && isMidRunMessageContent(m.content) ? (
-          <span className="rounded bg-sky-950/60 px-1 py-0.2 text-[9px] text-sky-300 border border-sky-800/40">
+          <span className="rounded-[2px] bg-sky-950/60 px-1 py-0.2 text-[9px] text-sky-300 border border-sky-800/40">
             mid-run note
           </span>
         ) : null}
         {m.status === 'streaming' ? (
-          <span className="flex items-center gap-1 text-amber-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping" />
+          <span className="flex items-center gap-1 text-amber-400 font-medium">
+            <span className="h-1 w-1 rounded-full bg-amber-400 animate-ping" />
             streaming
           </span>
         ) : null}
         {m.role === 'assistant' && m.mode ? (
           <span
             className={cn(
-              'rounded px-1.5 py-0.2 text-[9px] uppercase font-mono font-medium border',
+              'rounded-[2px] px-1.5 py-0.2 text-[9px] uppercase font-mono font-semibold border',
               m.mode === 'plan'
                 ? 'border-sky-800/60 bg-sky-950/60 text-sky-300'
                 : m.mode === 'ask'
@@ -546,31 +630,31 @@ function MessageBubbleInner({
           <button
             type="button"
             onClick={() => void copy()}
-            className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] normal-case tracking-normal text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
+            className="ml-auto inline-flex items-center gap-1 rounded-[2px] px-1.5 py-0.5 text-[9.5px] uppercase font-mono text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
           >
             {copied ? <Check size={10} className="text-emerald-400" /> : <Copy size={10} />}
-            <span className={copied ? 'text-emerald-400' : ''}>{copied ? 'Copied' : 'Copy'}</span>
+            <span className={copied ? 'text-emerald-400 font-medium' : ''}>{copied ? 'Copied' : 'Copy'}</span>
           </button>
         ) : null}
       </div>
 
       <div
         className={cn(
-          'px-4 py-3 text-[15px] leading-relaxed shadow-sm transition-colors',
+          'px-4 py-3.5 text-[14.5px] leading-relaxed shadow-sm transition-colors',
           isUser
-            ? 'max-w-[min(560px,86%)] rounded-2xl rounded-br-md border border-primary/40 bg-primary/15'
-            : 'rounded-xl border border-border bg-panel/70',
+            ? 'max-w-[min(640px,90%)] rounded-[4px] border border-border/80 bg-zinc-900/70 text-zinc-100 font-sans'
+            : 'rounded-[4px] border border-border/60 bg-zinc-950/75 text-zinc-200',
         )}
       >
-        {m.role === 'assistant' && m.plan && m.plan.length ? (
-          <PlanCard
-            items={m.plan}
+        {m.role === 'assistant' && ((m.steps && m.steps.length > 0) || (m.plan && m.plan.length > 0)) ? (
+          <StepTimeline
+            steps={m.steps}
+            plan={m.plan}
             awaiting={m.planApproved === 'awaiting'}
             onApprove={onApprovePlan}
             onDecline={onDeclinePlan}
           />
         ) : null}
-        {m.role === 'assistant' && m.steps && m.steps.length ? <StepTimeline steps={m.steps} /> : null}
         {m.role === 'assistant' && m.files && m.files.length ? (
           <div className="mb-2 flex flex-wrap gap-1">
             {m.files.map((f) => (
@@ -702,7 +786,7 @@ function MessageBubbleInner({
               </>
             )}
             {changeSummary && (changeSummary.changes.length > 0 || changeSummary.verifications.length > 0) ? (
-              <div className="mt-3 rounded-lg border border-border/80 bg-surface/50 p-3 text-[11px] leading-5 font-mono">
+              <div className="mt-3 rounded-[3px] border border-border bg-surface/60 p-3 text-[11px] leading-5 font-mono">
                 <div className="mb-2 flex items-center justify-between border-b border-border/60 pb-1.5">
                   <div className="flex items-center gap-1.5 font-semibold text-zinc-200">
                     <CheckCircle2
@@ -715,7 +799,7 @@ function MessageBubbleInner({
                   </div>
                   <span
                     className={cn(
-                      'rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-semibold border',
+                      'rounded-[2px] px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-semibold border',
                       changeSummary.verified
                         ? 'border-emerald-800/60 bg-emerald-950/70 text-emerald-300'
                         : 'border-amber-800/60 bg-amber-950/70 text-amber-300',
@@ -736,7 +820,7 @@ function MessageBubbleInner({
                         type="button"
                         title={f.path}
                         onClick={() => onOpenFile?.(f.path)}
-                        className="inline-flex items-center gap-1 rounded border border-border/70 bg-zinc-900/80 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:border-sky-500/50 hover:text-sky-200 transition-colors"
+                        className="inline-flex items-center gap-1 rounded-[2px] border border-border bg-zinc-900/80 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:border-sky-500/50 hover:text-sky-200 transition-colors"
                       >
                         <FileCode size={10} className="text-zinc-500" />
                         <span>{f.path.split('/').pop()}</span>
@@ -783,7 +867,7 @@ function MessageBubbleInner({
             ) : null}
 
             {m.checkpointId ? (
-              <div className="mt-2.5 flex items-center justify-between rounded-lg border border-sky-800/50 bg-sky-950/40 px-3 py-2 font-mono text-[11px] text-sky-200 shadow-sm">
+              <div className="mt-2.5 flex items-center justify-between rounded-[3px] border border-sky-800/50 bg-sky-950/40 px-3 py-2 font-mono text-[11px] text-sky-200 shadow-sm">
                 <div className="flex items-center gap-2 min-w-0">
                   <RotateCcw size={12} className="text-sky-400 shrink-0" />
                   <span className="text-zinc-400 text-[10px] uppercase tracking-wider">Checkpoint:</span>
@@ -793,7 +877,7 @@ function MessageBubbleInner({
                   <button
                     type="button"
                     onClick={() => onRestoreCheckpointById(m.checkpointId!)}
-                    className="shrink-0 ml-3 rounded border border-sky-600/60 bg-sky-900/70 px-2.5 py-1 text-[10px] font-semibold text-sky-200 hover:bg-sky-800 hover:text-white transition-all shadow-sm"
+                    className="shrink-0 ml-3 rounded-[2px] border border-sky-600/60 bg-sky-900/70 px-2.5 py-1 text-[10px] font-semibold text-sky-200 hover:bg-sky-800 hover:text-white transition-all shadow-sm"
                   >
                     Restore Checkpoint
                   </button>
@@ -802,7 +886,7 @@ function MessageBubbleInner({
             ) : null}
 
             {m.diagnostics && m.diagnostics.length > 0 ? (
-              <div className="mt-2.5 rounded-lg border border-amber-800/60 bg-amber-950/30 p-2.5 font-mono text-[11px] text-amber-200">
+              <div className="mt-2.5 rounded-[3px] border border-amber-800/60 bg-amber-950/30 p-2.5 font-mono text-[11px] text-amber-200">
                 <div className="flex items-center gap-1.5 font-semibold text-amber-300 text-[11px]">
                   <AlertTriangle size={13} className="text-amber-400 shrink-0" />
                   <span>Post-edit diagnostics: {m.diagnostics.length} issue(s) detected</span>
@@ -835,7 +919,7 @@ function MessageBubbleInner({
                       title={opt}
                       disabled={!onContinuePrompt}
                       onClick={() => onContinuePrompt?.(opt)}
-                      className="rounded border border-border bg-surface px-2.5 py-1 text-left font-mono text-[10px] leading-4 text-zinc-300 hover:border-sky-500/50 hover:text-sky-200 hover:bg-sky-950/20 transition-all disabled:opacity-40"
+                      className="rounded-[2px] border border-border bg-surface px-2.5 py-1 text-left font-mono text-[10px] leading-4 text-zinc-300 hover:border-sky-500/50 hover:text-sky-200 hover:bg-sky-950/20 transition-all disabled:opacity-40"
                     >
                       <span className="mr-1 text-sky-400 font-semibold">[{i + 1}]</span>
                       {opt}

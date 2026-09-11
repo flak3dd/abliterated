@@ -47,8 +47,8 @@ export default {
         'emerald-glow': '0 0 20px -5px hsl(var(--signal) / 0.3)',
       },
       fontFamily: {
-        mono: ['JetBrains Mono', 'Menlo', 'Monaco', 'Courier New', 'monospace'],
-        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'Segoe UI', 'sans-serif'],
+        mono: ['IBM Plex Mono', 'JetBrains Mono', 'Menlo', 'Monaco', 'Courier New', 'monospace'],
+        sans: ['Space Grotesk', 'IBM Plex Sans', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
       },
       keyframes: {
         'fade-up': {

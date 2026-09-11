@@ -26,7 +26,7 @@ export function Section({
 }) {
   return (
     <section
-      className={`rounded-xl border p-4 shadow-sm transition-colors ${
+      className={`rounded-[4px] border p-4 shadow-sm transition-colors ${
         danger
           ? 'border-rose-900/60 bg-rose-950/20'
           : 'border-zinc-800/80 bg-zinc-950/60'
@@ -99,7 +99,7 @@ export function BuiltinTokenMeter({
   const pct = !Number.isFinite(cap) || cap <= 0 ? 0 : Math.min(100, Math.round((used / cap) * 100));
 
   return (
-    <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+    <div className="mt-2 rounded-[4px] border border-zinc-800 bg-zinc-900/60 p-3">
       <div className="flex items-center justify-between">
         <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
           Built-in model token wallet
@@ -113,7 +113,7 @@ export function BuiltinTokenMeter({
           ? `${formatTokenCount(wallet.includedRemaining)} included + ${formatTokenCount(wallet.prepaidRemaining)} prepaid`
           : `of ${formatTokenCount(cap)} (local estimate)`}
       </div>
-      <div className="mt-2.5 h-1.5 overflow-hidden rounded bg-zinc-800">
+      <div className="mt-2.5 h-1.5 overflow-hidden rounded-[2px] bg-zinc-800">
         <div
           className={`h-full transition-all duration-300 ${
             pct >= 100 ? 'bg-rose-500' : pct >= 80 ? 'bg-amber-400' : 'bg-sky-500'

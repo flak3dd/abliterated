@@ -83,7 +83,7 @@ export function SafetyTab({ settings, patch, selectedSetupId }: SafetyTabProps) 
         title="Inference & Pairing Code"
         hint="Pairing code for the localhost bridge. Inference endpoints live under API."
       >
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+        <div className="rounded-[3px] border border-zinc-800 bg-zinc-900/60 p-3">
           <div className="flex items-center justify-between">
             <span className="font-mono text-[10px] uppercase text-muted">Active Pairing Code</span>
             <button

@@ -49,7 +49,7 @@ export function SetupWizard({ settings, onSettingsChange }: Props) {
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-lg rounded-xl border border-border bg-background p-5 shadow-xl">
+      <div className="w-full max-w-lg rounded-[4px] border border-border bg-background p-5 shadow-xl">
         <div className="font-mono text-[10px] uppercase text-muted">First-run setup · {step + 1}/3</div>
         <h2 className="mt-1 text-lg font-semibold text-foreground">Connect Abliterated</h2>
 

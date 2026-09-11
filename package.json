@@ -97,6 +97,7 @@
     "test:eval-fixtures": "node scripts/eval-fixtures.mjs",
     "test:capability-router": "node scripts/test-capability-router.mjs",
     "test:billing": "node scripts/test-billing-api.mjs",
+    "test:stripe-ui": "node scripts/test-stripe-ui-integration.mjs",
     "test:auth": "node scripts/test-auth-api.mjs",
     "test:url-safety": "node scripts/test-url-safety.mjs",
     "test:license-harden": "node scripts/test-license-harden.mjs",

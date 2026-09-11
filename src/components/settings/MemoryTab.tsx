@@ -248,7 +248,7 @@ export function MemoryTab({
           </button>
         </div>
         {mpHint ? (
-          <pre className="mt-2.5 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-800 bg-zinc-950/80 px-3 py-2 font-mono text-[10px] text-sky-300">
+          <pre className="mt-2.5 max-h-40 overflow-auto whitespace-pre-wrap rounded-[3px] border border-zinc-800 bg-zinc-950/80 px-3 py-2 font-mono text-[10px] text-sky-300">
             {mpHint}
           </pre>
         ) : null}
@@ -260,7 +260,7 @@ export function MemoryTab({
         hint="Always-do list and hard conventions auto-injected into the agent system prompt."
       >
         {!ws ? (
-          <div className="rounded-xl border border-dashed border-zinc-800 p-4 text-center font-mono text-[11px] text-muted">
+          <div className="rounded-[4px] border border-dashed border-zinc-800 p-4 text-center font-mono text-[11px] text-muted">
             Connect a workspace to configure repo-specific rules.
           </div>
         ) : (

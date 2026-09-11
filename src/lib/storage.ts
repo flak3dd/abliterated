@@ -502,7 +502,7 @@ export function saveMessage(message: Message): Message[] {
   if (idx >= 0) all[idx] = stored;
   else all.push(stored);
   setMessages(all);
-  return all.filter((m) => m.threadId === toSave.threadId);
+  return all.filter((m) => m.threadId === message.threadId);
 }
 
 /** Replace one thread's rows in ablit_messages (used by Chat retry). */

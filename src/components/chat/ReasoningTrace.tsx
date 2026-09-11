@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type MouseEvent } from 'react';
-import { Brain, Check, ChevronDown, ChevronRight, Copy } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { cn } from '../../lib/cn';
-import { splitReasoningSections } from '../../lib/reasoningWork';
 
 type Props = {
   text: string;
@@ -21,7 +20,6 @@ function formatElapsed(startedAt?: number, streaming?: boolean): string {
 }
 
 export function ReasoningTrace({ text, streaming = false, hasAnswer = false, startedAt }: Props) {
-  const sections = useMemo(() => splitReasoningSections(text), [text]);
   const [open, setOpen] = useState(() => streaming || !hasAnswer);
   const [copied, setCopied] = useState(false);
   const [tick, setTick] = useState(0);
@@ -41,13 +39,6 @@ export function ReasoningTrace({ text, streaming = false, hasAnswer = false, sta
   if (!text.trim()) return null;
 
   const elapsed = useMemo(() => formatElapsed(startedAt, streaming), [startedAt, streaming, tick]);
-  const meta = [
-    streaming ? 'active' : null,
-    sections.length > 1 ? `${sections.length} steps` : null,
-    elapsed ? (streaming ? elapsed : `thought ${elapsed}`) : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
 
   const copy = async (e: MouseEvent) => {
     e.stopPropagation();
@@ -61,53 +52,37 @@ export function ReasoningTrace({ text, streaming = false, hasAnswer = false, sta
   };
 
   return (
-    <div className={cn('reasoning-trace', hasAnswer ? 'mt-2.5' : 'mb-2.5')}>
-      <div className="reasoning-trace-bar">
+    <div className={cn('text-xs font-mono select-none', hasAnswer ? 'mt-2' : 'mb-2')}>
+      <div className="flex items-center gap-2 text-zinc-500">
         <button
           type="button"
-          className="reasoning-trace-toggle"
-          aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
+          className="inline-flex items-center gap-1.5 py-0.5 text-zinc-400 hover:text-zinc-200 transition-colors"
         >
-          {open ? <ChevronDown size={14} className="shrink-0 text-amber-400/90" /> : <ChevronRight size={14} className="shrink-0 text-amber-400/90" />}
-          <Brain size={13} className={cn('shrink-0 text-amber-400', streaming && 'animate-pulse')} />
-          <span className="font-medium text-zinc-200">{streaming ? 'Thinking…' : 'Thought'}</span>
-          {meta ? <span className="text-zinc-500">{meta}</span> : null}
+          <ChevronRight
+            size={12}
+            className={cn('transition-transform text-zinc-500', open && 'rotate-90 text-zinc-400')}
+          />
+          <span className={cn(streaming ? 'text-amber-400 animate-pulse font-medium' : 'text-zinc-400')}>
+            {streaming ? `Thinking… ${elapsed}` : `Thought${elapsed ? ` for ${elapsed}` : ''}`}
+          </span>
         </button>
-        <button
-          type="button"
-          className="reasoning-trace-copy"
-          onClick={copy}
-        >
-          {copied ? <Check size={10} className="text-emerald-400" /> : <Copy size={10} />}
-          {copied ? 'Copied' : 'Copy'}
-        </button>
+
+        {open ? (
+          <button
+            type="button"
+            onClick={copy}
+            className="text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors ml-auto"
+            title="Copy thought"
+          >
+            {copied ? <span className="text-emerald-400 font-medium">copied</span> : 'copy'}
+          </button>
+        ) : null}
       </div>
+
       {open ? (
-        <div className="reasoning-trace-body">
-          {sections.map((sec, i) => {
-            const nested = sections.length > 1;
-            if (!nested) {
-              return (
-                <div key={sec.id} className="reasoning-trace-prose">
-                  {sec.body}
-                </div>
-              );
-            }
-            return (
-              <details
-                key={sec.id}
-                className="reasoning-sub"
-                open={streaming ? i === sections.length - 1 : i === 0}
-              >
-                <summary>
-                  <ChevronRight size={12} className="reasoning-sub-chevron" />
-                  {sec.title}
-                </summary>
-                <div className="reasoning-trace-prose">{sec.body}</div>
-              </details>
-            );
-          })}
+        <div className="mt-1.5 border-l border-zinc-800/80 pl-3 py-0.5 text-zinc-400 whitespace-pre-wrap select-text leading-relaxed text-[11px]">
+          {text}
         </div>
       ) : null}
     </div>

@@ -443,6 +443,12 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
           setPlanMsg(`Stripe paid — activated ${next.label}.`);
           return;
         }
+        if (session.status === 'expired' || session.status === 'canceled') {
+          setPendingStripeSession(null);
+          setPlanBusy(null);
+          setPlanMsg(`Stripe checkout ${session.status}. Please start a new checkout.`);
+          return;
+        }
         setPlanMsg(
           `Stripe: ${session.payment_status || session.status || 'pending'} — waiting for license… (${i + 1})`,
         );
@@ -515,7 +521,7 @@ export function SettingsScreen({ settings, onSettingsChange, onWiped }: Props) {
         email,
         client_reference_id: deviceId,
       });
-      const sessionId = extractStripeSessionId(created.url);
+      const sessionId = created.sessionId || extractStripeSessionId(created.url);
       if (sessionId) setPendingStripeSession(sessionId);
       await openBillingUrl(created.url);
       if (sessionId) {

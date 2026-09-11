@@ -132,13 +132,13 @@ export function BillingTab({
   return (
     <div className="space-y-4">
       {/* 1. License & Identity Hero Card */}
-      <div className="rounded-xl border border-zinc-800 bg-gradient-to-r from-zinc-950 via-zinc-900/60 to-zinc-950 p-4 shadow-sm">
+      <div className="rounded-[4px] border border-zinc-800 bg-zinc-950 p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="font-mono text-[10px] uppercase tracking-wider text-muted">Current License</div>
             <div className="mt-1 flex items-center gap-2">
               <span
-                className={`rounded-full border px-3 py-1 font-mono text-[12px] font-bold uppercase tracking-wider ${
+                className={`rounded-[3px] border px-2.5 py-0.5 font-mono text-[11px] font-bold uppercase tracking-wider ${
                   license.tier === 'admin'
                     ? 'border-purple-500/60 bg-purple-950/50 text-purple-300'
                     : license.tier === 'pro'

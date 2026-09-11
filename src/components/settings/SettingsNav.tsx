@@ -108,11 +108,11 @@ export function SettingsHeader({
         <div className="flex items-center gap-2.5">
           <h1 className="font-mono text-xl font-bold tracking-tight text-white">Settings</h1>
           <span
-            className={`rounded-full border px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider ${
+            className={`rounded-[3px] border px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider ${
               license.tier === 'admin'
-                ? 'border-purple-500/60 bg-purple-950/40 text-purple-300 shadow-[0_0_12px_rgba(168,85,247,0.2)]'
+                ? 'border-purple-500/60 bg-purple-950/40 text-purple-300'
                 : license.tier === 'pro'
-                ? 'border-sky-500/60 bg-sky-950/40 text-sky-300 shadow-[0_0_12px_rgba(14,165,233,0.2)]'
+                ? 'border-sky-500/60 bg-sky-950/40 text-sky-300'
                 : 'border-zinc-700 bg-zinc-900 text-zinc-400'
             }`}
           >
@@ -176,9 +176,9 @@ export function SettingsNavSidebar({
             key={tab.id}
             type="button"
             onClick={() => onTabChange(tab.id)}
-            className={`group flex items-center justify-between rounded-xl px-3 py-2 text-left font-mono transition-all shrink-0 md:shrink ${
+            className={`group flex items-center justify-between rounded-[4px] px-3 py-2 text-left font-mono transition-all shrink-0 md:shrink ${
               isActive
-                ? 'bg-zinc-100 font-bold text-zinc-950 shadow-md ring-1 ring-white/50'
+                ? 'bg-zinc-100 font-bold text-zinc-950 shadow-sm ring-1 ring-white/50'
                 : 'bg-zinc-900/60 text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-200 border border-zinc-800/60'
             }`}
           >
@@ -198,7 +198,7 @@ export function SettingsNavSidebar({
 
             {tab.badge ? (
               <span
-                className={`ml-2 shrink-0 rounded-full border px-1.5 py-0.2 font-mono text-[9px] font-semibold transition-colors ${
+                className={`ml-2 shrink-0 rounded-[3px] border px-1.5 py-0.2 font-mono text-[9px] font-semibold transition-colors ${
                   isActive
                     ? 'border-zinc-400 bg-zinc-200 text-zinc-900'
                     : tab.badgeColor || 'border-zinc-700 bg-zinc-800 text-zinc-400'

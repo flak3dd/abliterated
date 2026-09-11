@@ -59,20 +59,20 @@ export function AgentTab({
   return (
     <div className="space-y-4">
       {/* 0. Master Agent Invariant Protection Banner */}
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/40 bg-emerald-950/20 px-4 py-2.5 font-mono text-[11px] shadow-sm backdrop-blur">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-[4px] border border-emerald-500/40 bg-emerald-950/20 px-4 py-2.5 font-mono text-[11px] shadow-sm backdrop-blur">
         <div className="flex items-center gap-2.5">
-          <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="h-2 w-2 rounded-[1px] bg-emerald-400 animate-pulse" />
           <span className="font-bold text-emerald-200">AI Agent Runtime Invariants Active</span>
           <span className="text-zinc-500">·</span>
           <span className="text-zinc-300">Protected against invalid configs, dead endpoints & tool starvation</span>
         </div>
-        <span className="rounded border border-emerald-600/50 bg-emerald-900/40 px-2 py-0.5 text-[10px] font-bold text-emerald-300 uppercase tracking-wider">
+        <span className="rounded-[2px] border border-emerald-600/50 bg-emerald-900/40 px-2 py-0.5 text-[10px] font-bold text-emerald-300 uppercase tracking-wider">
           Auto-Healing ON
         </span>
       </div>
 
       {/* 1. Setup & Workflow Profiles Selector */}
-      <div className="rounded-xl border border-zinc-800/90 bg-zinc-950/80 p-4 shadow-sm backdrop-blur">
+      <div className="rounded-[4px] border border-zinc-800/90 bg-zinc-950/80 p-4 shadow-sm backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="flex items-center gap-2">
@@ -89,20 +89,20 @@ export function AgentTab({
           {/* Live Match Badge */}
           <div className="flex items-center gap-2">
             {setupAnalysis.isExactMatch ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-800/70 bg-emerald-950/60 px-3 py-1 font-mono text-[11px] font-semibold text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.15)]">
-                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="inline-flex items-center gap-1.5 rounded-[3px] border border-emerald-800/70 bg-emerald-950/60 px-2.5 py-1 font-mono text-[11px] font-semibold text-emerald-300">
+                <span className="h-1.5 w-1.5 rounded-[1px] bg-emerald-400 animate-pulse" />
                 {activeProfile.name} (100% Aligned)
               </span>
             ) : (
               <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-800/70 bg-amber-950/60 px-2.5 py-1 font-mono text-[11px] font-semibold text-amber-300">
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                <span className="inline-flex items-center gap-1.5 rounded-[3px] border border-amber-800/70 bg-amber-950/60 px-2.5 py-1 font-mono text-[11px] font-semibold text-amber-300">
+                  <span className="h-1.5 w-1.5 rounded-[1px] bg-amber-400" />
                   {activeProfile.name} ({setupAnalysis.matchScore}% · {setupAnalysis.divergentCount} Divergent)
                 </span>
                 <button
                   type="button"
                   onClick={() => onSelectSetup(selectedSetupId)}
-                  className="rounded-md border border-amber-600/50 bg-amber-500/15 px-2.5 py-1 font-mono text-[10px] font-bold text-amber-200 transition-colors hover:bg-amber-500/25 hover:text-white"
+                  className="rounded-[2px] border border-amber-600/50 bg-amber-500/15 px-2.5 py-1 font-mono text-[10px] font-bold text-amber-200 transition-colors hover:bg-amber-500/25 hover:text-white"
                   title={`Reset all toggles to the official ${activeProfile.name} defaults`}
                 >
                   Re-align All
@@ -113,10 +113,10 @@ export function AgentTab({
         </div>
 
         {/* AI Agent API Alignment Bar */}
-        <div className="mt-3 overflow-hidden rounded-xl border border-zinc-800/90 bg-gradient-to-r from-zinc-950 via-zinc-900/80 to-zinc-950 p-3 shadow-md">
+        <div className="mt-3 overflow-hidden rounded-[4px] border border-zinc-800/90 bg-zinc-950 p-3 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-700/80 bg-zinc-900 shadow-inner">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[3px] border border-zinc-700/80 bg-zinc-900 shadow-inner">
                 <span className="text-lg">{providerIcon}</span>
               </div>
               <div>
@@ -124,7 +124,7 @@ export function AgentTab({
                   <span className="font-mono text-[12px] font-bold tracking-tight text-white">
                     {alignment.name}
                   </span>
-                  <span className="rounded-full border border-zinc-700/80 bg-zinc-800/80 px-2 py-0.5 font-mono text-[9px] font-semibold text-zinc-300">
+                  <span className="rounded-[2px] border border-zinc-700/80 bg-zinc-800/80 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-zinc-300">
                     {alignment.badge}
                   </span>
                   <span className="font-mono text-[10px] text-zinc-400">
@@ -139,20 +139,20 @@ export function AgentTab({
 
             <div className="flex flex-wrap items-center gap-2">
               {providerStatus.isAligned ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/60 bg-emerald-950/70 px-3 py-1 font-mono text-[11px] font-bold text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.2)]">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="inline-flex items-center gap-1.5 rounded-[2px] border border-emerald-500/60 bg-emerald-950/70 px-2.5 py-1 font-mono text-[11px] font-bold text-emerald-300">
+                  <span className="h-1.5 w-1.5 rounded-[1px] bg-emerald-400 animate-pulse" />
                   ✓ Optimal for {alignment.name}
                 </span>
               ) : (
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-600/60 bg-amber-950/70 px-2.5 py-1 font-mono text-[10px] font-bold text-amber-300">
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                  <span className="inline-flex items-center gap-1.5 rounded-[2px] border border-amber-600/60 bg-amber-950/70 px-2 py-1 font-mono text-[10px] font-bold text-amber-300">
+                    <span className="h-1.5 w-1.5 rounded-[1px] bg-amber-400" />
                     API Divergent ({providerStatus.matchScore}%)
                   </span>
                   <button
                     type="button"
                     onClick={() => onAlignToProvider(activeProvider)}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-gradient-to-r from-emerald-600 to-teal-600 px-3 py-1 font-mono text-[11px] font-bold text-white shadow-[0_0_12px_rgba(16,185,129,0.3)] transition-all hover:from-emerald-500 hover:to-teal-500"
+                    className="inline-flex items-center gap-1.5 rounded-[3px] border border-emerald-500/60 bg-emerald-950/80 px-3 py-1 font-mono text-[11px] font-bold text-emerald-300 hover:bg-emerald-900/60 transition-colors"
                     title={`Align toggles, agent mode, and turn limits to official ${alignment.name} profile`}
                   >
                     <span>⚡</span>
@@ -219,11 +219,11 @@ export function AgentTab({
               <div
                 key={p.id}
                 onClick={() => onSelectSetup(p.id)}
-                className={`group relative flex cursor-pointer flex-col justify-between rounded-lg border p-3 transition-all duration-200 ${
+                className={`group relative flex cursor-pointer flex-col justify-between rounded-[3px] border p-3 transition-all duration-200 ${
                   isOptimalForActiveApi && isSelected
-                    ? 'border-emerald-500/80 bg-emerald-950/30 shadow-[0_0_20px_rgba(16,185,129,0.18)] ring-1 ring-emerald-500/50'
+                    ? 'border-emerald-500/80 bg-emerald-950/30 ring-1 ring-emerald-500/50'
                     : isSelected
-                    ? 'border-emerald-500/70 bg-emerald-950/25 shadow-[0_0_20px_rgba(16,185,129,0.12)] ring-1 ring-emerald-500/40'
+                    ? 'border-emerald-500/70 bg-emerald-950/25 ring-1 ring-emerald-500/40'
                     : isOptimalForActiveApi
                     ? 'border-emerald-800/60 bg-zinc-900/50 hover:border-emerald-600/70 hover:bg-zinc-900/80'
                     : 'border-zinc-800/80 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-900/80'
@@ -234,12 +234,12 @@ export function AgentTab({
                     <span className="text-xl">{p.icon}</span>
                     <div className="flex items-center gap-1">
                       {isOptimalForActiveApi ? (
-                        <span className="rounded-full bg-emerald-500/20 border border-emerald-500/50 px-1.5 py-0.2 font-mono text-[8px] font-bold text-emerald-300 uppercase tracking-wider">
+                        <span className="rounded-[2px] bg-emerald-500/20 border border-emerald-500/50 px-1.5 py-0.2 font-mono text-[8px] font-bold text-emerald-300 uppercase tracking-wider">
                           ★ Optimal
                         </span>
                       ) : null}
                       <span
-                        className={`rounded-full px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider ${
+                        className={`rounded-[2px] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider ${
                           isSelected
                             ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                             : 'bg-zinc-800/90 text-zinc-400 border border-zinc-700/60'
@@ -305,7 +305,7 @@ export function AgentTab({
 
       {/* 2. Divergent Toggles Alert (if any) */}
       {setupAnalysis.divergentCount > 0 ? (
-        <div className="rounded-xl border border-amber-800/60 bg-amber-950/20 p-3.5">
+        <div className="rounded-[4px] border border-amber-800/60 bg-amber-950/20 p-3.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="text-amber-400">⚠️</span>

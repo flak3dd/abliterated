@@ -1,0 +1,179 @@
+# ==============================================================================
+# Abliterated AI — DGX Spark Compose Specification (compose.yaml)
+# ==============================================================================
+# Tailored specifically for NVIDIA DGX Spark (GB10 / Blackwell / sm_121a):
+#   - Hardware Target: NVIDIA GB10 Blackwell (sm_121a), aarch64 (ARM64), CUDA 13.0
+#   - Unified Memory: 128 GB unified VRAM/RAM, 273 GB/s bandwidth
+#   - Text Service (:8000): THe-Plague Qwen3.6-35B-A3B NVFP4 + MTP vLLM engine
+#   - Image Service (:7860): Diffusers Krea 2 RAW 4B uncensored image bridge
+#   - Controller (:17325): Standalone DGX Spark telemetry & vLLM recipe manager
+# ==============================================================================
+
+name: abliterated-spark
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Primary LLM: Qwen 3.6 35B-A3B Abliterated (vLLM NVFP4 + MTP)
+  # ----------------------------------------------------------------------------
+  # Note: Container ENTRYPOINT is ["vllm", "serve"]. Command starts with model path.
+  # Do not pass --moe-backend marlin (MTP draft layers are unquantized and crash).
+  # ----------------------------------------------------------------------------
+  qwen-abliterated:
+    image: ${IMAGE:-vllm/vllm-openai:cu130-nightly}
+    container_name: qwen-abliterated
+    platform: linux/arm64
+    restart: unless-stopped
+    ipc: host
+    shm_size: "32gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ${MODEL_DIR:-./spark/models/Qwen3.6-35B-A3B-abliterated-NVFP4-MTP}:/models/current:ro
+      - hf_cache:/root/.cache/huggingface
+    environment:
+      # DGX Spark GB10 (sm_121a) Architecture Optimizations
+      CUTE_DSL_ARCH: sm_121a
+      TORCH_CUDA_ARCH_LIST: "12.1;12.1a"
+      VLLM_NVFP4_GEMM_BACKEND: marlin
+      VLLM_TEST_FORCE_FP8_MARLIN: "1"
+      VLLM_USE_FLASHINFER_MOE_FP4: "0"
+      FLASHINFER_DISABLE_VERSION_CHECK: "1"
+      TRITON_PTXAS_PATH: /usr/local/cuda/bin/ptxas
+      TORCH_FLOAT32_MATMUL_PRECISION: high
+      NCCL_DEBUG: WARN
+      # Authentication (only needed for gated Hugging Face weights)
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+    command:
+      - /models/current
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --served-model-name
+      - ${SERVED_NAME:-qwen-abliterated}
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.6}"
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-65536}"
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3}'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/v1/models || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    profiles:
+      - default
+      - text
+      - llm
+      - all
+
+  # ----------------------------------------------------------------------------
+  # 2. Image Generation: Diffusers Krea 2 RAW OpenAI Bridge (Port 7860)
+  # ----------------------------------------------------------------------------
+  # Uncensored Build D image stack running Krea 2 RAW 4B + Huihui abliterated TE.
+  # ----------------------------------------------------------------------------
+  spark-image:
+    build:
+      context: ./spark-image
+      dockerfile: Dockerfile
+    container_name: abliterated-image
+    platform: linux/arm64
+    restart: unless-stopped
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "${IMAGE_PORT:-7860}:7860"
+    environment:
+      ABLITERATED_IMAGE_HOST: "0.0.0.0"
+      ABLITERATED_IMAGE_PORT: "7860"
+      SAMPLER_BACKEND: "${SAMPLER_BACKEND:-diffusers}"
+      FLUX_MODEL_ID: "${FLUX_MODEL_ID:-krea2-raw-fp8}"
+      IMAGE_MODEL_ID: "${IMAGE_MODEL_ID:-krea2-raw-fp8}"
+      SAMPLER_STEPS: "${SAMPLER_STEPS:-24}"
+      FLUX_STEPS: "${FLUX_STEPS:-24}"
+      SAMPLER_GUIDANCE: "${SAMPLER_GUIDANCE:-3.5}"
+      SAMPLER_SAMPLER: "${SAMPLER_SAMPLER:-euler}"
+      SAMPLER_SCHEDULER: "${SAMPLER_SCHEDULER:-beta}"
+      SAMPLER_LORA_STRENGTH: "${SAMPLER_LORA_STRENGTH:-0.75}"
+      SAMPLER_MAX_EDGE: "${SAMPLER_MAX_EDGE:-1536}"
+      TORCH_FLOAT32_MATMUL_PRECISION: high
+      CUTE_DSL_ARCH: sm_121a
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+      - ./spark-image/models:/app/models
+      - ./spark-image/logs:/app/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:7860/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    profiles:
+      - default
+      - image
+      - all
+
+  # ----------------------------------------------------------------------------
+  # 3. DGX Spark Controller: Standalone Web App & Telemetry (Port 17325)
+  # ----------------------------------------------------------------------------
+  # Serves live GB10 GPU telemetry (temperature, utilization, VRAM, power draw)
+  # and provides REST control for vLLM recipe management and stack lifecycle.
+  # ----------------------------------------------------------------------------
+  spark-controller:
+    image: node:20-alpine
+    container_name: spark-controller
+    platform: linux/arm64
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - .:/app:ro
+    ports:
+      - "${CONTROLLER_PORT:-17325}:17325"
+    environment:
+      PORT: 17325
+      HOST: 0.0.0.0
+      NODE_ENV: production
+    command: ["node", "spark-controller/server.mjs"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:17325/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles:
+      - default
+      - controller
+      - all
+
+volumes:
+  hf_cache:
+    name: abliterated_spark_hf_cache

@@ -132,7 +132,7 @@ export function ToolsTab({
               const st = hit ? getMcpServerState(hit.id) : undefined;
               const on = Boolean(hit?.enabled);
               return (
-                <div key={entry.id} className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-2.5">
+                <div key={entry.id} className="rounded-[3px] border border-zinc-800 bg-zinc-900/50 p-2.5">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="font-mono text-[12px] font-bold text-zinc-200">{entry.title}</div>
@@ -226,7 +226,7 @@ export function ToolsTab({
                 const connected = !!st?.connected;
                 const busy = mcpBusyId === s.id;
                 return (
-                  <div key={s.id} className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-2.5">
+                  <div key={s.id} className="rounded-[3px] border border-zinc-800 bg-zinc-900/60 p-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <input
@@ -236,7 +236,7 @@ export function ToolsTab({
                           className="field field-sm py-0.5 font-mono text-[11px]"
                         />
                         <span
-                          className={`rounded-full px-2 py-0.5 font-mono text-[9px] font-bold uppercase ${
+                          className={`rounded-[2px] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase ${
                             connected
                               ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                               : st?.error
@@ -296,7 +296,7 @@ export function ToolsTab({
           )}
 
           {/* Add custom MCP row */}
-          <div className="mt-3 rounded-lg border border-zinc-800/80 bg-zinc-950/40 p-2.5">
+          <div className="mt-3 rounded-[3px] border border-zinc-800/80 bg-zinc-950/40 p-2.5">
             <div className="font-mono text-[10px] uppercase text-muted mb-1.5">Add Custom Stdio MCP Server</div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
               <input
@@ -362,7 +362,7 @@ export function ToolsTab({
           />
         </div>
 
-        <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 font-mono text-[11px] text-zinc-400">
+        <div className="mt-3 rounded-[3px] border border-zinc-800 bg-zinc-950/60 p-3 font-mono text-[11px] text-zinc-400">
           <div className="font-semibold text-zinc-300">Discovered Skill Locations:</div>
           <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-3">
             <div>Bundled: <span className="text-zinc-200">{roots.bundled}</span></div>

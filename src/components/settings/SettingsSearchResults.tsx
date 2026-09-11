@@ -347,7 +347,7 @@ export function SettingsSearchResults({
 
   if (matches.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-zinc-800 p-8 text-center">
+      <div className="rounded-[4px] border border-dashed border-zinc-800 p-8 text-center">
         <div className="text-2xl">🔍</div>
         <div className="mt-2 font-mono text-sm font-semibold text-zinc-300">
           No settings found matching "{query}"
@@ -403,7 +403,7 @@ export function SettingsSearchResults({
           return (
             <div
               key={item.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 hover:border-zinc-700"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-[3px] border border-zinc-800 bg-zinc-950/60 p-3 hover:border-zinc-700"
             >
               <div>
                 <div className="flex items-center gap-2">

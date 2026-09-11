@@ -100,6 +100,7 @@ export type StripeCheckoutRequest = {
 
 export type StripeCheckoutResponse = {
   url: string;
+  sessionId?: string;
   customerId?: string;
   mode?: string;
 };
@@ -231,8 +232,15 @@ export async function createStripeCheckout(
   if (!res.ok) throw errorFromBody(json, 'Checkout failed', res.status);
   const checkoutUrl = typeof json.url === 'string' ? json.url : '';
   if (!checkoutUrl) throw new BillingApiError('Checkout response missing url', res.status);
+  const sessionId =
+    typeof json.sessionId === 'string'
+      ? json.sessionId
+      : typeof json.session_id === 'string'
+      ? json.session_id
+      : undefined;
   return {
     url: checkoutUrl,
+    sessionId,
     customerId: typeof json.customerId === 'string' ? json.customerId : undefined,
     mode: typeof json.mode === 'string' ? json.mode : undefined,
   };
@@ -255,11 +263,25 @@ export async function getCheckoutSession(
   if (!res.ok) throw errorFromBody(json, 'Session lookup failed', res.status);
   const licenseRaw = json.license;
   let license: CheckoutSessionResponse['license'] = null;
-  if (licenseRaw && typeof licenseRaw === 'object' && !Array.isArray(licenseRaw)) {
+  if (typeof json.license === 'string' && json.license.trim()) {
+    license = { key: json.license.trim() };
+  } else if (typeof json.licenseKey === 'string' && json.licenseKey.trim()) {
+    license = { key: json.licenseKey.trim() };
+  } else if (typeof json.license_key === 'string' && json.license_key.trim()) {
+    license = { key: json.license_key.trim() };
+  } else if (licenseRaw && typeof licenseRaw === 'object' && !Array.isArray(licenseRaw)) {
     const L = licenseRaw as JsonRecord;
-    if (typeof L.key === 'string' && L.key) {
+    const key =
+      typeof L.key === 'string'
+        ? L.key
+        : typeof L.licenseKey === 'string'
+        ? L.licenseKey
+        : typeof L.license_key === 'string'
+        ? L.license_key
+        : '';
+    if (key) {
       license = {
-        key: L.key,
+        key,
         prefix: typeof L.prefix === 'string' ? L.prefix : undefined,
         signed: typeof L.signed === 'boolean' ? L.signed : undefined,
         plan: typeof L.plan === 'string' ? L.plan : undefined,

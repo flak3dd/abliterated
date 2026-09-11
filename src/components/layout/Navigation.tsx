@@ -97,7 +97,7 @@ export function DesktopRail({
           onMouseEnter={() => setHoveredId(item.id)}
           onMouseLeave={() => setHoveredId(null)}
           className={cn(
-            'group relative flex w-full items-center gap-3 rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            'group relative flex w-full items-center gap-3 rounded-[4px] text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
             collapsed ? 'h-10 justify-center px-0' : 'px-3 py-2.5',
             active
               ? 'bg-sidebar-accent text-sidebar-accent-foreground'
@@ -106,7 +106,7 @@ export function DesktopRail({
         >
           {active ? (
             <span
-              className="absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-r-full bg-primary"
+              className="absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-r-[2px] bg-primary"
               aria-hidden
             />
           ) : null}
@@ -122,9 +122,9 @@ export function DesktopRail({
           {collapsed ? null : <span className="truncate">{item.label}</span>}
         </button>
         {isHovered ? (
-          <div className="pointer-events-none absolute left-full z-50 ml-3 flex items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-panel px-2.5 py-1 text-[12px] text-foreground shadow-xl">
+          <div className="pointer-events-none absolute left-full z-50 ml-3 flex items-center gap-1.5 whitespace-nowrap rounded-[3px] border border-border bg-panel px-2.5 py-1 text-[12px] text-foreground shadow-xl">
             <span>{item.label}</span>
-            <span className="rounded bg-surface px-1 py-0.5 font-mono text-[9px] text-muted-foreground">{item.shortcut}</span>
+            <span className="rounded-[2px] bg-surface px-1 py-0.5 font-mono text-[9px] text-muted-foreground">{item.shortcut}</span>
           </div>
         ) : null}
       </div>
@@ -144,7 +144,7 @@ export function DesktopRail({
           title="Abliterated — Chat (⌘1)"
           aria-label="Chat"
           onClick={() => onChange('home')}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-sidebar-border bg-panel transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[4px] border border-sidebar-border bg-panel transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <img
             src={`${import.meta.env.BASE_URL}logo-skull-blue.png`}
@@ -171,10 +171,10 @@ export function DesktopRail({
 
       <div className={cn('flex flex-col gap-2 border-t border-sidebar-border', collapsed ? 'items-center p-2' : 'p-3')}>
         {collapsed ? null : (
-          <div className="flex items-center gap-3 rounded-xl border border-sidebar-border bg-panel/60 px-3 py-2.5">
-            <span className="relative grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary/15 font-mono text-[11px] font-semibold text-primary">
+          <div className="flex items-center gap-3 rounded-[4px] border border-sidebar-border bg-panel/60 px-3 py-2.5">
+            <span className="relative grid h-8 w-8 shrink-0 place-items-center rounded-[4px] bg-primary/15 border border-primary/30 font-mono text-[11px] font-semibold text-primary">
               {initials}
-              <span className="absolute -left-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-panel bg-signal" />
+              <span className="absolute -left-0.5 -top-0.5 h-2 w-2 rounded-[2px] bg-signal" />
             </span>
             <div className="min-w-0">
               <p className="truncate text-[13px] font-medium text-foreground">{userName}</p>
@@ -189,7 +189,7 @@ export function DesktopRail({
               title="Keyboard shortcuts (?)"
               aria-label="Keyboard shortcuts"
               onClick={onOpenShortcuts}
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              className="flex h-9 w-9 items-center justify-center rounded-[4px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
             >
               <HelpCircle size={16} />
             </button>
@@ -201,7 +201,7 @@ export function DesktopRail({
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             onClick={toggleCollapsed}
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+            className="flex h-9 w-9 items-center justify-center rounded-[4px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
           >
             <PanelLeft size={16} className={collapsed ? 'rotate-180' : ''} />
           </button>

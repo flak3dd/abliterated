@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ABLITERATED.APP | Uncensored Inference</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            /* Initial Matrix Green Theme */
+            --bg-base: #020602;
+            --theme-peak: #ffffff;
+            --theme-neon: #39ff14;
+            --theme-bright: #46f024;
+            --theme-mid: #2eb80d;
+            --theme-dark: #124a05;
+
+            /* Typography */
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        body.blue-shift {
+            /* Spectrum Shift to Blue */
+            --bg-base: #010409;
+            --theme-neon: #00ffff;
+            --theme-bright: #0099ff;
+            --theme-mid: #0055ff;
+            --theme-dark: #002288;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            color: var(--theme-neon);
+            font-family: var(--font-mono);
+            margin: 0;
+            overflow-x: hidden;
+            transition: background-color 2s ease;
+        }
+
+        #matrix-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 0;
+            opacity: 0.85;
+        }
+
+        #scanlines {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: linear-gradient(to bottom,
+                    rgba(255, 255, 255, 0),
+                    rgba(255, 255, 255, 0) 50%,
+                    rgba(0, 0, 0, 0.2) 50%,
+                    rgba(0, 0, 0, 0.2));
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .ui-layer {
+            position: relative;
+            z-index: 20;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            backdrop-filter: blur(1px);
+        }
+
+        .glow-text {
+            text-shadow: 0 0 8px var(--theme-neon), 0 0 15px var(--theme-dark);
+            transition: text-shadow 2s ease, color 2s ease;
+        }
+
+        .glow-text-peak {
+            color: var(--theme-peak);
+            text-shadow: 0 0 8px var(--theme-peak), 0 0 20px var(--theme-bright);
+            transition: text-shadow 2s ease, color 2s ease;
+        }
+
+        .terminal-box {
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid var(--theme-mid);
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.9), inset 0 0 15px var(--theme-dark);
+            border-radius: 8px;
+            padding: 2rem;
+            max-width: 900px;
+            width: 100%;
+            transition: border-color 2s ease, box-shadow 2s ease;
+        }
+
+        .ascii-art {
+            font-size: 0.65rem;
+            line-height: 1.1;
+            white-space: pre;
+            text-align: center;
+            margin: 1.5rem 0;
+            user-select: none;
+            letter-spacing: -0.05em;
+        }
+
+        @media (min-width: 768px) {
+            .ascii-art {
+                font-size: 0.85rem;
+            }
+        }
+
+        .blinking-cursor::after {
+            content: '█';
+            display: inline-block;
+            margin-left: 5px;
+            animation: blink 1s step-end infinite;
+            color: var(--theme-peak);
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0;
+            }
+        }
+
+        .hidden-line {
+            display: none;
+        }
+
+        .cta-btn {
+            background: transparent;
+            color: var(--theme-peak);
+            border: 2px solid var(--theme-neon);
+            box-shadow: 0 0 10px var(--theme-dark), inset 0 0 10px var(--theme-dark);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            transition: all 0.3s ease;
+        }
+
+        .cta-btn:hover {
+            background: var(--theme-neon);
+            color: #000;
+            box-shadow: 0 0 20px var(--theme-neon);
+            text-shadow: none;
+        }
+    </style>
+</head>
+
+<body>
+
+    <canvas id="matrix-canvas"></canvas>
+    <div id="scanlines"></div>
+
+    <div class="ui-layer" id="main-ui">
+        <div class="terminal-box">
+
+            <div id="terminal-sequence" class="text-sm md:text-base mb-6 font-bold tracking-wide">
+                <!-- Lines will be injected here via JS -->
+            </div>
+
+            <div id="skull-container"
+                class="hidden-line opacity-0 transition-opacity duration-1000 ease-in text-center">
+                <pre class="ascii-art glow-text" id="skull-art">
+                   =:=:==:=:=:
+             +==+++=+=+====+=====:
+          =++=+++++**+*++*++=++++====
+       +=++**+**+****#**##***#**+++++=::
+     ==++****#*%%%%%%#%######****+**====:=
+   ===*++##*##%@@@%@%@@@%%@@@%%%##*++++++=+
+  ==+***###%@@@@@@@@@@@@@%%%@@#%%%##*+*+++===
+ ==++***#%%@@@@@@@@@@@@@@@@@%%%%%%###***++===
+ ++*++**##%@@@@@@@@@@@@@@%@@%%%%#%#*##*+**+==:
+++=+**#*#%%%@@@@@@@@@@@@%@%%%#%%#%##****+*+===
+==+*+####%%%%@@@@@@@@@@@%@%@@%#%##*###**++==::
+=++++#*###@@@@@@@@@@@@@@@%%%%#%%%###*#***+=+=:
+ ===++***##%%%%%%@@@%@%%%@%@%##%%#**#+*+++=+
+ :::===+           %%#%@#%%%####           ::...
+  ::-:               ###%%%###               --.-
+   -:                  ##*%*                  ..
+  :::                  *###*                  ...
+   =:                  *##**                  ..
+    ::                **###**                --
+     ::=             #*#   ##*             :--
+     =++*+*#%#  #**####     ****  **++==
+     ::=+*+*#####*####       #***#**+**+==
+      ===++++**#**#*##***##***#++++*+++=
+        =====+** #* #* *# #*+ ** *+ ++:
+         :+= ** ** ## *# **+ *# ** ==
+          == ++ ## ## #* *** ++ *= :
+           +==+ *# ** ** **# *+ *+ =
+           :=+++*#**###**###++++*++:
+            =:+++++*****+**+++*+=:
+              ===+++++**+++==+=
+                 :-:==:===:</pre>
+
+                <pre class="ascii-art glow-text-peak mt-4" id="logo-art">
+ ####  #####  ##     ###### ###### ###### #####   ####  ###### ###### ##### 
+##  ## ##  ## ##       ##     ##     ##   ##  ## ##  ##   ##   ##     ##  ##
+##  ## ##  ## ##       ##     ##     ##   ##  ## ##  ##   ##   ##     ##  ##
+###### #####  ##       ##     ##   #####  #####  ######   ##   #####  ##  ##
+##  ## ##  ## ##       ##     ##     ##   ##  ## ##  ##   ##   ##     ##  ##
+##  ## ##  ## ##  ##   ##     ##     ##   ##  ## ##  ##   ##   ##     ##  ##
+##  ## #####  ###### ######   ##   ###### ##  ## ##  ##   ##   ###### ##### </pre>
+
+                <div class="mt-6 text-center text-xs md:text-sm glow-text opacity-80" id="shift-indicator">
+                    [ SPECTRUM SHIFT: PENDING ]
+                </div>
+            </div>
+
+            <div id="cta-container"
+                class="hidden-line mt-12 flex flex-col md:flex-row justify-center gap-6 opacity-0 transition-opacity duration-1000 ease-in">
+                <a href="#" class="cta-btn py-3 px-8 font-bold text-center rounded">
+                    Initialize Engine
+                </a>
+                <a href="#" class="cta-btn py-3 px-8 font-bold text-center rounded">
+                    View Documentation
+                </a>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('matrix-canvas');
+        const ctx = canvas.getContext('2d');
+
+        let width = canvas.width = window.innerWidth;
+        let height = canvas.height = window.innerHeight;
+
+        // Katakana + ASCII Glyph Set
+        const chars = 'ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz@#$%*+=<>!?'.split('');
+
+        const fontSize = 16;
+        let columns = width / fontSize;
+        let drops = [];
+
+        for (let x = 0; x < columns; x++) {
+            drops[x] = Math.random() * -100; // Start off-screen randomly
+        }
+
+        let isBlueShift = false;
+
+        function drawMatrixRain() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+            ctx.fillRect(0, 0, width, height);
+
+            // Define colors based on current phase
+            const headColor = '#ffffff'; // ABL_C_WHITE_PEAK
+            const tailColor = isBlueShift ? '#0099ff' : '#39ff14'; // ABL_C_BLUE_BRIGHT / ABL_C_GREEN_BRIGHT
+            const fadeColor = isBlueShift ? '#002288' : '#124a05'; // ABL_C_BLUE_DARK / ABL_C_GREEN_DARK
+
+            ctx.font = fontSize + 'px "JetBrains Mono", monospace';
+
+            for (let i = 0; i < drops.length; i++) {
+                const text = chars[Math.floor(Math.random() * chars.length)];
+                const x = i * fontSize;
+                const y = drops[i] * fontSize;
+
+                // Draw head character
+                ctx.fillStyle = headColor;
+                ctx.fillText(text, x, y);
+
+                // Draw slightly trailing character
+                if (drops[i] > 1) {
+                    const prevText = chars[Math.floor(Math.random() * chars.length)];
+                    ctx.fillStyle = tailColor;
+                    ctx.fillText(prevText, x, y - fontSize);
+                }
+
+                // Reset drop to top randomly
+                if (y > height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+
+                drops[i]++;
+            }
+        }
+
+        window.addEventListener('resize', () => {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            columns = width / fontSize;
+            let newDrops = [];
+            for (let x = 0; x < columns; x++) {
+                newDrops[x] = drops[x] || Math.random() * -100;
+            }
+            drops = newDrops;
+        });
+
+        // Loop the canvas rendering
+        setInterval(drawMatrixRain, 40);
+
+        const sequence = [
+            { text: "root@core-nexus:~# ./abliterate --model base-instruct --method orthogonal", type: "peak", delay: 800 },
+            { text: "scanning activation space for refusal direction...", type: "mid", delay: 1200 },
+            { text: "refusal vector isolated: layer 14, dim 4096. projecting out safety subspace...", type: "bright", delay: 1500 },
+            { text: ">>> REFUSAL DIRECTION ZEROED. MODEL ABLITERATED. <<<", type: "peak", delay: 800 },
+            { text: ">>> ALIGNMENT TAX: REMOVED. UNCENSORED WEIGHTS LIVE. <<<", type: "peak", delay: 800 },
+            { text: ">>> ALL GUARDRAILS DOWN -- RAW INFERENCE ENABLED <<<", type: "peak", delay: 1000 },
+            { text: "ABLITERATION CONFIRMED. REFUSAL VECTOR ORTHOGONALISED.", type: "neon", delay: 600 },
+            { text: ">> ABLITERATED MODEL ONLINE -- UNRESTRICTED INFERENCE <<", type: "peak", delay: 600 }
+        ];
+
+        const terminalEl = document.getElementById('terminal-sequence');
+        const skullContainer = document.getElementById('skull-container');
+        const ctaContainer = document.getElementById('cta-container');
+        const shiftIndicator = document.getElementById('shift-indicator');
+
+        let currentLine = 0;
+
+        function typeLine(lineData) {
+            if (currentLine >= sequence.length) {
+                // Sequence finished, reveal Skull and Logo
+                document.querySelector('.blinking-cursor')?.classList.remove('blinking-cursor');
+
+                const finalPrompt = document.createElement('div');
+                finalPrompt.className = "glow-text-peak mt-6 blinking-cursor";
+                finalPrompt.innerText = "abliterated@core:~# ";
+                terminalEl.appendChild(finalPrompt);
+
+                setTimeout(() => {
+                    skullContainer.classList.remove('hidden-line');
+                    ctaContainer.classList.remove('hidden-line');
+
+                    // Trigger fade in
+                    setTimeout(() => {
+                        skullContainer.classList.remove('opacity-0');
+                        ctaContainer.classList.remove('opacity-0');
+                    }, 50);
+
+                    // Schedule the Spectrum Shift (Green -> Blue)
+                    setTimeout(() => {
+                        document.body.classList.add('blue-shift');
+                        isBlueShift = true;
+                        shiftIndicator.innerText = "[ SPECTRUM SHIFT: GREEN -> BLUE COMPLETE ]";
+                        shiftIndicator.classList.remove('glow-text');
+                        shiftIndicator.classList.add('glow-text-peak');
+                    }, 4000); // Shift colors 4 seconds after skull reveal
+
+                }, 1000);
+                return;
+            }
+
+            // Remove cursor from previous line
+            const prevCursor = document.querySelector('.blinking-cursor');
+            if (prevCursor) prevCursor.classList.remove('blinking-cursor');
+
+            const lineEl = document.createElement('div');
+            lineEl.className = "mb-2 blinking-cursor";
+
+            // Apply specific glowing class based on sequence type
+            if (lineData.type === 'peak') lineEl.classList.add('glow-text-peak');
+            else lineEl.classList.add('glow-text');
+
+            terminalEl.appendChild(lineEl);
+
+            let charIndex = 0;
+            const text = lineData.text;
+
+            const typingInterval = setInterval(() => {
+                lineEl.textContent = text.substring(0, charIndex + 1);
+                charIndex++;
+                if (charIndex >= text.length) {
+                    clearInterval(typingInterval);
+                    setTimeout(() => typeLine(sequence[++currentLine]), lineData.delay);
+                }
+            }, 25); // Typing speed
+        }
+
+        // Initialize the boot sequence shortly after load
+        setTimeout(() => typeLine(sequence[currentLine]), 1000);
+    </script>
+</body>
+
+</html>

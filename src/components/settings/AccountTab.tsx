@@ -45,10 +45,10 @@ export function AccountTab({
   return (
     <div className="space-y-4">
       {/* 1. Account Profile Card */}
-      <div className="rounded-xl border border-zinc-800 bg-gradient-to-r from-zinc-950 via-zinc-900/60 to-zinc-950 p-4 shadow-sm">
+      <div className="rounded-[4px] border border-zinc-800 bg-zinc-950 p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800 text-lg">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[4px] border border-zinc-700 bg-zinc-800 text-lg font-mono">
               👤
             </div>
             <div>
@@ -58,7 +58,7 @@ export function AccountTab({
                   {settings.accountLoggedIn ? (settings.accountEmail || 'Signed In') : 'Guest Session (Local-Only)'}
                 </span>
                 <span
-                  className={`rounded-full px-2 py-0.5 font-mono text-[9.5px] font-semibold uppercase ${
+                  className={`rounded-[2px] px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase ${
                     settings.accountLoggedIn
                       ? 'border border-emerald-500/50 bg-emerald-950/60 text-emerald-300'
                       : 'border border-zinc-700 bg-zinc-800 text-zinc-400'
@@ -99,7 +99,7 @@ export function AccountTab({
       >
         {settings.accountLoggedIn ? (
           <div className="space-y-3">
-            <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 font-mono text-[12px] text-zinc-200">
+            <div className="rounded-[3px] border border-zinc-800 bg-zinc-900/60 p-3 font-mono text-[12px] text-zinc-200">
               <div className="text-[10px] uppercase text-muted">Current Account Profile</div>
               <div className="mt-1 font-semibold text-white">{settings.accountEmail || '(no email)'}</div>
               <div className="mt-1 text-[11px] text-muted">
@@ -183,7 +183,7 @@ export function AccountTab({
             </div>
 
             {authAdvanced ? (
-              <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 space-y-2">
+              <div className="mt-2 rounded-[3px] border border-zinc-800 bg-zinc-950/60 p-3 space-y-2">
                 <FieldLabel label="loginId" hint="From redeem / prior signup — restores license.">
                   <input
                     value={authLoginId}

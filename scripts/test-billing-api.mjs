@@ -133,6 +133,8 @@ assert.ok(typeof FALLBACK_CREDIT_PACKS[0].label === 'string');
 assert.ok(FALLBACK_CREDIT_PACKS[0].tokens > 0);
 assert.ok(FALLBACK_CREDIT_PACKS[0].usd > 0);
 
+assert.equal(typeof mod.createStripeCheckout, 'function');
+assert.equal(typeof mod.getCheckoutSession, 'function');
 assert.equal(typeof mod.openCustomerPortal, 'function');
 assert.equal(typeof mod.setupCard, 'function');
 assert.equal(typeof mod.listCryptoCheckout, 'function');
@@ -140,5 +142,186 @@ assert.equal(typeof mod.createCryptoInvoice, 'function');
 assert.equal(typeof mod.getCryptoInvoice, 'function');
 assert.equal(typeof mod.confirmCryptoInvoice, 'function');
 
+// --- Mock HTTP Server: Automated Stripe Payment Integration Tests ---
+import http from 'node:http';
+
+const mockServer = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  let body = '';
+  for await (const chunk of req) body += chunk;
+  const json = body ? JSON.parse(body) : null;
+
+  if (url.pathname === '/api/checkout' && req.method === 'POST') {
+    if (!json?.email || !json.email.includes('@')) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Valid email required' }));
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(
+      JSON.stringify({
+        url: 'https://checkout.stripe.com/c/pay/cs_test_mock12345#token',
+        sessionId: 'cs_test_mock12345',
+        customerId: 'cus_test_123',
+        mode: 'subscription',
+      }),
+    );
+  }
+
+  if (url.pathname === '/api/checkout/session' && req.method === 'GET') {
+    const sid = url.searchParams.get('session_id');
+    if (sid === 'cs_test_completed') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(
+        JSON.stringify({
+          session_id: 'cs_test_completed',
+          status: 'complete',
+          payment_status: 'paid',
+          plan: 'pro_monthly',
+          seats: 1,
+          email: 'operator@abliterated.app',
+          license: {
+            key: 'ABLIT-PRO-MOCK-9999',
+            prefix: 'ABLIT-PRO',
+            signed: true,
+            plan: 'pro_monthly',
+          },
+        }),
+      );
+    }
+    if (sid === 'cs_test_flat_license') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(
+        JSON.stringify({
+          session_id: 'cs_test_flat_license',
+          status: 'complete',
+          payment_status: 'paid',
+          licenseKey: 'ABLIT-PRO-FLAT-1111',
+        }),
+      );
+    }
+    if (sid === 'cs_test_pending') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(
+        JSON.stringify({
+          session_id: 'cs_test_pending',
+          status: 'open',
+          payment_status: 'unpaid',
+          license: null,
+        }),
+      );
+    }
+    if (sid === 'cs_test_expired') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(
+        JSON.stringify({
+          session_id: 'cs_test_expired',
+          status: 'expired',
+          payment_status: 'unpaid',
+          license: null,
+        }),
+      );
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'Session not found' }));
+  }
+
+  if (url.pathname === '/api/billing/setup-card' && req.method === 'POST') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(
+      JSON.stringify({
+        url: 'https://checkout.stripe.com/c/setup/cs_test_setup_card',
+        customerId: 'cus_test_setup_123',
+      }),
+    );
+  }
+
+  if (url.pathname === '/api/billing/portal' && req.method === 'POST') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(
+      JSON.stringify({
+        url: 'https://billing.stripe.com/p/session/portal_test_session',
+        customerId: 'cus_test_portal_123',
+      }),
+    );
+  }
+
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Not found' }));
+});
+
+await new Promise((resolve) => mockServer.listen(0, '127.0.0.1', resolve));
+const mockPort = mockServer.address().port;
+const mockSiteUrl = `http://127.0.0.1:${mockPort}`;
+
+try {
+  // 1. Test Stripe Checkout Creation
+  const checkoutRes = await mod.createStripeCheckout(mockSiteUrl, {
+    plan: 'pro_monthly',
+    email: 'operator@abliterated.app',
+    client_reference_id: 'dev_mock_device_1',
+  });
+  assert.equal(checkoutRes.url, 'https://checkout.stripe.com/c/pay/cs_test_mock12345#token');
+  assert.equal(checkoutRes.sessionId, 'cs_test_mock12345');
+  assert.equal(checkoutRes.customerId, 'cus_test_123');
+  assert.equal(checkoutRes.mode, 'subscription');
+
+  // Verify extraction of session ID from checkout URL
+  assert.equal(mod.extractStripeSessionId(checkoutRes.url), 'cs_test_mock12345');
+
+  // Test Stripe Checkout validation error (invalid email)
+  await assert.rejects(
+    async () => {
+      await mod.createStripeCheckout(mockSiteUrl, {
+        plan: 'pro_monthly',
+        email: 'invalid-email',
+      });
+    },
+    (err) => err.status === 400 && err.message.includes('Valid email required'),
+  );
+
+  // 2. Test Stripe Session Polling: Completed with nested license
+  const sessionCompleted = await mod.getCheckoutSession(mockSiteUrl, 'cs_test_completed');
+  assert.equal(sessionCompleted.session_id, 'cs_test_completed');
+  assert.equal(sessionCompleted.status, 'complete');
+  assert.equal(sessionCompleted.payment_status, 'paid');
+  assert.equal(sessionCompleted.license?.key, 'ABLIT-PRO-MOCK-9999');
+  assert.equal(sessionCompleted.license?.signed, true);
+
+  // 3. Test Stripe Session Polling: Completed with flat licenseKey
+  const sessionFlat = await mod.getCheckoutSession(mockSiteUrl, 'cs_test_flat_license');
+  assert.equal(sessionFlat.license?.key, 'ABLIT-PRO-FLAT-1111');
+
+  // 4. Test Stripe Session Polling: Pending (unpaid)
+  const sessionPending = await mod.getCheckoutSession(mockSiteUrl, 'cs_test_pending');
+  assert.equal(sessionPending.status, 'open');
+  assert.equal(sessionPending.payment_status, 'unpaid');
+  assert.equal(sessionPending.license, null);
+
+  // 5. Test Stripe Session Polling: Expired
+  const sessionExpired = await mod.getCheckoutSession(mockSiteUrl, 'cs_test_expired');
+  assert.equal(sessionExpired.status, 'expired');
+  assert.equal(sessionExpired.license, null);
+
+  // 6. Test Client-side ID validation (must start with cs_)
+  await assert.rejects(
+    async () => {
+      await mod.getCheckoutSession(mockSiteUrl, 'invalid_session_id');
+    },
+    (err) => err.status === 400 && err.message.includes('must start with cs_'),
+  );
+
+  // 7. Test Save Card (SetupIntent)
+  const setupRes = await mod.setupCard(mockSiteUrl, { email: 'operator@abliterated.app' });
+  assert.equal(setupRes.url, 'https://checkout.stripe.com/c/setup/cs_test_setup_card');
+  assert.equal(setupRes.customerId, 'cus_test_setup_123');
+
+  // 8. Test Customer Portal
+  const portalRes = await mod.openCustomerPortal(mockSiteUrl, { email: 'operator@abliterated.app' });
+  assert.equal(portalRes.url, 'https://billing.stripe.com/p/session/portal_test_session');
+  assert.equal(portalRes.customerId, 'cus_test_portal_123');
+} finally {
+  await new Promise((resolve) => mockServer.close(resolve));
+}
+
 fs.rmSync(outDir, { recursive: true, force: true });
-console.log('test-billing-api: ok');
+console.log('test-billing-api: ok (all Stripe payment integration tests passed)');

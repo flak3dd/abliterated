@@ -147,6 +147,16 @@ import type {
 /** Render at most this many newest messages; older ones load on demand. */
 export const MESSAGE_WINDOW = 80;
 
+/** Cheap, stable string hash used as a capability-plan cache key. */
+function hashString(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash;
+}
+
 /** Strip Qwen/R1 think wrappers before theater / build / deepen heuristics. */
 function stripThinkForDetect(text: string): string {
   const withoutBlocks = (text || '')
@@ -834,9 +844,9 @@ export function useAgentLoop({
     bridgeStatus,
   ]);
 
-  const buildCapabilityPlan = (queryText: string, cache?: { plan: CapabilityPlan | null, turn: number }): CapabilityPlan => {
+  const buildCapabilityPlan = (queryText: string, cache?: { plan: CapabilityPlan | null, turn: number, queryHash?: number }): CapabilityPlan => {
     // Cache capability plan for 2 turns to avoid redundant string matching
-    if (cache && cache.plan && cache.turn >= loopTurnRef.current - 1) {
+    if (cache && cache.plan && cache.turn >= loopTurnRef.current - 1 && cache.queryHash === hashString(queryText)) {
       return cache.plan;
     }
     const plan = planCapabilities({
@@ -854,6 +864,7 @@ export function useAgentLoop({
     if (cache) {
       cache.plan = plan;
       cache.turn = loopTurnRef.current;
+      cache.queryHash = hashString(queryText);
     }
     return plan;
   };
@@ -1325,8 +1336,8 @@ export function useAgentLoop({
     let workflowHostId: string | null = null;
     let promptOnly = false;
     let pins: string[] = [];
-    const paintWorkflow = (host: Message) => {
-      const toolEvidence = current
+    const paintWorkflow = (host: Message, precomputedToolEvidence?: string) => {
+      const toolEvidence = precomputedToolEvidence ?? current
         .filter((m) => m.role === 'tool')
         .map((m) => m.content || '')
         .join('\n');
@@ -1349,15 +1360,16 @@ export function useAgentLoop({
         grokResults: grokAcc,
         toolCalls: [...writeCalls, ...(host.toolCalls || [])],
       });
-      const audit = auditTurnChanges({
+      const audit = host.content ? auditTurnChanges({
         content: host.content || '',
         toolCalls: [...writeCalls, ...(host.toolCalls || [])],
         grokResults: grokAcc,
-      });
-      if (audit.hasModifications || audit.summaryItems.length || audit.verificationItems.length) {
+      }) : null;
+      if (audit && (audit.hasModifications || audit.summaryItems.length || audit.verificationItems.length)) {
         host.changeSummary = audit.changeSummary;
       }
       if (!host.planApproved) host.planApproved = isPlanMode ? 'awaiting' : 'approved';
+      return audit;
     };
     const attachWorkflow = (msg: Message) => {
       if (workflowHostId && workflowHostId !== msg.id) {
@@ -1392,7 +1404,7 @@ export function useAgentLoop({
     const lastThreeFingerprints: string[] = [];
 
     // Capability plan cache - valid for 2 turns
-    const capabilityCache = { plan: null as CapabilityPlan | null, turn: -1 };
+    const capabilityCache = { plan: null as CapabilityPlan | null, turn: -1, queryHash: 0 };
 
     const drainMidRunMessages = (): boolean => {
       const pending = pendingMidRunRef.current.splice(0, pendingMidRunRef.current.length);
@@ -1457,6 +1469,14 @@ export function useAgentLoop({
         }
         // Safe boundary: before next stream — integrate any mid-run operator notes.
         if (turn > 1) drainMidRunMessages();
+
+        // Q5: Compute once per turn - avoid scanning message list multiple times
+        const lockedGoal = extractLockedGoal(current);
+        const operatorPrompt = lastOperatorPrompt(current) || lastUser?.content || '';
+        const toolEvidence = current
+          .filter((m) => m.role === 'tool')
+          .map((m) => m.content || '')
+          .join('\n');
 
         // Loop detection: check if we're repeating the same turn
         if (turn > 2) {
@@ -1532,7 +1552,7 @@ export function useAgentLoop({
           const live = settingsRef.current;
           const active = resolveActiveSettings(live);
           const capNow = buildCapabilityPlan(
-            `${extractLockedGoal(current)}\n${lastOperatorPrompt(current) || lastUser?.content || ''}`,
+            `${lockedGoal}\n${operatorPrompt}`,
             capabilityCache,
           );
           const extraMcpTools = capNow.extraMcp.length
@@ -2065,41 +2085,38 @@ export function useAgentLoop({
                 current = persist(nudge);
                 continue;
               }
+              // Content is non-empty here (coalesce / empty handling above).
+              setPhase('finishing', {}, turn);
+              const audit = paintWorkflow(assistant, toolEvidence);
+              flushStreamPersist({ ...assistant });
+
               if (
                 !planMode &&
                 !changeVerifyNudgeUsed &&
                 settingsRef.current.completionFooterEnabled !== false &&
                 !junkTurn &&
-                !answerComplete
+                !answerComplete &&
+                audit?.needsVerificationNudge &&
+                audit?.nudgePrompt
               ) {
-                const audit = auditTurnChanges({
-                  content: detectContent,
-                  toolCalls: [...writeCalls, ...(assistant.toolCalls || [])],
-                  grokResults: grokAcc,
-                });
-                if (audit.needsVerificationNudge && audit.nudgePrompt) {
-                  changeVerifyNudgeUsed = true;
-                  setPhase(
-                    'self_deepen',
-                    { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
-                    turn,
-                  );
-                  const nudge: Message = {
-                    id: uid('msg'),
-                    threadId: thread.id,
-                    role: 'user',
-                    content: audit.nudgePrompt,
-                    createdAt: Date.now(),
-                    status: 'complete',
-                  };
-                  current = persist(nudge);
-                  continue;
-                }
+                changeVerifyNudgeUsed = true;
+                setPhase(
+                  'self_deepen',
+                  { deepenPass: deepensUsed + 1, deepenMax: deepenCap },
+                  turn,
+                );
+                const nudge: Message = {
+                  id: uid('msg'),
+                  threadId: thread.id,
+                  role: 'user',
+                  content: audit.nudgePrompt,
+                  createdAt: Date.now(),
+                  status: 'complete',
+                };
+                current = persist(nudge);
+                continue;
               }
-              // Content is non-empty here (coalesce / empty handling above).
-              setPhase('finishing', {}, turn);
-              paintWorkflow(assistant);
-              flushStreamPersist({ ...assistant });
+
               stopReason = deepensUsed > 0 ? 'deepened' : 'no_tools';
               break;
             }
@@ -2238,7 +2255,7 @@ export function useAgentLoop({
           }
 
           current = latest;
-          paintWorkflow(assistant);
+          paintWorkflow(assistant, toolEvidence);
           flushStreamPersist({ ...assistant });
           if (ac.signal.aborted) {
             stopReason = 'abort';

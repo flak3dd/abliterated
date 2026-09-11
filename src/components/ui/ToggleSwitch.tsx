@@ -44,7 +44,7 @@ export function ToggleSwitch({
 
   return (
     <div
-      className={`relative rounded-lg border transition-all duration-200 ${
+      className={`relative rounded-[4px] border transition-all duration-200 ${
         disabled
           ? 'cursor-not-allowed border-zinc-800/60 bg-zinc-950/40 opacity-60'
           : checked
@@ -83,22 +83,22 @@ export function ToggleSwitch({
             {guidance ? (
               guidance.isAligned ? (
                 <span
-                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px] transition-colors ${
+                  className={`inline-flex items-center gap-1 rounded-[2px] px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
                     checked
                       ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/60'
                       : 'bg-zinc-900/90 text-zinc-400 border border-zinc-800'
                   }`}
                   title={guidance.tooltip}
                 >
-                  <span className={`h-1 w-1 rounded-full ${checked ? 'bg-emerald-400' : 'bg-zinc-500'}`} />
+                  <span className={`h-1 w-1 rounded-[1px] ${checked ? 'bg-emerald-400' : 'bg-zinc-500'}`} />
                   {guidance.badgeLabel}
                 </span>
               ) : (
                 <span
-                  className="inline-flex items-center gap-1.5 rounded-full border border-amber-800/60 bg-amber-950/60 px-2 py-0.5 font-mono text-[10px] text-amber-300"
+                  className="inline-flex items-center gap-1.5 rounded-[2px] border border-amber-800/60 bg-amber-950/60 px-1.5 py-0.5 font-mono text-[10px] text-amber-300"
                   title={guidance.tooltip}
                 >
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping" />
+                  <span className="h-1.5 w-1.5 rounded-[1px] bg-amber-400 animate-pulse" />
                   {guidance.badgeLabel}
                   {onAlign ? (
                     <button
@@ -107,7 +107,7 @@ export function ToggleSwitch({
                         e.stopPropagation();
                         onAlign();
                       }}
-                      className="ml-0.5 rounded bg-amber-500/20 px-1 py-0.2 text-[9px] font-semibold text-amber-200 underline transition-colors hover:bg-amber-500/30 hover:text-white"
+                      className="ml-0.5 rounded-[2px] bg-amber-500/20 px-1 py-0.2 text-[9px] font-semibold text-amber-200 underline transition-colors hover:bg-amber-500/30 hover:text-white"
                       title="Set to setup recommendation"
                     >
                       Align
@@ -170,19 +170,19 @@ export function ToggleSwitch({
             aria-label={label}
             disabled={disabled}
             onClick={handleToggle}
-            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 ${
+            className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer items-center rounded-[3px] border border-zinc-700/60 transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 ${
               disabled
                 ? 'cursor-not-allowed bg-zinc-800'
                 : checked
                   ? danger
-                    ? 'bg-rose-600 shadow-[0_0_12px_rgba(244,63,94,0.45)] focus-visible:ring-rose-500'
-                    : 'bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.4)] focus-visible:ring-emerald-400'
-                  : 'bg-zinc-800 hover:bg-zinc-700/90 focus-visible:ring-zinc-400'
+                    ? 'bg-rose-600 border-rose-500 shadow-[0_0_12px_rgba(244,63,94,0.3)] focus-visible:ring-rose-500'
+                    : 'bg-emerald-600 border-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.3)] focus-visible:ring-emerald-400'
+                  : 'bg-zinc-900 hover:bg-zinc-800 focus-visible:ring-zinc-400'
             }`}
           >
             <span
-              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform duration-200 ease-out ${
-                checked ? 'translate-x-6' : 'translate-x-1'
+              className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-[2px] bg-white shadow-sm transition-transform duration-200 ease-out ${
+                checked ? 'translate-x-5' : 'translate-x-0.5'
               } ${disabled ? 'bg-zinc-400' : ''}`}
             />
           </button>
