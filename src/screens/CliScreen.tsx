@@ -31,7 +31,18 @@ import {
 } from 'lucide-react';
 import { getPromptSuggestions } from '../lib/promptSuggestions';
 import { cn } from '../lib/cn';
-import type { ChatOpenAiMessage, ClientSettings } from '../types';
+import type {
+  ChatOpenAiMessage,
+  ChatOpenAiToolCall,
+  ClientSettings,
+  ToolCallPayload,
+  ToolType,
+} from '../types';
+import {
+  executeAgentTool,
+  type ExecuteAgentToolOpts,
+  type ExecuteAgentToolResult,
+} from '../lib/agentTools';
 import { resolveActiveSettings } from '../lib/activeEndpoint';
 import { streamChatCompletion } from '../lib/sse';
 import {
@@ -293,6 +304,57 @@ export function splitSummaryFromText(text: string): { body: string; summary: str
   return { body, summary: summary || null };
 }
 
+// --- Phase 2: bounded, transparent tool loop (see docs/CLI-ENHANCED-FLOW.md) ---
+
+/** Max tool round-trips per AI turn before we finalize with the current answer. */
+const CLI_TOOL_STEP_BUDGET = 6;
+
+/**
+ * Per-intent toolset for the CLI tool loop. Read/inspect + web tools are always
+ * available; write_file and shell are gated by the user's toggles (Auto-accept
+ * edits / Auto-run shell) until the Phase 3 autonomy policy replaces them.
+ */
+const CLI_TOOLSETS: Record<CliIntent, ToolType[]> = {
+  command: [],
+  chat: [],
+  web: ['web_search', 'web_fetch'],
+  build: ['list_dir', 'read_file', 'glob', 'grep', 'write_file', 'shell'],
+  edit: ['read_file', 'grep', 'glob', 'list_dir', 'file_outline', 'semantic_search', 'write_file', 'shell'],
+  run: ['read_file', 'list_dir', 'shell'],
+  debug: ['read_file', 'grep', 'glob', 'list_dir', 'file_outline', 'git_status', 'git_diff', 'shell'],
+};
+
+function effectiveCliToolset(
+  intent: CliIntent,
+  autoRunShell: boolean,
+  autoAcceptEdits: boolean,
+): ToolType[] {
+  return (CLI_TOOLSETS[intent] || []).filter((t) => {
+    if (t === 'shell') return autoRunShell;
+    if (t === 'write_file') return autoAcceptEdits;
+    return true;
+  });
+}
+
+/** OpenAI-protocol tool_call from an internal ToolCallPayload (args serialized). */
+function toChatToolCall(tc: ToolCallPayload): ChatOpenAiToolCall {
+  return {
+    id: tc.id,
+    type: 'function',
+    function: { name: tc.name, arguments: JSON.stringify(tc.arguments ?? {}) },
+  };
+}
+
+/** Compact one-liner describing a tool call for the transparent step log. */
+function describeToolCall(tc: ToolCallPayload): string {
+  const a = tc.arguments || {};
+  const key = ['query', 'file', 'path', 'pattern', 'command', 'url', 'dir'].find(
+    (k) => typeof a[k] === 'string' && (a[k] as string),
+  );
+  const arg = key ? String(a[key]) : '';
+  return arg ? `${tc.name}(${arg.length > 60 ? arg.slice(0, 57) + '…' : arg})` : tc.name;
+}
+
 export function CliScreen({
   settings,
   workspaceRoot,
@@ -389,6 +451,8 @@ Type /help for slash commands (/workspace, /scaffold, /serve, /autorun, /venv, /
   // Auto-scaffold the project skeleton before a build-intent AI turn.
   const [autoScaffoldOnBuild, setAutoScaffoldOnBuild] = useState(true);
   const [reasoningExpanded, setReasoningExpanded] = useState<Record<string, boolean>>({});
+  // Which user message's intent-override menu is open (Phase 2 chip override).
+  const [overrideMenuFor, setOverrideMenuFor] = useState<string | null>(null);
 
   const abortCtrlRef = useRef<AbortController | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1209,7 +1273,7 @@ Rules:
   };
 
   // Send AI Chat Message with Complete Runway
-  const sendAiChat = async (promptText: string) => {
+  const sendAiChat = async (promptText: string, forcedIntent?: CliIntent) => {
     if (!promptText.trim() || isStreaming || isExecutingCmd || isScaffolding) return;
 
     const userMsgId = Math.random().toString(36).slice(2);
@@ -1219,11 +1283,16 @@ Rules:
     // Classify the turn ONCE (the single, visible interpretation — see
     // docs/CLI-ENHANCED-FLOW.md). agentHelpers supplies the authoritative
     // build/web signals; the classifier folds in debug/edit/run/chat precedence.
-    const turnClass = classifyCliTurn(promptText, {
+    // A forcedIntent (from clicking the intent chip) overrides the label while
+    // keeping the detected signals.
+    const baseClass = classifyCliTurn(promptText, {
       isBuild: looksBuildIntent(promptText),
       isWeb: looksWebInteractionDirective(promptText),
       hasWorkspace: Boolean(activeRoot || bridge.validWorkspaceRoot),
     });
+    const turnClass = forcedIntent
+      ? { ...baseClass, intent: forcedIntent, reason: `overridden to ${forcedIntent}` }
+      : baseClass;
 
     // Show the user's prompt immediately (tagged with its intent for the chip)
     // so any build-scope scaffold logs land after it.
@@ -1328,34 +1397,100 @@ Do not hallucinate: never invent APIs, flags, parameters, library exports, or fi
     let accumContent = '';
     let accumReasoning = '';
 
-    try {
-      const result = await streamChatCompletion({
+    // Phase 2: bounded, transparent tool loop. Enable the intent's toolset (empty
+    // for chat/command → a single stream, unchanged). When the model calls tools we
+    // execute them via the shared executeAgentTool, feed the results back, and
+    // continue until it answers or the step budget is reached.
+    const toolset = effectiveCliToolset(
+      turnClass.intent,
+      autoRunShell,
+      Boolean(settings?.autoAcceptEdits),
+    );
+    const toolOpts: ExecuteAgentToolOpts = {
+      enabledTools: toolset,
+      autoAcceptEdits: Boolean(settings?.autoAcceptEdits),
+      autoRunShell,
+      settings: cliSettings,
+      workspaceRoot: activeRoot || bridge.validWorkspaceRoot || bridge.currentRoot || '',
+      mode: 'interactive',
+    };
+    const convo: ChatOpenAiMessage[] = [...chatHistory];
+    const ac = abortCtrlRef.current!;
+
+    const streamStep = async (msgs: ChatOpenAiMessage[]) => {
+      let iterContent = '';
+      const r = await streamChatCompletion({
         settings: cliSettings,
         model: activeEndpoint.defaultModel,
-        messages: chatHistory,
-        abortSignal: abortCtrlRef.current.signal,
-        // No built-in web tools here: mid-answer tool calls had no follow-up
-        // completion (results were dumped as system messages the model never saw),
-        // so the reply dead-ended. Web-directive prompts are augmented up-front
-        // above; use /search and /fetch for explicit lookups.
-        enabledTools: [],
+        messages: msgs,
+        abortSignal: ac.signal,
+        enabledTools: toolset,
         onDelta: (chunk) => {
+          iterContent += chunk;
           accumContent += chunk;
           setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantMsgId ? { ...msg, content: accumContent } : msg,
-            ),
+            prev.map((msg) => (msg.id === assistantMsgId ? { ...msg, content: accumContent } : msg)),
           );
         },
         onReasoningDelta: (chunk) => {
           accumReasoning += chunk;
           setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantMsgId ? { ...msg, reasoning: accumReasoning } : msg,
-            ),
+            prev.map((msg) => (msg.id === assistantMsgId ? { ...msg, reasoning: accumReasoning } : msg)),
           );
         },
       });
+      return { r, iterContent };
+    };
+
+    try {
+      let { r: result, iterContent } = await streamStep(convo);
+
+      let steps = 0;
+      while (
+        toolset.length > 0 &&
+        result.toolCalls &&
+        result.toolCalls.length > 0 &&
+        steps < CLI_TOOL_STEP_BUDGET &&
+        !ac.signal.aborted
+      ) {
+        steps++;
+        // Record the assistant turn that issued the tool calls (OpenAI protocol).
+        convo.push({
+          role: 'assistant',
+          content: iterContent,
+          tool_calls: result.toolCalls.map(toChatToolCall),
+        });
+        for (const tc of result.toolCalls) {
+          addSystemMsg(`⚙ step ${steps}/${CLI_TOOL_STEP_BUDGET} · ${describeToolCall(tc)}`);
+          let res: ExecuteAgentToolResult;
+          try {
+            res = await executeAgentTool(tc, toolOpts);
+          } catch (e) {
+            res = {
+              content: e instanceof Error ? e.message : String(e),
+              status: 'error',
+              executed: false,
+              tool: tc,
+            };
+          }
+          const preview =
+            res.content.length > 600 ? `${res.content.slice(0, 600)}\n…` : res.content;
+          addSystemMsg(`   ↳ ${res.status}: ${preview || '(no output)'}`);
+          convo.push({ role: 'tool', tool_call_id: tc.id, content: res.content });
+        }
+        ({ r: result, iterContent } = await streamStep(convo));
+      }
+
+      if (
+        toolset.length > 0 &&
+        result.toolCalls &&
+        result.toolCalls.length > 0 &&
+        steps >= CLI_TOOL_STEP_BUDGET
+      ) {
+        addSystemMsg(
+          `[Tool loop] Reached the ${CLI_TOOL_STEP_BUDGET}-step budget — finalizing with the current answer.`,
+        );
+      }
 
       // Stream Finished: Finalize both channels cleanly
       let finalContent = accumContent;
@@ -2519,13 +2654,51 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
                   {msg.isShell ? (msg.shellCommand || msg.content) : msg.content}
                 </span>
                 {!msg.isShell && msg.intent && (
-                  <span
-                    className="text-[9px] font-bold uppercase tracking-wider shrink-0 select-none font-mono px-1.5 py-0.5 rounded border"
-                    style={{ borderColor: curPal.line, color: curPal.dim, backgroundColor: curPal.panel2 }}
-                    title={`Interpreted as a "${CLI_INTENT_META[msg.intent].label}" turn`}
-                  >
-                    {CLI_INTENT_META[msg.intent].glyph} {CLI_INTENT_META[msg.intent].label}
-                  </span>
+                  <div className="relative shrink-0">
+                    <button
+                      type="button"
+                      disabled={isStreaming || isExecutingCmd || isScaffolding}
+                      onClick={() =>
+                        setOverrideMenuFor((cur) => (cur === msg.id ? null : msg.id))
+                      }
+                      className="text-[9px] font-bold uppercase tracking-wider select-none font-mono px-1.5 py-0.5 rounded border transition-all disabled:opacity-50 hover:brightness-125"
+                      style={{ borderColor: curPal.line, color: curPal.dim, backgroundColor: curPal.panel2 }}
+                      title={`Interpreted as "${CLI_INTENT_META[msg.intent].label}" — click to re-run as another intent`}
+                    >
+                      {CLI_INTENT_META[msg.intent].glyph} {CLI_INTENT_META[msg.intent].label}
+                    </button>
+                    {overrideMenuFor === msg.id && (
+                      <div
+                        className="absolute right-0 top-full mt-1 z-20 rounded border shadow-lg overflow-hidden min-w-[7rem]"
+                        style={{ borderColor: curPal.line2, backgroundColor: curPal.panel }}
+                      >
+                        <div
+                          className="px-2 py-1 text-[8px] uppercase tracking-wider opacity-60 font-mono"
+                          style={{ color: curPal.dim }}
+                        >
+                          re-run as
+                        </div>
+                        {(['build', 'edit', 'run', 'debug', 'web', 'chat'] as CliIntent[]).map((it) => (
+                          <button
+                            key={it}
+                            type="button"
+                            onClick={() => {
+                              setOverrideMenuFor(null);
+                              void sendAiChat(msg.content, it);
+                            }}
+                            className="flex items-center gap-1.5 w-full text-left px-2.5 py-1 text-[10px] font-mono transition-all hover:brightness-125"
+                            style={{
+                              color: it === msg.intent ? curPal.neon : curPal.text,
+                              backgroundColor: it === msg.intent ? curPal.accentBg : 'transparent',
+                            }}
+                          >
+                            <span>{CLI_INTENT_META[it].glyph}</span>
+                            <span>{CLI_INTENT_META[it].label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
                 <span className="text-[10px] opacity-35 shrink-0 select-none font-mono">
                   {msg.timestamp}
