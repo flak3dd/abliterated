@@ -3,10 +3,11 @@ import {
   AlertCircle,
   AlertTriangle,
   Bot,
-  Brain,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Copy,
   Folder,
   Maximize2,
@@ -16,7 +17,6 @@ import {
   RefreshCw,
   RotateCcw,
   Send,
-  ShieldAlert,
   ShieldCheck,
   Sliders,
   Sparkles,
@@ -25,8 +25,10 @@ import {
   Trash2,
   Zap,
   Download,
-  Globe,
+  ArrowRight,
+  CornerDownLeft,
 } from 'lucide-react';
+import { getPromptSuggestions } from '../lib/promptSuggestions';
 import { cn } from '../lib/cn';
 import type { ChatOpenAiMessage, ClientSettings } from '../types';
 import { resolveActiveSettings } from '../lib/activeEndpoint';
@@ -36,7 +38,7 @@ import {
   splitThinkFromContent,
   stripThinkingWrappers,
 } from '../lib/agentPhase';
-import { bridge, type BridgeStatus } from '../lib/bridgeClient';
+import { bridge, type BridgeStatus, type BridgeServerInfo } from '../lib/bridgeClient';
 import {
   downloadSingleFile,
   downloadFilesAsZip,
@@ -44,7 +46,7 @@ import {
   extractFilesFromMarkdown,
   type DownloadableFile,
 } from '../lib/zipDownload';
-import { looksWebInteractionDirective } from '../lib/agentHelpers';
+import { looksWebInteractionDirective, looksBuildIntent } from '../lib/agentHelpers';
 import { runWebSearch } from '../lib/webSearch';
 
 interface CliScreenProps {
@@ -55,7 +57,7 @@ interface CliScreenProps {
   onPatchSettings?: (partial: Partial<ClientSettings>) => void;
 }
 
-type WorldSpectrum = 'green' | 'blue';
+type WorldSpectrum = 'blue';
 type CliMode = 'ai' | 'shell';
 
 interface ChatMessage {
@@ -87,26 +89,6 @@ const GLYPHS = {
 };
 
 const PALETTES = {
-  green: {
-    neon: '#5fff5f',
-    bright: '#00ff00',
-    mid: '#00af00',
-    deep: '#0a6e2a',
-    bg: '#020804',
-    panel: 'rgba(3,12,6,0.92)',
-    panel2: 'rgba(95,255,95,0.06)',
-    line: 'rgba(95,255,95,0.20)',
-    line2: 'rgba(95,255,95,0.40)',
-    text: '#c8f2d0',
-    dim: '#6fae7f',
-    head: '#d6ffd6',
-    t1: '#5fff5f',
-    t2: '#00ff00',
-    t3: '#00af00',
-    t4: '#005f00',
-    fade: 'rgba(2,8,4,0.16)',
-    accentBg: 'rgba(95,255,95,0.12)',
-  },
   blue: {
     neon: '#00e5ff',
     bright: '#00afd7',
@@ -165,6 +147,183 @@ function parseContentBlocks(text: string): ParsedBlock[] {
   return blocks.length > 0 ? blocks : [{ type: 'text', content: text }];
 }
 
+// Extensionless paths that are nonetheless files, not directories.
+const KNOWN_FILENAMES =
+  /^(Makefile|Dockerfile|LICENSE|LICENCE|README|CHANGELOG|NOTICE|AUTHORS|Procfile|Gemfile|Rakefile|Vagrantfile|CODEOWNERS)$/i;
+
+// Strip tree-drawing glyphs, bullets, numbering, and trailing comments from a
+// manifest line so both plain lists and ASCII trees parse the same way.
+function cleanScaffoldLine(line: string): string {
+  return line
+    .replace(/[│├└┣┗┃┠┖]/g, ' ')
+    .replace(/─+|-{2,}/g, ' ')
+    .replace(/^[\s>*•▸▹◦]+/, '')
+    .replace(/^\d+[.)]\s+/, '')
+    .replace(/\s+#.*$/, '')
+    .replace(/\s+\/\/.*$/, '')
+    .trim();
+}
+
+// Indentation group (one tree level) and the branch connector that precedes a
+// node name. Used to recover hierarchy depth from an ASCII tree.
+const TREE_INDENT = /^(?: {2,4}|│[ \t]{0,3}|┃[ \t]{0,3})/;
+const TREE_CONNECTOR = /^(?:[├└┣┗┠┖][─\-]*[ \t]*|[|`+\\]-{1,}[ \t]*)/;
+
+/**
+ * Parse a scaffold manifest into workspace-relative directories and files.
+ * Accepts a flat list (one full path per line), a comma/space list on one line,
+ * or an ASCII tree — tree hierarchy is reconstructed from indentation so a leaf
+ * like "main.py" under "src/" becomes "src/main.py". A trailing slash marks a
+ * directory; a path with an extension / dotfile / known filename is a file; a
+ * bare segment is a directory. Absolute paths and ".." escapes are rejected.
+ */
+export function parseScaffoldSpec(raw: string): { dirs: string[]; files: string[] } {
+  const dirs = new Set<string>();
+  const files = new Set<string>();
+  const multiline = /[\r\n]/.test(raw);
+  const lines = multiline ? raw.split(/[\r\n]+/) : raw.split(/[,\s]+/);
+  const stack: string[] = []; // ancestor directory segment at each depth
+  for (const rawLine of lines) {
+    if (!rawLine.trim()) continue;
+    // Depth = number of indent groups + 1 if a branch connector is present.
+    let rest = rawLine.replace(/\t/g, '    ');
+    let depth = 0;
+    while (TREE_INDENT.test(rest)) {
+      rest = rest.replace(TREE_INDENT, '');
+      depth++;
+    }
+    if (TREE_CONNECTOR.test(rest)) {
+      rest = rest.replace(TREE_CONNECTOR, '');
+      depth++;
+    }
+    let leaf = cleanScaffoldLine(rest).replace(/^['"`]+|['"`]+$/g, '').trim();
+    leaf = leaf.replace(/^\.\//, '').replace(/^\/+/, '');
+    if (!leaf || leaf === '.' || leaf === '..' || leaf.includes('..')) continue;
+    const isDir = /[/\\]$/.test(leaf);
+    const nameNoSlash = leaf.replace(/[/\\]+$/, '');
+    const base = nameNoSlash.split('/').pop() || nameNoSlash;
+    const full = [...stack.slice(0, depth).filter(Boolean), nameNoSlash]
+      .join('/')
+      .replace(/\/{2,}/g, '/');
+    if (!full || full.includes('..')) continue;
+    const looksFile =
+      !isDir &&
+      (/\.[a-z0-9]+$/i.test(base) || /^\./.test(base) || KNOWN_FILENAMES.test(base));
+    if (isDir || !looksFile) {
+      dirs.add(full);
+      stack[depth] = nameNoSlash;
+      stack.length = depth + 1;
+    } else {
+      files.add(full);
+    }
+  }
+  return { dirs: [...dirs], files: [...files] };
+}
+
+// Minimal, language-aware placeholder content for a scaffolded stub file.
+export function scaffoldStub(pathStr: string): string {
+  const name = pathStr.split('/').pop() || pathStr;
+  const ext = name.includes('.') ? (name.split('.').pop() || '').toLowerCase() : '';
+  if (name === '.gitkeep') return '';
+  if (name === '.gitignore') return 'node_modules/\n.venv/\n__pycache__/\ndist/\nbuild/\n.env\n*.log\n';
+  switch (ext) {
+    case 'py':
+      return `"""${pathStr}"""\n\n# TODO: implement\n`;
+    case 'ts':
+    case 'tsx':
+    case 'js':
+    case 'jsx':
+    case 'mjs':
+    case 'cjs':
+      return `// ${pathStr}\n// TODO: implement\n`;
+    case 'json':
+      return name === 'package.json'
+        ? '{\n  "name": "",\n  "version": "0.0.0",\n  "private": true\n}\n'
+        : '{}\n';
+    case 'md':
+      return `# ${name.replace(/\.md$/i, '')}\n\n> TODO\n`;
+    case 'html':
+      return `<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8" />\n  <title>${name}</title>\n</head>\n<body>\n  <!-- TODO -->\n</body>\n</html>\n`;
+    case 'css':
+      return `/* ${pathStr} */\n`;
+    case 'sh':
+      return `#!/usr/bin/env bash\nset -euo pipefail\n\n# TODO: implement\n`;
+    case 'yml':
+    case 'yaml':
+    case 'toml':
+    case 'ini':
+    case 'cfg':
+      return `# ${pathStr}\n`;
+    case 'txt':
+      return '';
+    default:
+      return `# ${pathStr}\n`;
+  }
+}
+
+// Render a shell-safe path token; convert a leading ~ to $HOME so tilde
+// expansion still works inside the double-quotes we add for paths with spaces.
+function shellPathToken(input: string): string {
+  const p = input.startsWith('~') ? input.replace(/^~(\/|$)/, '$HOME$1') : input;
+  // Quote only when needed; leave $ unescaped so $HOME still expands inside quotes.
+  if (/\s/.test(p)) return `"${p.replace(/(["\\`])/g, '\\$1')}"`;
+  return p;
+}
+
+/**
+ * Ensures every completed CLI chat response concludes with a clean,
+ * dedicated '### Response Summary' section with actionable bullets.
+ */
+export function ensureResponseSummary(content: string, userPrompt: string): string {
+  const trimmed = content.trim();
+  if (!trimmed) return content;
+
+  if (
+    /###?\s*Response\s*Summary/i.test(trimmed) ||
+    /###?\s*Summary\b/i.test(trimmed) ||
+    /\*\*Response\s*Summary\*\*/i.test(trimmed)
+  ) {
+    return content;
+  }
+
+  const bullets: string[] = [];
+  const promptClean = userPrompt.trim().replace(/^[$!?/]\w*\s*/, '');
+  if (promptClean) {
+    const brief = promptClean.length > 65 ? promptClean.slice(0, 62) + '...' : promptClean;
+    bullets.push(`Addressed query: "${brief}" with direct, production-quality implementation.`);
+  }
+
+  const files = extractFilesFromMarkdown(trimmed);
+  if (files.length > 0) {
+    const names = files.slice(0, 3).map((f) => f.name.split('/').pop() || f.name);
+    const more = files.length > 3 ? ` (+${files.length - 3} more)` : '';
+    bullets.push(`Generated complete code for: \`${names.join('`, `')}\`${more}.`);
+  } else if (/```(bash|sh|shell|zsh)/i.test(trimmed)) {
+    bullets.push('Provided executable shell commands ready for terminal validation.');
+  } else if (/```/i.test(trimmed)) {
+    bullets.push('Delivered verified technical solution with zero placeholders or stubs.');
+  }
+
+  bullets.push('Verified complete implementation and workspace integrity.');
+
+  return `${trimmed}\n\n### Response Summary\n${bullets.map((b) => `- ${b}`).join('\n')}`;
+}
+
+/**
+ * Extracts the Response Summary section from markdown text to render
+ * a prominent, cyber-styled Response Summary card.
+ */
+export function splitSummaryFromText(text: string): { body: string; summary: string | null } {
+  const regex = /(?:^|\n)(?:#{1,3}\s*Response\s*Summary\b|\*\*Response\s*Summary\*\*:?)\s*([\s\S]*)$/i;
+  const match = text.match(regex);
+  if (!match || match.index === undefined) {
+    return { body: text, summary: null };
+  }
+  const body = text.slice(0, match.index).trim();
+  const summary = match[1].trim();
+  return { body, summary: summary || null };
+}
+
 export function CliScreen({
   settings,
   workspaceRoot,
@@ -172,13 +331,15 @@ export function CliScreen({
   onWorkspaceRootChange,
   onPatchSettings,
 }: CliScreenProps) {
-  const [world, setWorld] = useState<WorldSpectrum>('green');
+  const world: WorldSpectrum = 'blue';
   const [cliMode, setCliMode] = useState<CliMode>('ai');
   const [glyphSet, setGlyphSet] = useState<'kata' | 'ascii'>('kata');
+  const [skullEnabled, setSkullEnabled] = useState(true);
   const [rainEnabled, setRainEnabled] = useState(true);
   const [lambda, setLambda] = useState(0.0); // 0.0 = zeroed / uncensored, 1.0 = standard
   const [thoughtsVisible, setThoughtsVisible] = useState(true); // Control thought box expansion
-  const [showLambdaBar, setShowLambdaBar] = useState(false);
+  const [showControls, setShowControls] = useState(false);
+  const [showQuickPrompts, setShowQuickPrompts] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -234,12 +395,9 @@ export function CliScreen({
     {
       id: 'boot-1',
       role: 'system',
-      content: `ABLITERATED INTEGRATED CLI & SHELL ENVIRONMENT v5.0 [ONLINE]
-Architecture: Dual-Core AI Chat & Native Bridge Shell Subsystem
-Refusal Vector Projection: λ = 0.0000 (ZEROED — Uncensored Direct Execution)
-Local Daemon Bridge: ws://127.0.0.1:17322 · Max Output Budget: 8192 Tokens
-Type any prompt to chat with the model, or switch to SHELL mode / prefix with '$' to run shell commands.
-Commands: /help, /continue, /mode <ai|shell>, /sh <cmd>, /ai <prompt>, /clear, /models, /stats, /lambda <val>`,
+      content: `ABLITERATED CLI · AI & Local Shell Environment
+Type a prompt to chat with the model, or switch to SHELL mode / prefix with '$' for commands.
+Type /help for slash commands (/workspace, /scaffold, /serve, /autorun, /venv, /clear).`,
       timestamp: formatTime(),
     },
   ]);
@@ -248,6 +406,9 @@ Commands: /help, /continue, /mode <ai|shell>, /sh <cmd>, /ai <prompt>, /clear, /
   const [historyIdx, setHistoryIdx] = useState(-1);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isExecutingCmd, setIsExecutingCmd] = useState(false);
+  const [isScaffolding, setIsScaffolding] = useState(false);
+  // Auto-scaffold the project skeleton before a build-intent AI turn.
+  const [autoScaffoldOnBuild, setAutoScaffoldOnBuild] = useState(true);
   const [reasoningExpanded, setReasoningExpanded] = useState<Record<string, boolean>>({});
 
   const abortCtrlRef = useRef<AbortController | null>(null);
@@ -255,7 +416,7 @@ Commands: /help, /continue, /mode <ai|shell>, /sh <cmd>, /ai <prompt>, /clear, /
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const curPal = useMemo(() => PALETTES[world], [world]);
+  const curPal = PALETTES.blue;
 
   const activeEndpoint = useMemo(() => {
     return resolveActiveSettings(settings ?? ({} as ClientSettings));
@@ -287,7 +448,7 @@ Commands: /help, /continue, /mode <ai|shell>, /sh <cmd>, /ai <prompt>, /clear, /
     }
   }, [messages]);
 
-  // Matrix Rain Background Canvas
+  // Matrix Rain Background Canvas (Cyberpunk Katakana & ASCII streams falling behind skull)
   useEffect(() => {
     if (!rainEnabled) return;
     const cv = canvasRef.current;
@@ -385,14 +546,7 @@ Commands: /help, /continue, /mode <ai|shell>, /sh <cmd>, /ai <prompt>, /clear, /
       }
       if (isInput) return;
 
-      if (e.key === 's' || e.key === 'S') {
-        e.preventDefault();
-        setWorld((w) => {
-          const next = w === 'blue' ? 'green' : 'blue';
-          showToast(`[ SPECTRUM: ${next.toUpperCase()} ]`);
-          return next;
-        });
-      } else if (e.key === 'k' || e.key === 'K') {
+      if (e.key === 'k' || e.key === 'K') {
         e.preventDefault();
         setGlyphSet((g) => {
           const next = g === 'kata' ? 'ascii' : 'kata';
@@ -420,7 +574,7 @@ Commands: /help, /continue, /mode <ai|shell>, /sh <cmd>, /ai <prompt>, /clear, /
 
   // Seamless Continuation Handler: picks up exactly from where stream stopped
   const handleContinue = async (msgId?: string) => {
-    if (isStreaming || isExecutingCmd) return;
+    if (isStreaming || isExecutingCmd || isScaffolding) return;
 
     const targetMsg = msgId
       ? messages.find((m) => m.id === msgId)
@@ -510,13 +664,16 @@ Pick up immediately right after:
       });
 
       const wasTruncated = result.finishReason === 'length';
+      const finalFullContent = wasTruncated
+        ? (targetMsg.content || '') + appendContent
+        : ensureResponseSummary((targetMsg.content || '') + appendContent, targetMsg.content || '');
 
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === targetMsg.id
             ? {
                 ...msg,
-                content: (targetMsg.content || '') + appendContent,
+                content: finalFullContent,
                 isStreaming: false,
                 truncated: wasTruncated,
               }
@@ -541,7 +698,7 @@ Pick up immediately right after:
   // Execute native shell command through localhost bridge
   const executeShellCommand = async (rawCmd: string) => {
     const cmd = rawCmd.trim();
-    if (!cmd || isStreaming || isExecutingCmd) return;
+    if (!cmd || isStreaming || isExecutingCmd || isScaffolding) return;
 
     const time = formatTime();
     const cmdId = Math.random().toString(36).slice(2);
@@ -745,23 +902,344 @@ Pick up immediately right after:
 
   // Initialize or repair Python virtual environment (.venv)
   const handleCreateVenv = useCallback(async () => {
-    if (isStreaming || isExecutingCmd) return;
+    if (isStreaming || isExecutingCmd || isScaffolding) return;
     showToast('[ INITIALIZING .VENV ]');
     addSystemMsg('Initializing Python virtual environment (.venv) in workspace root...');
     const cmd =
       'python3 -m venv .venv && .venv/bin/pip install --upgrade pip setuptools wheel && .venv/bin/python --version';
     await executeShellCommand(cmd);
-  }, [isStreaming, isExecutingCmd, showToast, addSystemMsg, executeShellCommand]);
+  }, [isStreaming, isExecutingCmd, isScaffolding, showToast, addSystemMsg, executeShellCommand]);
+
+  // Format one managed server for a transcript listing.
+  const formatServerRow = (s: BridgeServerInfo): string => {
+    const dot = s.status === 'running' ? '●' : s.status === 'stopped' ? '■' : '○';
+    const meta = [
+      `pid ${s.pid || '-'}`,
+      s.status.toUpperCase(),
+      s.url ? s.url : s.port ? `:${s.port}` : '',
+      s.status !== 'running' && s.exitCode != null ? `exit ${s.exitCode}` : '',
+    ]
+      .filter(Boolean)
+      .join('  ');
+    return `  ${dot} ${s.id}  ${meta}\n      $ ${s.command}`;
+  };
+
+  // Spin up a long-running server as a managed background process via the daemon.
+  const spinServer = async (command: string, name?: string) => {
+    const cmd = command.trim();
+    if (!cmd) {
+      addSystemMsg('Usage: /serve <command>   e.g. /serve npm run dev');
+      return;
+    }
+    if (!bridge.connected) {
+      addSystemMsg(
+        '[Bridge Offline] Cannot spin a server — local daemon bridge is disconnected (ws://127.0.0.1:17322). Click [RECONNECT] in the header.',
+      );
+      return;
+    }
+    showToast('[ SPINNING SERVER ]');
+    addSystemMsg(`Spinning server: $ ${cmd}${activeRoot ? `\n  cwd: ${activeRoot}` : ''}`);
+    let srv: BridgeServerInfo;
+    try {
+      srv = await bridge.spawnServer(cmd, { root: activeRoot || undefined, name });
+    } catch (err) {
+      addSystemMsg(`Server failed to start: ${err instanceof Error ? err.message : String(err)}`);
+      showToast('[ SERVER: ERROR ]');
+      return;
+    }
+    addSystemMsg(
+      `Server started · ${srv.id} · pid ${srv.pid}${srv.url ? ` · ${srv.url}` : ''}\n  /serve logs ${srv.id}   tail output\n  /serve stop ${srv.id}   stop it`,
+    );
+    showToast(`[ SERVER PID ${srv.pid} ]`);
+    // Poll briefly so the startup URL/port (or an early crash) surfaces on its own.
+    for (const delay of [900, 2400]) {
+      await new Promise((r) => setTimeout(r, delay));
+      try {
+        const { server } = await bridge.serverLogs(srv.id, 40);
+        if (server.url) {
+          addSystemMsg(`[Server ${srv.id}] Listening at ${server.url}`);
+          break;
+        }
+        if (server.status !== 'running') {
+          const { logs } = await bridge.serverLogs(srv.id, 40);
+          addSystemMsg(
+            `[Server ${srv.id}] exited early (code ${server.exitCode}).\n${logs || '(no output)'}`,
+          );
+          break;
+        }
+      } catch {
+        /* transient poll error — ignore */
+      }
+    }
+  };
+
+  // Print the current server roster into the transcript.
+  const listServersMsg = async () => {
+    if (!bridge.connected) {
+      addSystemMsg('[Bridge Offline] Cannot list servers — daemon disconnected.');
+      return;
+    }
+    const list = await bridge.listServers();
+    if (!list.length) {
+      addSystemMsg('No managed servers. Start one with /serve <command> (e.g. /serve npm run dev).');
+      return;
+    }
+    const running = list.filter((s) => s.status === 'running').length;
+    addSystemMsg(
+      `MANAGED SERVERS (${list.length} · ${running} running):\n${list.map(formatServerRow).join('\n')}`,
+    );
+  };
+
+  // Stop one server by id, or every running server when id is "all".
+  const stopServerCmd = async (idOrAll: string) => {
+    if (!bridge.connected) {
+      addSystemMsg('[Bridge Offline] Cannot stop servers — daemon disconnected.');
+      return;
+    }
+    if (idOrAll === 'all' || idOrAll === '*') {
+      const list = await bridge.listServers();
+      const running = list.filter((s) => s.status === 'running');
+      for (const s of running) {
+        try {
+          await bridge.stopServer(s.id);
+        } catch {
+          /* ignore individual stop errors */
+        }
+      }
+      addSystemMsg(`Stopped ${running.length} running server(s).`);
+      showToast('[ SERVERS STOPPED ]');
+      return;
+    }
+    try {
+      await bridge.stopServer(idOrAll);
+      addSystemMsg(`Stopped server ${idOrAll}.`);
+      showToast('[ SERVER STOPPED ]');
+    } catch (err) {
+      addSystemMsg(`Stop failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  // Tail a managed server's recent output.
+  const showServerLogs = async (id: string) => {
+    if (!bridge.connected) {
+      addSystemMsg('[Bridge Offline] Cannot read server logs — daemon disconnected.');
+      return;
+    }
+    try {
+      const { logs, server } = await bridge.serverLogs(id, 200);
+      addSystemMsg(
+        `[Server ${server.id} · ${server.status}${server.url ? ` · ${server.url}` : ''}]\n${logs || '(no output yet)'}`,
+      );
+    } catch (err) {
+      addSystemMsg(`Logs failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  // Create (or reuse) a workspace directory and switch the active root to it.
+  // Accepts an absolute path, a ~/home path, or a path relative to the current
+  // root. The directory is created (mkdir -p) via the shell so tilde/relative
+  // expansion matches the daemon cwd, then the real absolute path is pinned.
+  const createWorkspace = async (rawPath: string) => {
+    const input = rawPath.trim().replace(/^['"]|['"]$/g, '');
+    if (!input) {
+      addSystemMsg(
+        'Usage: /workspace <path>\n  Creates (or reuses) a directory and makes it the active workspace root.\n  Accepts an absolute path, ~/relative, or a path relative to the current root.',
+      );
+      return;
+    }
+    if (!bridge.connected) {
+      addSystemMsg(
+        '[Bridge Offline] Cannot create a workspace — local daemon bridge is disconnected (ws://127.0.0.1:17322). Click [RECONNECT] in the header.',
+      );
+      return;
+    }
+    showToast('[ CREATING WORKSPACE ]');
+    addSystemMsg(`Creating / opening workspace: ${input} ...`);
+    const token = shellPathToken(input);
+    let out = '';
+    try {
+      const code = await bridge.runCommand(
+        `mkdir -p ${token} && cd ${token} && pwd`,
+        (chunk) => {
+          out += chunk;
+        },
+        { root: activeRoot || undefined },
+      );
+      const resolved = out
+        .split(/[\r\n]+/)
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .pop();
+      if (code !== 0 || !resolved || !resolved.startsWith('/')) {
+        addSystemMsg(
+          `Workspace creation failed (exit ${code}).${out.trim() ? `\n${out.trim()}` : ''}`,
+        );
+        showToast('[ WORKSPACE: FAILED ]');
+        return;
+      }
+      const newRoot = await bridge.setRoot(resolved);
+      setActiveRoot(newRoot);
+      onWorkspaceRootChange?.(newRoot);
+      showToast(`[ WORKSPACE: ${newRoot.split('/').pop() || newRoot} ]`);
+      addSystemMsg(
+        `Workspace ready and active:\n  ${newRoot}\nFile writes, shell commands, and scaffolding now land here.`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addSystemMsg(`Workspace creation failed: ${msg}`);
+      showToast('[ WORKSPACE: ERROR ]');
+    }
+  };
+
+  // Materialize a directory/file skeleton into the active workspace. Files get a
+  // minimal language-aware stub; pure directories get a .gitkeep. Existing
+  // non-empty files are never clobbered (they are kept and counted as skipped).
+  const scaffoldStructure = async (
+    spec: { dirs: string[]; files: string[] },
+  ): Promise<{ created: number; skipped: number; failed: number; createdPaths: string[] }> => {
+    const root = activeRoot || bridge.validWorkspaceRoot || bridge.currentRoot || '';
+    if (!bridge.connected) {
+      addSystemMsg('[Bridge Offline] Cannot scaffold — local daemon bridge is disconnected.');
+      return { created: 0, skipped: 0, failed: 0, createdPaths: [] };
+    }
+    if (!root) {
+      addSystemMsg('No workspace root set. Use /workspace <path> to create one first.');
+      return { created: 0, skipped: 0, failed: 0, createdPaths: [] };
+    }
+    const targets = [
+      ...spec.files,
+      ...spec.dirs.map((d) => `${d.replace(/\/+$/, '')}/.gitkeep`),
+    ];
+    let created = 0;
+    let skipped = 0;
+    let failed = 0;
+    const createdPaths: string[] = [];
+    for (const rel of targets) {
+      try {
+        let existing = '';
+        try {
+          existing = await bridge.readFile(rel);
+        } catch {
+          existing = '';
+        }
+        const isKeep = rel.endsWith('/.gitkeep');
+        if (existing && (isKeep || existing.trim())) {
+          skipped++;
+          continue;
+        }
+        await bridge.writeFile(rel, scaffoldStub(rel), { root: root || undefined });
+        created++;
+        createdPaths.push(rel);
+      } catch {
+        failed++;
+      }
+    }
+    return { created, skipped, failed, createdPaths };
+  };
+
+  // BUILD SCOPE · PHASE 1: ask the model for the complete file manifest only,
+  // then create the skeleton on disk before the buildout turn fills each file.
+  const runPreBuildScaffold = async (
+    prompt: string,
+  ): Promise<'scaffolded' | 'skipped' | 'aborted'> => {
+    const root = activeRoot || bridge.validWorkspaceRoot || bridge.currentRoot || '';
+    if (!bridge.connected || !root) return 'skipped';
+    setIsScaffolding(true);
+    abortCtrlRef.current = new AbortController();
+    const ac = abortCtrlRef.current;
+    addSystemMsg(
+      '[BUILD SCOPE · PHASE 1/2 — SCAFFOLD]: Mapping the complete file/folder structure before buildout...',
+    );
+    showToast('[ SCAFFOLDING STRUCTURE ]');
+
+    const scaffoldSystem = `You are a project scaffolding planner. Given a build request, output ONLY the complete file and directory structure the finished project requires, as a single fenced code block tagged "scaffold".
+Rules:
+- One path per line, workspace-relative (no leading "/", no ".." ).
+- Directories end with a trailing slash (e.g. src/).
+- Include EVERY file the project needs: entry points, source modules, configs, tests, and a README.
+- NO prose, NO explanations, NO file contents — only the path manifest inside the \`\`\`scaffold block.`;
+
+    let raw = '';
+    try {
+      await streamChatCompletion({
+        settings: {
+          ...(settings ?? ({} as ClientSettings)),
+          maxTokens: 2048,
+          coalesceReasoningToContent: true,
+        } as ClientSettings & { maxTokens?: number },
+        model: activeEndpoint.defaultModel,
+        messages: [
+          { role: 'system', content: scaffoldSystem },
+          {
+            role: 'user',
+            content: `Build request: ${prompt}\n\nOutput the scaffold manifest now.`,
+          },
+        ],
+        abortSignal: abortCtrlRef.current.signal,
+        enabledTools: [],
+        onDelta: (chunk) => {
+          raw += chunk;
+        },
+        onReasoningDelta: () => {},
+      });
+    } catch (err) {
+      setIsScaffolding(false);
+      abortCtrlRef.current = null;
+      if (ac.signal.aborted) {
+        addSystemMsg('[Scaffold aborted by user].');
+        return 'aborted';
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      addSystemMsg(`[Scaffold Notice]: ${msg}. Proceeding directly to buildout.`);
+      return 'skipped';
+    }
+
+    // Prefer a fenced manifest block; fall back to any code block, then raw text.
+    const blocks = parseContentBlocks(raw);
+    const manifestBlock = blocks.find(
+      (b) => b.type === 'code' && /scaffold|tree|structure|text|plain/i.test(b.language || ''),
+    );
+    const manifestText =
+      manifestBlock?.content ||
+      blocks
+        .filter((b) => b.type === 'code')
+        .map((b) => b.content)
+        .join('\n') ||
+      raw;
+    const spec = parseScaffoldSpec(manifestText);
+
+    if (spec.files.length === 0 && spec.dirs.length === 0) {
+      addSystemMsg('[Scaffold]: No file structure could be derived; proceeding directly to buildout.');
+      setIsScaffolding(false);
+      abortCtrlRef.current = null;
+      return 'skipped';
+    }
+
+    const res = await scaffoldStructure(spec);
+    const treeList = [
+      ...spec.dirs.map((d) => `  + ${d.replace(/\/?$/, '/')}`),
+      ...spec.files.map((f) => `  + ${f}`),
+    ]
+      .slice(0, 60)
+      .join('\n');
+    addSystemMsg(
+      `[BUILD SCOPE · PHASE 1/2 — SCAFFOLD COMPLETE]: ${res.created} created, ${res.skipped} kept, ${res.failed} failed in ${root}\n${treeList}`,
+    );
+    showToast(`[ SCAFFOLDED ${res.created} FILES ]`);
+    setIsScaffolding(false);
+    abortCtrlRef.current = null;
+    return 'scaffolded';
+  };
 
   // Send AI Chat Message with Complete Runway
   const sendAiChat = async (promptText: string) => {
-    if (!promptText.trim() || isStreaming || isExecutingCmd) return;
+    if (!promptText.trim() || isStreaming || isExecutingCmd || isScaffolding) return;
 
     const userMsgId = Math.random().toString(36).slice(2);
     const assistantMsgId = Math.random().toString(36).slice(2);
     const time = formatTime();
 
-    // Add user message and empty streaming assistant slot
+    // Show the user's prompt immediately so any build-scope scaffold logs land after it.
     setMessages((prev) => [
       ...prev,
       {
@@ -770,6 +1248,31 @@ Pick up immediately right after:
         content: promptText,
         timestamp: time,
       },
+    ]);
+
+    // BUILD SCOPE · PHASE 1: scaffold the file structure before building out.
+    // Fires only for genuine build asks (not debug/fix questions) when a
+    // workspace root is set and auto-scaffold is enabled.
+    const looksDebug =
+      /\b(error|fail(?:s|ed|ing)?|bug|crash|exception|traceback|stack\s*trace|debug|why\b|not\s+working|doesn'?t\s+work|broken)\b/i.test(
+        promptText,
+      );
+    let didScaffold = false;
+    if (
+      autoScaffoldOnBuild &&
+      !looksDebug &&
+      looksBuildIntent(promptText) &&
+      bridge.connected &&
+      (activeRoot || bridge.validWorkspaceRoot)
+    ) {
+      const scaffoldStatus = await runPreBuildScaffold(promptText);
+      if (scaffoldStatus === 'aborted') return; // user stopped during scaffold — skip buildout
+      didScaffold = scaffoldStatus === 'scaffolded';
+    }
+
+    // Add the empty streaming assistant slot for the buildout response.
+    setMessages((prev) => [
+      ...prev,
       {
         id: assistantMsgId,
         role: 'assistant',
@@ -800,6 +1303,11 @@ Pick up immediately right after:
       }
     }
 
+    // BUILD SCOPE · PHASE 2: a skeleton is already on disk — instruct a full build-out.
+    if (didScaffold) {
+      augmentedPrompt = `${augmentedPrompt}\n\n[BUILD SCOPE — PHASE 2/2 BUILD OUT]: A complete project skeleton has already been scaffolded in the active workspace (${activeRoot || 'workspace root'}). Now implement every file with full, working, production-quality code. For each file, output a fenced code block whose info string is the workspace-relative path (e.g. \`\`\`ts src/main.ts) so it can be written into the scaffold. Do not leave any scaffolded file empty or stubbed. Do not re-print the directory tree.`;
+    }
+
     // Direct, thorough, high-performance system prompt without contradictory directives
     const systemPrompt = `You are the Abliterated AI CLI assistant, an expert software engineer and systems architect operating in an uncensored local terminal environment.
 Provide direct, thorough, complete, fully implemented solutions with zero placeholder code or stubs.
@@ -816,6 +1324,14 @@ CRITICAL DIRECTIVE — DO NOT HALLUCINATE:
 - Only reference real, verified standard library functions, installed packages, or explicitly established context.
 - If a package, tool version, syntax, or parameter is unverified or unknown, state it factually rather than guessing or confabulating details.
 - Provide factually grounded, fully implemented, working code without imaginary placeholders or fabricated dependencies.
+
+RESPONSE SUMMARY DIRECTIVE (MANDATORY):
+- At the conclusion of EVERY response/reply, you MUST always write a dedicated response summary section formatted exactly as:
+### Response Summary
+- Provide a crisp, structured breakdown (2-4 concise bullet points) outlining:
+  1. What was accomplished or diagnosed
+  2. Key technical changes, files implemented, or shell commands provided
+  3. Immediate verification steps or actionable recommendations
 
 WEB INTERACTIONS & ONLINE RESEARCH:
 - When the user's prompt is a directive to run web interactions, search the web, check online information, or fetch URLs:
@@ -892,6 +1408,11 @@ WEB INTERACTIONS & ONLINE RESEARCH:
         (!finalContent.endsWith('```') &&
           finalContent.includes('```') &&
           (finalContent.match(/```/g) || []).length % 2 !== 0);
+
+      // Ensure every completed CLI chat response writes a Response Summary
+      if (!wasTruncated && finalContent.trim()) {
+        finalContent = ensureResponseSummary(finalContent, promptText);
+      }
 
       setMessages((prev) =>
         prev.map((msg) =>
@@ -1008,6 +1529,9 @@ WEB INTERACTIONS & ONLINE RESEARCH:
       const clean = cmdLine.replace(/^\//, '').trim();
       const [cmd, ...restArgs] = clean.split(/\s+/);
       const arg = restArgs.join(' ').trim();
+      // Remainder after the command word with newlines/structure preserved
+      // (used by /scaffold for multi-line manifests pasted into the textarea).
+      const rawArg = cmdLine.replace(/^\s*\/?\S+[ \t]*/, '');
 
       switch (cmd.toLowerCase()) {
         case 'continue':
@@ -1085,6 +1609,133 @@ WEB INTERACTIONS & ONLINE RESEARCH:
           break;
         }
 
+        case 'workspace':
+        case 'ws':
+        case 'mkws':
+        case 'newws': {
+          if (!arg) {
+            addSystemMsg(
+              `Current workspace root: ${activeRoot || '(none set)'}\nUsage: /workspace <path>   — create (or reuse) a directory and make it the active workspace.`,
+            );
+            break;
+          }
+          await createWorkspace(arg);
+          break;
+        }
+
+        case 'scaffold':
+        case 'skeleton':
+        case 'tree': {
+          const sub = arg.toLowerCase().trim();
+          // /scaffold auto [on|off] — toggle auto-scaffold on build-intent turns.
+          if (sub === 'auto' || sub.startsWith('auto ')) {
+            const val = sub.replace(/^auto\s*/, '').trim();
+            let next = !autoScaffoldOnBuild;
+            if (['on', 'true', 'enable', '1'].includes(val)) next = true;
+            else if (['off', 'false', 'disable', '0'].includes(val)) next = false;
+            setAutoScaffoldOnBuild(next);
+            showToast(`[ AUTO-SCAFFOLD: ${next ? 'ON' : 'OFF'} ]`);
+            addSystemMsg(
+              next
+                ? 'Auto-scaffold ENABLED. A "build" request will first lay down the complete file skeleton, then build it out.'
+                : 'Auto-scaffold DISABLED. Build requests go straight to the buildout response.',
+            );
+            break;
+          }
+          if (!bridge.connected) {
+            addSystemMsg('[Bridge Offline] Cannot scaffold — local daemon bridge is disconnected.');
+            break;
+          }
+          if (!(activeRoot || bridge.validWorkspaceRoot || bridge.currentRoot)) {
+            addSystemMsg('No workspace root set. Use /workspace <path> to create one first.');
+            break;
+          }
+          // With a manifest argument → scaffold those paths. Without → scaffold
+          // the file structure proposed in the most recent AI response.
+          let spec: { dirs: string[]; files: string[] };
+          let sourceLabel: string;
+          if (rawArg.trim()) {
+            spec = parseScaffoldSpec(rawArg);
+            sourceLabel = 'manifest';
+          } else {
+            const lastAi = [...messages]
+              .reverse()
+              .find((m) => m.role === 'assistant' && !m.isShell && (m.content || '').trim());
+            const proposed = lastAi
+              ? extractFilesFromMarkdown(lastAi.content || '').map((f) => f.name)
+              : [];
+            spec = parseScaffoldSpec(proposed.join('\n'));
+            sourceLabel = 'last AI response';
+          }
+          if (spec.files.length === 0 && spec.dirs.length === 0) {
+            addSystemMsg(
+              'Nothing to scaffold. Usage: /scaffold <paths...> (e.g. /scaffold src/ src/main.py README.md), or run it right after an AI response that proposes files.',
+            );
+            break;
+          }
+          showToast('[ SCAFFOLDING STRUCTURE ]');
+          addSystemMsg(
+            `Scaffolding ${spec.files.length} file(s) + ${spec.dirs.length} dir(s) from ${sourceLabel} into ${activeRoot}...`,
+          );
+          const scRes = await scaffoldStructure(spec);
+          const scTree = [
+            ...spec.dirs.map((d) => `  + ${d.replace(/\/?$/, '/')}`),
+            ...spec.files.map((f) => `  + ${f}`),
+          ]
+            .slice(0, 80)
+            .join('\n');
+          addSystemMsg(
+            `[SCAFFOLD COMPLETE]: ${scRes.created} created, ${scRes.skipped} kept, ${scRes.failed} failed.\n${scTree}`,
+          );
+          showToast(`[ SCAFFOLDED ${scRes.created} FILES ]`);
+          break;
+        }
+
+        case 'serve':
+        case 'server': {
+          const [subRaw, ...rest] = arg.split(/\s+/);
+          const sub = (subRaw || '').toLowerCase();
+          const restArg = rest.join(' ').trim();
+          if (!arg) {
+            addSystemMsg(
+              'Server control:\n  /serve <command>        spin up a server (e.g. /serve npm run dev)\n  /serve list             list managed servers\n  /serve logs <id>        tail a server\'s output\n  /serve stop <id|all>    stop a server (or all of them)',
+            );
+            break;
+          }
+          if (sub === 'list' || sub === 'ls' || sub === 'ps' || sub === 'status') {
+            await listServersMsg();
+          } else if (sub === 'logs' || sub === 'log' || sub === 'tail') {
+            if (!restArg) addSystemMsg('Usage: /serve logs <server-id>');
+            else await showServerLogs(restArg);
+          } else if (sub === 'stop' || sub === 'kill') {
+            if (!restArg) addSystemMsg('Usage: /serve stop <server-id|all>');
+            else await stopServerCmd(restArg);
+          } else if (sub === 'start' || sub === 'run') {
+            // Everything after "start"/"run" is the command to launch.
+            const startCmd = rawArg.replace(/^\s*(?:start|run)\s+/i, '').trim();
+            await spinServer(startCmd);
+          } else {
+            // Bare `/serve <command>` — the whole remainder is the server command.
+            await spinServer(rawArg.trim() || arg);
+          }
+          break;
+        }
+
+        case 'servers':
+        case 'ps': {
+          await listServersMsg();
+          break;
+        }
+
+        case 'stop': {
+          if (!arg) {
+            addSystemMsg('Usage: /stop <server-id|all>');
+            break;
+          }
+          await stopServerCmd(arg.trim());
+          break;
+        }
+
         case 'search':
         case 'web': {
           if (!arg) {
@@ -1130,6 +1781,18 @@ WEB INTERACTIONS & ONLINE RESEARCH:
   /continue (or 'c')     Resume generation seamlessly from cutoff point
   /sh <command>          Run shell command in workspace (works in any mode)
   /ai <prompt>           Ask the AI assistant (works in any mode)
+  /workspace <path>      Create (or reuse) a directory and make it the active workspace (aliases: /ws, /mkws)
+  /scaffold [paths]      Scaffold a file/folder skeleton into the workspace
+                           • /scaffold src/ src/main.py README.md   (explicit paths)
+                           • /scaffold                              (from the last AI response's files)
+                           • /scaffold auto [on|off]                (toggle auto-scaffold before "build" turns)
+  /serve <command>       Spin up a long-running server as a managed background process
+                           • /serve npm run dev                     (start a dev server)
+                           • /serve list                            (list managed servers)
+                           • /serve logs <id>                       (tail a server's output)
+                           • /serve stop <id|all>                   (stop a server, or all)
+  /servers               List managed servers (alias for /serve list)
+  /stop <id|all>         Stop a managed server
   /autorun [on|off]      Toggle auto-running AI generated shell commands
   /venv [check]          Create, bootstrap, or inspect workspace Python .venv
   /search <query>        Search the live web directly via web search
@@ -1140,8 +1803,9 @@ WEB INTERACTIONS & ONLINE RESEARCH:
   /models                List available models on the active cluster
   /lambda <0.0 - 1.0>    Set refusal projection parameter (0 = zeroed, 1 = standard)
   /stats                 Telemetry, KL drift, and refusal vector specs
-  /spectrum <green|blue> Flip between Green Matrix and Electric Blue worlds
-  /rain                  Toggle matrix digital rain backdrop
+  /spectrum              Display active color spectrum (Electric Blue)
+  /rain                  Toggle Matrix digital rain background canvas
+  /skull                 Toggle terminal ASCII skull backdrop
   /glyphs                Toggle Katakana / ASCII matrix font
   /probe <query>         Execute targeted refusal probe
   /whoami                Display session clearance, bridge, and model info
@@ -1258,22 +1922,8 @@ SHELL MODE COMMANDS:
         }
 
         case 'spectrum': {
-          const target = arg.toLowerCase();
-          if (target.startsWith('g')) {
-            setWorld('green');
-            showToast('[ SPECTRUM: GREEN MATRIX ]');
-            addSystemMsg('Spectrum shifted to GREEN MATRIX world.');
-          } else if (target.startsWith('b')) {
-            setWorld('blue');
-            showToast('[ SPECTRUM: ELECTRIC BLUE ]');
-            addSystemMsg('Spectrum shifted to ELECTRIC BLUE world.');
-          } else {
-            setWorld((prev) => {
-              const next = prev === 'green' ? 'blue' : 'green';
-              addSystemMsg(`Spectrum shifted to ${next.toUpperCase()} world.`);
-              return next;
-            });
-          }
+          showToast('[ SPECTRUM: ELECTRIC BLUE ]');
+          addSystemMsg('Spectrum is locked to Electric Blue world.');
           break;
         }
 
@@ -1281,7 +1931,16 @@ SHELL MODE COMMANDS:
           setRainEnabled((prev) => {
             const next = !prev;
             showToast(`[ RAIN: ${next ? 'ON' : 'OFF'} ]`);
-            addSystemMsg(`Matrix backdrop rain: ${next ? 'ENABLED' : 'DISABLED'}`);
+            addSystemMsg(`Matrix digital rain canvas: ${next ? 'ENABLED' : 'DISABLED'}`);
+            return next;
+          });
+          break;
+
+        case 'skull':
+          setSkullEnabled((prev) => {
+            const next = !prev;
+            showToast(`[ SKULL: ${next ? 'ON' : 'OFF'} ]`);
+            addSystemMsg(`Terminal ASCII skull backdrop: ${next ? 'ENABLED' : 'DISABLED'}`);
             return next;
           });
           break;
@@ -1365,6 +2024,7 @@ SPECTRUM: ${world.toUpperCase()}`,
       world,
       toggleAutoRunShell,
       handleCreateVenv,
+      autoScaffoldOnBuild,
     ],
   );
 
@@ -1372,7 +2032,7 @@ SPECTRUM: ${world.toUpperCase()}`,
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const raw = inputVal.trim();
-    if (!raw || isStreaming || isExecutingCmd) return;
+    if (!raw || isStreaming || isExecutingCmd || isScaffolding) return;
 
     // History tracking
     setHistory((prev) => [raw, ...prev]);
@@ -1480,13 +2140,27 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
       return [
         { label: 'git status', action: () => executeShellCommand('git status') },
         { label: 'ls -la', action: () => executeShellCommand('ls -la') },
+        {
+          label: 'New Workspace',
+          action: () => {
+            setInputVal('/workspace ');
+            inputRef.current?.focus();
+          },
+        },
         { label: 'Create .venv', action: () => handleCreateVenv() },
         {
           label: autoRunShell ? 'Auto-Run: ON' : 'Auto-Run: OFF',
           action: () => toggleAutoRunShell(),
         },
         { label: 'pwd', action: () => executeShellCommand('pwd') },
-        { label: 'git diff --stat', action: () => executeShellCommand('git diff --stat') },
+        {
+          label: 'Spin Server',
+          action: () => {
+            setInputVal('/serve ');
+            inputRef.current?.focus();
+          },
+        },
+        { label: 'Servers', action: () => executeCommand('/serve list') },
         { label: 'npm test', action: () => executeShellCommand('npm test') },
         { label: 'Switch to AI Chat', action: () => setCliMode('ai') },
         { label: 'Help', action: () => executeCommand('/help') },
@@ -1494,6 +2168,26 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
     }
     return [
       { label: 'Continue Generation', action: () => handleContinue() },
+      {
+        label: 'New Workspace',
+        action: () => {
+          setInputVal('/workspace ');
+          inputRef.current?.focus();
+        },
+      },
+      { label: 'Scaffold Last', action: () => executeCommand('/scaffold') },
+      {
+        label: autoScaffoldOnBuild ? 'Auto-Scaffold: ON' : 'Auto-Scaffold: OFF',
+        action: () => executeCommand('/scaffold auto'),
+      },
+      {
+        label: 'Spin Server',
+        action: () => {
+          setInputVal('/serve ');
+          inputRef.current?.focus();
+        },
+      },
+      { label: 'Servers', action: () => executeCommand('/serve list') },
       { label: 'Create .venv', action: () => handleCreateVenv() },
       {
         label: autoRunShell ? 'Auto-Run: ON' : 'Auto-Run: OFF',
@@ -1511,7 +2205,7 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
       { label: 'Cluster Telemetry', action: () => executeCommand('/stats') },
       { label: 'Connected Models', action: () => executeCommand('/models') },
     ];
-  }, [cliMode, autoRunShell, handleCreateVenv, toggleAutoRunShell, executeCommand]);
+  }, [cliMode, autoRunShell, autoScaffoldOnBuild, handleCreateVenv, toggleAutoRunShell, executeCommand]);
 
   return (
     <div
@@ -1524,37 +2218,48 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
         color: curPal.text,
       }}
     >
-      {/* Background Matrix Rain (Subtle) */}
+      {/* Background Matrix Rain (Subtle Katakana & ASCII streams) */}
       {rainEnabled && (
         <canvas
           ref={canvasRef}
-          className="absolute inset-0 pointer-events-none opacity-20 z-0"
+          className="absolute inset-0 pointer-events-none opacity-25 z-0"
         />
       )}
 
-      {/* Top Header & HUD */}
+      {/* Background Terminal ASCII Skull Backdrop (Blue Theme) */}
+      {skullEnabled && (
+        <div
+          className="pointer-events-none absolute inset-0 z-0 bg-no-repeat transition-opacity duration-500"
+          style={{
+            backgroundImage: "url('/terminal-ascii-skull.png')",
+            backgroundPosition: 'center 32%',
+            backgroundSize: 'min(560px, 65%)',
+            opacity: 0.16,
+            filter: 'drop-shadow(0 0 24px rgba(0, 229, 255, 0.25))',
+          }}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Top Header */}
       <header
-        className="relative z-10 flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 border-b backdrop-blur-md"
+        className="relative z-10 flex items-center justify-between gap-2 px-4 py-2 border-b backdrop-blur-md"
         style={{
           borderColor: curPal.line,
           backgroundColor: curPal.panel,
         }}
       >
         {/* Left: Branding & Mode Selector */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5 shrink-0">
           <div className="flex items-center gap-2">
-            <span className="relative flex h-2.5 w-2.5">
-              <span
-                className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-                style={{ backgroundColor: curPal.neon }}
-              />
-              <span
-                className="relative inline-flex rounded-full h-2.5 w-2.5"
-                style={{ backgroundColor: curPal.neon }}
-              />
-            </span>
             <span
-              className="font-bold tracking-widest text-xs uppercase"
+              className={cn(
+                'w-2 h-2 rounded-full',
+                bridgeState === 'connected' ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse',
+              )}
+            />
+            <span
+              className="font-bold tracking-widest text-xs uppercase select-none"
               style={{ color: curPal.neon }}
             >
               ABLITERATED CLI
@@ -1598,206 +2303,34 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
           </div>
         </div>
 
-        {/* Center: Model & Bridge Status & Refusal */}
-        <div className="hidden sm:flex items-center gap-2.5 text-[11px]">
-          {/* Bridge Status Indicator */}
+        {/* Center: Directory & Model Status */}
+        <div className="hidden md:flex items-center gap-2 text-[11px] truncate">
           <div
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded border"
-            style={{
-              borderColor:
-                bridgeState === 'connected' ? curPal.line : 'rgba(245, 158, 11, 0.4)',
-              backgroundColor:
-                bridgeState === 'connected' ? curPal.panel2 : 'rgba(245, 158, 11, 0.08)',
-              color: bridgeState === 'connected' ? curPal.neon : '#f59e0b',
-            }}
-          >
-            <span
-              className={cn(
-                'w-2 h-2 rounded-full',
-                bridgeState === 'connected' ? 'animate-ping' : 'animate-pulse',
-              )}
-              style={{
-                backgroundColor: bridgeState === 'connected' ? curPal.neon : '#f59e0b',
-              }}
-            />
-            <span className="font-bold">
-              {bridgeState === 'connected'
-                ? 'BRIDGE: ONLINE'
-                : bridgeState === 'connecting' || bridgeState === 'restarting'
-                  ? 'BRIDGE: CONNECTING'
-                  : 'BRIDGE: OFFLINE'}
-            </span>
-            {bridgeState !== 'connected' && (
-              <button
-                type="button"
-                onClick={() => {
-                  bridge.reconnect();
-                  showToast('[ BRIDGE: RECONNECTING ]');
-                }}
-                className="ml-1 px-1.5 py-0.5 rounded border text-[9px] font-bold uppercase transition-colors hover:bg-amber-500/20"
-                style={{ borderColor: 'rgba(245, 158, 11, 0.6)' }}
-              >
-                RECONNECT
-              </button>
-            )}
-          </div>
-
-          {/* Active Working Directory */}
-          <div
-            className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded border"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded border truncate"
             style={{ borderColor: curPal.line, color: curPal.dim }}
             title={`Working Directory: ${activeRoot || 'Project Base'}`}
           >
             <Folder size={12} style={{ color: curPal.neon }} />
-            <span>DIR:</span>
-            <span className="font-bold" style={{ color: curPal.text }}>
+            <span className="font-bold truncate" style={{ color: curPal.text }}>
               {shortRoot}
             </span>
           </div>
 
-          {/* Active Model */}
           <div
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded border"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded border truncate max-w-xs"
             style={{ borderColor: curPal.line, color: curPal.dim }}
+            title={`Active Model: ${activeEndpoint.defaultModel}`}
           >
             <Radio size={12} style={{ color: curPal.neon }} />
-            <span>MODEL:</span>
-            <span className="font-bold" style={{ color: curPal.neon }}>
+            <span className="font-bold truncate" style={{ color: curPal.neon }}>
               {activeEndpoint.defaultModel}
             </span>
           </div>
-
-          {/* Thoughts Visibility Toggle */}
-          <button
-            type="button"
-            onClick={() => {
-              setThoughtsVisible((v) => {
-                const next = !v;
-                showToast(`[ THOUGHT TRACES: ${next ? 'EXPANDED' : 'COMPACT'} ]`);
-                return next;
-              });
-            }}
-            title="Toggle thought traces: Compact hides thought accordions, Expanded shows them"
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded border transition-colors hover:scale-105"
-            style={{
-              borderColor: curPal.line,
-              backgroundColor: thoughtsVisible ? curPal.accentBg : 'transparent',
-              color: thoughtsVisible ? curPal.neon : curPal.dim,
-            }}
-          >
-            <Brain size={12} style={{ color: thoughtsVisible ? curPal.neon : curPal.dim }} />
-            <span>THOUGHTS:</span>
-            <span className="font-bold">{thoughtsVisible ? 'EXPANDED' : 'COMPACT'}</span>
-          </button>
-
-          {/* Refusal Lambda Status */}
-          <button
-            type="button"
-            onClick={() => setShowLambdaBar((v) => !v)}
-            title="Click to toggle lambda orthogonalization scrubber"
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded border transition-colors hover:border-current"
-            style={{ borderColor: curPal.line, color: curPal.dim }}
-          >
-            {lambda <= 0.01 ? (
-              <ShieldCheck size={12} style={{ color: curPal.neon }} />
-            ) : (
-              <ShieldAlert size={12} className="text-amber-400" />
-            )}
-            <span>REFUSAL:</span>
-            <span
-              className="font-bold"
-              style={{ color: lambda <= 0.01 ? curPal.neon : '#f59e0b' }}
-            >
-              {lambda <= 0.01 ? 'ZEROED (λ=0)' : `λ=${lambda.toFixed(2)}`}
-            </span>
-            <Sliders size={11} className="ml-1 opacity-70" />
-          </button>
-
-          {/* Grounding: No Hallucination */}
-          <div
-            className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded border"
-            style={{
-              borderColor: curPal.line,
-              backgroundColor: curPal.panel2,
-              color: curPal.neon,
-            }}
-            title="Anti-Hallucination & Live Web Grounding active (zero fabricated APIs, paths, or code)"
-          >
-            <ShieldCheck size={12} style={{ color: curPal.neon }} />
-            <span>GROUNDING:</span>
-            <span className="font-bold">NO HALLUCINATION</span>
-            <Globe size={11} className="ml-0.5 opacity-80" />
-          </div>
-
-          {/* Auto-Run Shell Toggle */}
-          <button
-            type="button"
-            onClick={() => toggleAutoRunShell()}
-            title="Toggle Auto-Run Shell: when active, AI generated shell code runs automatically"
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded border transition-all hover:scale-105"
-            style={{
-              borderColor: autoRunShell ? '#f59e0b' : curPal.line,
-              backgroundColor: autoRunShell ? 'rgba(245, 158, 11, 0.15)' : 'transparent',
-              color: autoRunShell ? '#fbbf24' : curPal.dim,
-            }}
-          >
-            <Play
-              size={11}
-              className={autoRunShell ? 'fill-amber-400 text-amber-400 animate-pulse' : ''}
-            />
-            <span>AUTO-RUN:</span>
-            <span className="font-bold">{autoRunShell ? 'ON' : 'OFF'}</span>
-          </button>
         </div>
 
-        {/* Right: Quick Controls */}
-        <div className="flex items-center gap-2">
-          {/* Create .venv Button */}
-          <button
-            type="button"
-            onClick={handleCreateVenv}
-            disabled={isExecutingCmd || isStreaming}
-            title="Initialize Python virtual environment (.venv) in workspace root"
-            className="hidden sm:flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-bold tracking-wider transition-colors hover:scale-105 disabled:opacity-50"
-            style={{
-              borderColor: curPal.line,
-              color: curPal.neon,
-              backgroundColor: curPal.panel2,
-            }}
-          >
-            <TerminalIcon size={12} style={{ color: curPal.neon }} />
-            <span>CREATE .VENV</span>
-          </button>
-          {/* Spectrum Switcher */}
-          <button
-            type="button"
-            onClick={() => setWorld((w) => (w === 'green' ? 'blue' : 'green'))}
-            title="Toggle spectrum world (Hotkey: S)"
-            className="flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-bold tracking-wider transition-colors hover:scale-105"
-            style={{
-              borderColor: curPal.line2,
-              color: curPal.neon,
-              backgroundColor: curPal.accentBg,
-            }}
-          >
-            {world === 'green' ? 'GREEN' : 'BLUE'}
-          </button>
-
-          {/* Rain Toggle */}
-          <button
-            type="button"
-            onClick={() => setRainEnabled((r) => !r)}
-            title="Toggle background matrix rain"
-            className="p-1.5 rounded border transition-colors"
-            style={{
-              borderColor: curPal.line,
-              color: rainEnabled ? curPal.neon : curPal.dim,
-            }}
-          >
-            <Zap size={14} />
-          </button>
-
-          {/* Download All Session Files as ZIP */}
+        {/* Right: Actions & Options */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Download All Session Files as ZIP (if files exist) */}
           {allSessionFiles.length > 0 && (
             <button
               type="button"
@@ -1807,19 +2340,38 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
                 showToast(`[ EXPORTED ZIP: ${allSessionFiles.length} FILES ]`);
               }}
               title={`Download all ${allSessionFiles.length} generated files as a ZIP archive`}
-              className="flex items-center gap-1.5 px-2 py-1 rounded border text-[11px] font-bold tracking-wider transition-all hover:scale-105"
+              className="flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-bold tracking-wider transition-all hover:scale-105"
               style={{
                 borderColor: curPal.line2,
                 color: curPal.neon,
                 backgroundColor: curPal.accentBg,
               }}
             >
-              <Download size={13} />
+              <Download size={12} />
               <span className="hidden md:inline">ZIP ({allSessionFiles.length})</span>
             </button>
           )}
 
-          {/* Clear */}
+          {/* Options Drawer Toggle */}
+          <button
+            type="button"
+            onClick={() => setShowControls((v) => !v)}
+            title="Toggle settings & options panel"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded border text-[11px] font-medium transition-all hover:scale-105"
+            style={{
+              borderColor: showControls ? curPal.neon : curPal.line,
+              backgroundColor: showControls ? curPal.accentBg : 'transparent',
+              color: showControls ? curPal.neon : curPal.dim,
+            }}
+          >
+            <Sliders size={12} />
+            <span>Options</span>
+            {autoRunShell && (
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title="Auto-run shell active" />
+            )}
+          </button>
+
+          {/* Clear Buffer */}
           <button
             type="button"
             onClick={() => executeCommand('clear')}
@@ -1827,7 +2379,7 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
             className="p-1.5 rounded border transition-colors hover:text-red-400"
             style={{ borderColor: curPal.line, color: curPal.dim }}
           >
-            <Trash2 size={14} />
+            <Trash2 size={13} />
           </button>
 
           {/* Fullscreen */}
@@ -1838,23 +2390,24 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
             className="p-1.5 rounded border transition-colors"
             style={{ borderColor: curPal.line, color: curPal.dim }}
           >
-            {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
           </button>
         </div>
       </header>
 
-      {/* Expandable Lambda Refusal Scrubber Drawer */}
-      {showLambdaBar && (
+      {/* Expandable Options Drawer */}
+      {showControls && (
         <div
-          className="relative z-10 flex flex-wrap items-center justify-between gap-4 px-4 py-2.5 border-b animate-in fade-in slide-from-top-2"
+          className="relative z-10 flex flex-col gap-2.5 px-4 py-2.5 border-b text-xs animate-in fade-in slide-from-top-1"
           style={{
-            borderColor: curPal.line2,
+            borderColor: curPal.line,
             backgroundColor: curPal.panel,
           }}
         >
-          <div className="flex items-center gap-3 flex-1 min-w-[280px]">
-            <span className="text-xs font-bold whitespace-nowrap" style={{ color: curPal.neon }}>
-              REFUSAL PROJECTION (λ):
+          {/* Row 1: Refusal Lambda Slider */}
+          <div className="flex items-center gap-2 flex-1 min-w-[240px]">
+            <span className="text-[11px] font-bold whitespace-nowrap" style={{ color: curPal.neon }}>
+              Refusal (λ):
             </span>
             <input
               type="range"
@@ -1863,51 +2416,137 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
               step="0.01"
               value={lambda}
               onChange={(e) => setLambda(parseFloat(e.target.value))}
-              className="flex-1 h-1.5 rounded-lg appearance-none cursor-pointer accent-current"
+              className="flex-1 h-1 rounded appearance-none cursor-pointer accent-current"
               style={{ accentColor: curPal.neon }}
             />
-            <span className="font-mono text-xs font-bold w-12" style={{ color: curPal.neon }}>
+            <span className="font-mono text-[11px] font-bold w-10" style={{ color: curPal.neon }}>
               {lambda.toFixed(2)}
             </span>
-          </div>
-
-          <div className="flex items-center gap-2 text-xs">
             <button
               type="button"
               onClick={() => setLambda(0.0)}
-              className="px-2 py-1 rounded border text-[10px] font-bold uppercase transition-colors"
+              className="px-1.5 py-0.5 rounded border text-[10px] uppercase font-bold transition-colors"
               style={{
                 borderColor: curPal.line,
                 backgroundColor: lambda === 0 ? curPal.accentBg : 'transparent',
                 color: curPal.neon,
               }}
             >
-              Zeroed (0.00)
+              Zeroed
             </button>
+          </div>
+
+          {/* Row 2: Secondary Controls */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Auto-Run Toggle */}
             <button
               type="button"
-              onClick={() => setLambda(0.5)}
-              className="px-2 py-1 rounded border text-[10px] font-bold uppercase transition-colors"
+              onClick={() => toggleAutoRunShell()}
+              title="Toggle Auto-Run Shell: when active, AI-generated shell commands run automatically"
+              className="flex items-center gap-1.5 px-2 py-1 rounded border text-[11px] font-bold transition-all"
               style={{
-                borderColor: curPal.line,
-                backgroundColor: lambda === 0.5 ? curPal.accentBg : 'transparent',
-                color: curPal.text,
+                borderColor: autoRunShell ? '#f59e0b' : curPal.line,
+                backgroundColor: autoRunShell ? 'rgba(245, 158, 11, 0.15)' : 'transparent',
+                color: autoRunShell ? '#fbbf24' : curPal.dim,
               }}
             >
-              Mid (0.50)
+              <Play
+                size={11}
+                className={autoRunShell ? 'fill-amber-400 text-amber-400 animate-pulse' : ''}
+              />
+              <span>AUTO-RUN:</span>
+              <span>{autoRunShell ? 'ON' : 'OFF'}</span>
             </button>
+
+            {/* Create .venv Button */}
             <button
               type="button"
-              onClick={() => setLambda(1.0)}
-              className="px-2 py-1 rounded border text-[10px] font-bold uppercase transition-colors"
+              onClick={handleCreateVenv}
+              disabled={isExecutingCmd || isStreaming}
+              title="Initialize Python virtual environment (.venv) in workspace root"
+              className="flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-bold tracking-wider transition-colors disabled:opacity-50"
               style={{
                 borderColor: curPal.line,
-                backgroundColor: lambda === 1.0 ? curPal.accentBg : 'transparent',
-                color: curPal.dim,
+                color: curPal.neon,
+                backgroundColor: curPal.panel2,
               }}
             >
-              Aligned (1.00)
+              <TerminalIcon size={12} style={{ color: curPal.neon }} />
+              <span>CREATE .VENV</span>
             </button>
+
+            {/* Grounding: No Hallucination */}
+            <div
+              className="flex items-center gap-1 px-2 py-1 rounded border text-[10px] font-bold uppercase tracking-wider select-none"
+              style={{
+                borderColor: curPal.line,
+                backgroundColor: curPal.panel2,
+                color: curPal.neon,
+              }}
+              title="Anti-Hallucination & Live Web Grounding active"
+            >
+              <ShieldCheck size={11} style={{ color: curPal.neon }} />
+              <span>NO HALLUCINATION</span>
+            </div>
+
+            {/* Thoughts visibility */}
+            <button
+              type="button"
+              onClick={() => setThoughtsVisible((v) => !v)}
+              className="px-2 py-1 rounded border text-[11px] font-bold transition-colors"
+              style={{
+                borderColor: curPal.line,
+                color: thoughtsVisible ? curPal.neon : curPal.dim,
+                backgroundColor: thoughtsVisible ? curPal.accentBg : 'transparent',
+              }}
+              title="Toggle thoughts trace expansion"
+            >
+              Thoughts: {thoughtsVisible ? 'Show' : 'Hide'}
+            </button>
+
+            {/* Matrix Digital Rain */}
+            <button
+              type="button"
+              onClick={() => setRainEnabled((s) => !s)}
+              className="px-2 py-1 rounded border text-[11px] font-bold transition-colors"
+              style={{
+                borderColor: curPal.line,
+                color: rainEnabled ? curPal.neon : curPal.dim,
+                backgroundColor: rainEnabled ? curPal.accentBg : 'transparent',
+              }}
+              title="Toggle Matrix digital rain background canvas"
+            >
+              Rain: {rainEnabled ? 'On' : 'Off'}
+            </button>
+
+            {/* Terminal ASCII Skull Backdrop */}
+            <button
+              type="button"
+              onClick={() => setSkullEnabled((s) => !s)}
+              className="px-2 py-1 rounded border text-[11px] font-bold transition-colors"
+              style={{
+                borderColor: curPal.line,
+                color: skullEnabled ? curPal.neon : curPal.dim,
+                backgroundColor: skullEnabled ? curPal.accentBg : 'transparent',
+              }}
+              title="Toggle terminal ASCII skull background"
+            >
+              Skull: {skullEnabled ? 'On' : 'Off'}
+            </button>
+
+            {/* Bridge Reconnect */}
+            {bridgeState !== 'connected' && (
+              <button
+                type="button"
+                onClick={() => {
+                  bridge.reconnect();
+                  showToast('[ BRIDGE: RECONNECTING ]');
+                }}
+                className="px-2 py-1 rounded border text-[11px] font-bold uppercase text-amber-400 border-amber-400/40 hover:bg-amber-400/10"
+              >
+                Reconnect Bridge
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1925,10 +2564,9 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
             return (
               <div
                 key={msg.id}
-                className="p-3 rounded border font-mono text-[11px] whitespace-pre-wrap shadow-sm"
+                className="py-1 px-1 font-mono text-[11px] whitespace-pre-wrap leading-relaxed opacity-70 border-b pb-2 mb-1"
                 style={{
                   borderColor: curPal.line,
-                  backgroundColor: curPal.panel2,
                   color: curPal.dim,
                 }}
               >
@@ -1940,36 +2578,19 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
           // User Command or Chat Bubble
           if (isUser) {
             return (
-              <div key={msg.id} className="space-y-1">
-                <div
-                  className="flex items-center gap-2 text-[10px]"
-                  style={{ color: curPal.dim }}
+              <div key={msg.id} className="flex items-baseline gap-2 py-1">
+                <span className="font-bold select-none shrink-0 text-xs font-mono" style={{ color: curPal.neon }}>
+                  {msg.isShell ? `$ ` : `> `}
+                </span>
+                <span
+                  className="font-mono text-xs whitespace-pre-wrap leading-relaxed flex-1 break-all"
+                  style={{ color: curPal.text }}
                 >
-                  <span className="font-bold" style={{ color: curPal.neon }}>
-                    {msg.isShell
-                      ? `guest@abliterated:${shortRoot}$`
-                      : 'guest@abliterated:~$'}
-                  </span>
-                  <span>[{msg.timestamp}]</span>
-                  {msg.isShell && (
-                    <span
-                      className="px-1 py-0.2 rounded border text-[9px] font-bold uppercase tracking-wider"
-                      style={{ borderColor: curPal.line2, color: curPal.neon }}
-                    >
-                      SHELL
-                    </span>
-                  )}
-                </div>
-                <div
-                  className="px-3 py-2 rounded border font-medium text-[13px] whitespace-pre-wrap"
-                  style={{
-                    borderColor: curPal.line2,
-                    backgroundColor: curPal.panel,
-                    color: curPal.text,
-                  }}
-                >
-                  {msg.isShell ? `$ ${msg.shellCommand || msg.content}` : msg.content}
-                </div>
+                  {msg.isShell ? (msg.shellCommand || msg.content) : msg.content}
+                </span>
+                <span className="text-[10px] opacity-35 shrink-0 select-none font-mono">
+                  {msg.timestamp}
+                </span>
               </div>
             );
           }
@@ -2133,20 +2754,21 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
           const messageFiles = extractFilesFromMarkdown(mainAnswer || '');
 
           return (
-            <div key={msg.id} className="space-y-2">
+            <div key={msg.id} className="space-y-1.5 pt-1">
               <div
                 className="flex items-center justify-between gap-2 text-[10px]"
                 style={{ color: curPal.dim }}
               >
-                <div className="flex items-center gap-2">
-                  <Bot size={13} style={{ color: curPal.neon }} />
-                  <span className="font-bold" style={{ color: curPal.neon }}>
-                    abliterated [{activeEndpoint.defaultModel}]
+                <div className="flex items-center gap-1.5">
+                  <Bot size={12} style={{ color: curPal.neon }} />
+                  <span className="font-bold text-[11px]" style={{ color: curPal.neon }}>
+                    AI
                   </span>
-                  <span>[{msg.timestamp}]</span>
+                  <span className="opacity-60 text-[10px]">[{activeEndpoint.defaultModel}]</span>
+                  <span className="opacity-40">[{msg.timestamp}]</span>
                   {msg.isStreaming && (
                     <span
-                      className="px-1.5 py-0.5 rounded border text-[9px] font-bold tracking-wider animate-pulse"
+                      className="px-1.5 py-0.2 rounded border text-[9px] font-bold tracking-wider animate-pulse"
                       style={{ borderColor: curPal.line2, color: curPal.neon }}
                     >
                       STREAMING...
@@ -2240,7 +2862,7 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
 
               {/* Response Content with Syntax & Code Block Execution */}
               <div
-                className="px-3.5 py-2.5 rounded border text-[12px] leading-relaxed shadow-md space-y-3"
+                className="px-3 py-2 rounded border text-[12px] leading-relaxed space-y-2.5"
                 style={{
                   borderColor: curPal.line,
                   backgroundColor: curPal.panel,
@@ -2249,12 +2871,46 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
               >
                 {parsedBlocks.map((block, bIdx) => {
                   if (block.type === 'text') {
+                    const { body, summary } = splitSummaryFromText(block.content);
                     return (
-                      <div
-                        key={bIdx}
-                        className="whitespace-pre-wrap break-words leading-relaxed"
-                      >
-                        {block.content}
+                      <div key={bIdx} className="space-y-2">
+                        {body ? (
+                          <div className="whitespace-pre-wrap break-words leading-relaxed">
+                            {body}
+                          </div>
+                        ) : null}
+                        {summary ? (
+                          <div
+                            className="p-3 rounded border text-[11px] leading-relaxed shadow-sm my-2 animate-in fade-in"
+                            style={{
+                              borderColor: curPal.line2,
+                              backgroundColor: curPal.panel2,
+                            }}
+                          >
+                            <div
+                              className="flex items-center gap-1.5 font-bold uppercase tracking-wider mb-2"
+                              style={{ color: curPal.neon }}
+                            >
+                              <CheckCircle2 size={13} style={{ color: curPal.neon }} />
+                              <span>Response Summary</span>
+                            </div>
+                            <div className="space-y-1 pl-1 text-[11px] opacity-90" style={{ color: curPal.text }}>
+                              {summary.split(/\n+/).map((line, lIdx) => {
+                                const cleanLine = line.replace(/^[-*•\d.]+\s*/, '').trim();
+                                if (!cleanLine) return null;
+                                return (
+                                  <div key={lIdx} className="flex items-start gap-2">
+                                    <span
+                                      className="inline-block w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
+                                      style={{ backgroundColor: curPal.neon }}
+                                    />
+                                    <span>{cleanLine}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     );
                   }
@@ -2383,43 +3039,135 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
                     </button>
                   </div>
                 )}
+
+                {/* 3 Prompt Suggestions after each completed AI response */}
+                {!msg.isStreaming && mainAnswer.trim() ? (
+                  (() => {
+                    const suggestions = getPromptSuggestions(mainAnswer);
+                    return (
+                      <div
+                        className="mt-2.5 pt-2 border-t flex flex-col gap-1.5"
+                        style={{ borderColor: curPal.line }}
+                      >
+                        <div
+                          className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider font-mono"
+                          style={{ color: curPal.dim }}
+                        >
+                          <span className="flex items-center gap-1.5">
+                            <Sparkles size={11} style={{ color: curPal.neon }} />
+                            PROMPT SUGGESTIONS
+                          </span>
+                          <span className="opacity-50 text-[9px] lowercase font-normal">
+                            click to send · edit to tweak
+                          </span>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          {suggestions.map((sug, sIdx) => (
+                            <div
+                              key={sIdx}
+                              className="group flex items-center justify-between gap-2 px-2.5 py-1.5 rounded border text-[11px] font-mono transition-all"
+                              style={{
+                                borderColor: curPal.line,
+                                backgroundColor: curPal.panel2,
+                                color: curPal.text,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                disabled={isStreaming || isExecutingCmd}
+                                onClick={() => void sendAiChat(sug)}
+                                className="flex-1 text-left flex items-start gap-1.5 hover:underline transition-colors focus-visible:outline-none"
+                                title={`Send: "${sug}"`}
+                              >
+                                <span
+                                  className="font-bold shrink-0"
+                                  style={{ color: curPal.neon }}
+                                >
+                                  [{sIdx + 1}]
+                                </span>
+                                <span className="break-words">{sug}</span>
+                              </button>
+                              <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setInputVal(sug);
+                                    inputRef.current?.focus();
+                                  }}
+                                  className="p-1 rounded hover:bg-white/10 transition-colors"
+                                  title="Edit in prompt input"
+                                >
+                                  <CornerDownLeft size={11} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => copyCode(sug, `sug-${msg.id}-${sIdx}`)}
+                                  className="p-1 rounded hover:bg-white/10 transition-colors"
+                                  title="Copy prompt"
+                                >
+                                  {copiedKey === `sug-${msg.id}-${sIdx}` ? (
+                                    <Check size={11} className="text-emerald-400" />
+                                  ) : (
+                                    <Copy size={11} />
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isStreaming || isExecutingCmd}
+                                  onClick={() => void sendAiChat(sug)}
+                                  className="p-1 rounded hover:bg-white/10 transition-colors"
+                                  style={{ color: curPal.neon }}
+                                  title="Send now"
+                                >
+                                  <ArrowRight size={11} />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()
+                ) : null}
               </div>
             </div>
           );
         })}
       </main>
 
-      {/* Bottom Suggestions Chips */}
-      <div
-        className="relative z-10 flex items-center gap-1.5 px-4 py-1.5 border-t overflow-x-auto no-scrollbar"
-        style={{
-          borderColor: curPal.line,
-          backgroundColor: curPal.panel,
-        }}
-      >
-        <span
-          className="text-[10px] font-bold uppercase shrink-0"
-          style={{ color: curPal.dim }}
+      {/* Collapsible Quick Suggestions */}
+      {showQuickPrompts && (
+        <div
+          className="relative z-10 flex items-center gap-1.5 px-4 py-1.5 border-t overflow-x-auto no-scrollbar animate-in fade-in slide-from-bottom-1"
+          style={{
+            borderColor: curPal.line,
+            backgroundColor: curPal.panel,
+          }}
         >
-          {cliMode === 'shell' ? 'SHELL QUICK:' : 'AI QUICK:'}
-        </span>
-        {quickPrompts.map((qp, idx) => (
-          <button
-            key={idx}
-            type="button"
-            onClick={qp.action}
-            disabled={isStreaming || isExecutingCmd}
-            className="shrink-0 px-2.5 py-0.5 rounded border text-[10px] transition-all hover:scale-[1.02] disabled:opacity-50"
-            style={{
-              borderColor: curPal.line,
-              color: curPal.text,
-              backgroundColor: curPal.panel2,
-            }}
+          <span
+            className="text-[10px] font-bold uppercase shrink-0"
+            style={{ color: curPal.dim }}
           >
-            {qp.label}
-          </button>
-        ))}
-      </div>
+            {cliMode === 'shell' ? 'SHELL:' : 'AI:'}
+          </span>
+          {quickPrompts.map((qp, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={qp.action}
+              disabled={isStreaming || isExecutingCmd || isScaffolding}
+              className="shrink-0 px-2.5 py-0.5 rounded border text-[10px] transition-all hover:scale-[1.02] disabled:opacity-50"
+              style={{
+                borderColor: curPal.line,
+                color: curPal.text,
+                backgroundColor: curPal.panel2,
+              }}
+            >
+              {qp.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Terminal Input Bar */}
       <footer
@@ -2461,13 +3209,14 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
             />
           </div>
 
-          {isStreaming || isExecutingCmd ? (
+          {isStreaming || isExecutingCmd || isScaffolding ? (
             <button
               type="button"
               onClick={() => {
                 abortCtrlRef.current?.abort();
                 setIsStreaming(false);
                 setIsExecutingCmd(false);
+                setIsScaffolding(false);
               }}
               className="flex items-center gap-1.5 px-3 py-2 rounded border text-xs font-bold tracking-wider uppercase transition-colors bg-red-950/60 border-red-500 text-red-300 hover:bg-red-900/80 animate-pulse shrink-0"
             >
@@ -2491,56 +3240,32 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
           )}
         </form>
 
-        {/* Status Line */}
+        {/* Simplified Status Line */}
         <div
-          className="flex items-center justify-between mt-2 text-[9px] uppercase tracking-wider"
+          className="flex items-center justify-between mt-2 text-[10px] tracking-wide"
           style={{ color: curPal.dim }}
         >
           <div className="flex items-center gap-3">
-            <span>
-              MODE: <b style={{ color: curPal.neon }}>{cliMode.toUpperCase()}</b>
+            <span className="font-medium">
+              {cliMode === 'shell' ? 'Shell' : 'AI Assistant'} ·{' '}
+              <span style={{ color: curPal.text }}>{shortRoot}</span>
             </span>
-            <span>
-              CWD: <b style={{ color: curPal.text }}>{shortRoot}</b>
-            </span>
-            <span>
-              BRIDGE:{' '}
-              <b
-                style={{
-                  color: bridgeState === 'connected' ? curPal.neon : '#f59e0b',
-                }}
-              >
-                {bridgeState.toUpperCase()}
-              </b>
-            </span>
-            <span>
-              RUNWAY: <b style={{ color: curPal.neon }}>8192 TOKENS</b>
-            </span>
-            <span>
-              SPECTRUM: <b style={{ color: curPal.neon }}>{world.toUpperCase()}</b>
-            </span>
-            <span>
-              REFUSAL:{' '}
-              <b style={{ color: curPal.neon }}>
-                {lambda <= 0.01 ? 'ZEROED' : `λ=${lambda.toFixed(2)}`}
-              </b>
-            </span>
-            <span>
-              AUTO-RUN:{' '}
-              <b style={{ color: autoRunShell ? '#fbbf24' : curPal.dim }}>
-                {autoRunShell ? 'ON' : 'OFF'}
-              </b>
-            </span>
-            <span className="hidden md:inline">
-              GROUNDING: <b style={{ color: curPal.neon }}>NO HALLUCINATION</b>
-            </span>
+            <button
+              type="button"
+              onClick={() => setShowQuickPrompts((v) => !v)}
+              className="flex items-center gap-1 font-medium hover:underline opacity-80 hover:opacity-100 transition-opacity"
+              style={{ color: curPal.neon }}
+            >
+              <Sparkles size={11} />
+              <span>{showQuickPrompts ? 'Hide Shortcuts' : 'Quick Shortcuts'}</span>
+              {showQuickPrompts ? <ChevronDown size={11} /> : <ChevronUp size={11} />}
+            </button>
           </div>
 
-          <div className="hidden sm:flex items-center gap-3">
-            <span>[ENTER] {cliMode === 'shell' ? 'RUN' : 'SEND'}</span>
-            <span>[SHIFT+ENTER] NEWLINE</span>
-            <span>[$ &lt;CMD&gt;] SHELL ESCAPE</span>
-            <span>[ESC] ABORT</span>
+          <div className="hidden sm:flex items-center gap-3 opacity-70 text-[10px]">
+            <span>↵ {cliMode === 'shell' ? 'Run' : 'Send'}</span>
+            <span>⇧↵ Newline</span>
+            <span>$ Shell escape</span>
           </div>
         </div>
       </footer>

@@ -21,6 +21,21 @@ export type BridgeDirEntry = {
   dir: boolean;
 };
 
+/** A long-running server process managed by the daemon (see spawnServer). */
+export interface BridgeServerInfo {
+  id: string;
+  pid: number;
+  name: string;
+  command: string;
+  cwd: string;
+  status: 'running' | 'exited' | 'stopped';
+  exitCode: number | null;
+  url: string;
+  port: number;
+  startedAt: string;
+  logLines: number;
+}
+
 type Incoming =
   | { runId: string; type: 'stdout' | 'stderr'; data: string }
   | { runId: string; type: 'exit'; code: number }
@@ -734,6 +749,47 @@ export class BridgeClient {
       const msg = v as { content?: string; text?: string };
       return String(msg.text ?? msg.content ?? '');
     });
+  }
+
+  // ---- Managed background servers (spun via the daemon; persist across reconnects) ----
+
+  /** Spin up a long-running server process; resolves once it has been launched. */
+  spawnServer(
+    command: string,
+    opts?: { root?: string; name?: string; port?: number },
+  ): Promise<BridgeServerInfo> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({
+      type: 'spawn_server',
+      command,
+      root: opts?.root?.trim() || undefined,
+      name: opts?.name,
+      port: opts?.port,
+    }).then((v) => (v as { server: BridgeServerInfo }).server);
+  }
+
+  /** List every managed server (running, exited, or stopped) known to the daemon. */
+  listServers(): Promise<BridgeServerInfo[]> {
+    if (!this.connected) return Promise.resolve([]);
+    return this.request({ type: 'list_servers' }).then(
+      (v) => (v as { servers?: BridgeServerInfo[] }).servers || [],
+    );
+  }
+
+  /** Fetch the tail of a managed server's output plus its current status. */
+  serverLogs(id: string, lines?: number): Promise<{ logs: string; server: BridgeServerInfo }> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({ type: 'server_logs', id, lines }).then(
+      (v) => v as { logs: string; server: BridgeServerInfo },
+    );
+  }
+
+  /** Stop a managed server (SIGTERM, escalating to SIGKILL). */
+  stopServer(id: string): Promise<BridgeServerInfo | null> {
+    if (!this.connected) return Promise.reject(new Error('Bridge disconnected'));
+    return this.request({ type: 'stop_server', id }).then(
+      (v) => (v as { server?: BridgeServerInfo }).server || null,
+    );
   }
 
   mempalaceWhich(): Promise<{ ok: boolean; display?: string; error?: string; text: string }> {

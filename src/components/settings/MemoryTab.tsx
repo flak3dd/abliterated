@@ -118,6 +118,51 @@ export function MemoryTab({
               })
             }
           />
+
+          <ToggleSwitch
+            label="Self-learning (distill lessons from outcomes)"
+            checked={settings.mempalaceSelfLearning !== false}
+            onChange={(v) => patch({ mempalaceSelfLearning: v })}
+            disabled={settings.mempalaceEnabled === false}
+            disabledReason="Requires MemPalace to be enabled above."
+            help="After each run, evaluate outcome signals (RunProof, retries, stop reason) and distill structured lessons or anti-patterns into dedicated palace rooms."
+            guidance={getToggleGuidance('mempalaceSelfLearning', settings, selectedSetupId)}
+            onAlign={() =>
+              patch({
+                mempalaceSelfLearning: getToggleGuidance('mempalaceSelfLearning', settings, selectedSetupId).recommendedValue,
+              })
+            }
+          />
+
+          <ToggleSwitch
+            label="Anti-pattern mining (learn from failures)"
+            checked={settings.mempalaceAntiPatternMining !== false}
+            onChange={(v) => patch({ mempalaceAntiPatternMining: v })}
+            disabled={settings.mempalaceEnabled === false || settings.mempalaceSelfLearning === false}
+            disabledReason="Requires Self-Learning to be enabled."
+            help="When runs fail or require retries, automatically mine the failure pattern and store it as a 'DO NOT REPEAT' anti-pattern warning in the palace."
+            guidance={getToggleGuidance('mempalaceAntiPatternMining', settings, selectedSetupId)}
+            onAlign={() =>
+              patch({
+                mempalaceAntiPatternMining: getToggleGuidance('mempalaceAntiPatternMining', settings, selectedSetupId).recommendedValue,
+              })
+            }
+          />
+
+          <ToggleSwitch
+            label="Salience decay (prioritise recent memories)"
+            checked={settings.mempalaceSalienceDecay !== false}
+            onChange={(v) => patch({ mempalaceSalienceDecay: v })}
+            disabled={settings.mempalaceEnabled === false}
+            disabledReason="Requires MemPalace to be enabled above."
+            help="Apply salience weighting to prioritize recently reinforced memories and naturally deprioritize obsolete ones."
+            guidance={getToggleGuidance('mempalaceSalienceDecay', settings, selectedSetupId)}
+            onAlign={() =>
+              patch({
+                mempalaceSalienceDecay: getToggleGuidance('mempalaceSalienceDecay', settings, selectedSetupId).recommendedValue,
+              })
+            }
+          />
         </div>
 
         <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">

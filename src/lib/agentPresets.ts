@@ -32,6 +32,9 @@ export interface AgentSetupProfile {
     mempalaceEnabled: boolean;
     mempalaceAutoRecall: boolean;
     mempalaceAutoSave: boolean;
+    mempalaceSelfLearning: boolean;
+    mempalaceAntiPatternMining: boolean;
+    mempalaceSalienceDecay: boolean;
     jobWorktreesEnabled: boolean;
     multiAgentEnabled: boolean;
     remoteHostEnabled: boolean;
@@ -71,6 +74,9 @@ export const AGENT_SETUP_PROFILES: readonly AgentSetupProfile[] = [
       mempalaceEnabled: true,
       mempalaceAutoRecall: true,
       mempalaceAutoSave: true,
+      mempalaceSelfLearning: true,
+      mempalaceAntiPatternMining: true,
+      mempalaceSalienceDecay: true,
       jobWorktreesEnabled: false,
       multiAgentEnabled: false,
       remoteHostEnabled: true,
@@ -107,6 +113,9 @@ export const AGENT_SETUP_PROFILES: readonly AgentSetupProfile[] = [
       mempalaceEnabled: true,
       mempalaceAutoRecall: true,
       mempalaceAutoSave: true,
+      mempalaceSelfLearning: true,
+      mempalaceAntiPatternMining: true,
+      mempalaceSalienceDecay: true,
       jobWorktreesEnabled: false,
       multiAgentEnabled: false,
       remoteHostEnabled: true,
@@ -143,6 +152,9 @@ export const AGENT_SETUP_PROFILES: readonly AgentSetupProfile[] = [
       mempalaceEnabled: true,
       mempalaceAutoRecall: true,
       mempalaceAutoSave: true,
+      mempalaceSelfLearning: true,
+      mempalaceAntiPatternMining: true,
+      mempalaceSalienceDecay: true,
       jobWorktreesEnabled: false,
       multiAgentEnabled: false,
       remoteHostEnabled: true,
@@ -179,6 +191,9 @@ export const AGENT_SETUP_PROFILES: readonly AgentSetupProfile[] = [
       mempalaceEnabled: true,
       mempalaceAutoRecall: true,
       mempalaceAutoSave: true,
+      mempalaceSelfLearning: true,
+      mempalaceAntiPatternMining: true,
+      mempalaceSalienceDecay: true,
       jobWorktreesEnabled: false,
       multiAgentEnabled: false,
       remoteHostEnabled: true,
@@ -217,6 +232,9 @@ export const AGENT_SETUP_PROFILES: readonly AgentSetupProfile[] = [
       mempalaceEnabled: true,
       mempalaceAutoRecall: true,
       mempalaceAutoSave: true,
+      mempalaceSelfLearning: true,
+      mempalaceAntiPatternMining: true,
+      mempalaceSalienceDecay: true,
       remoteHostEnabled: true,
       postEditDiagnostics: true,
     },
@@ -246,6 +264,9 @@ export const TRACKED_TOGGLE_KEYS: readonly ToggleKey[] = [
   'mempalaceEnabled',
   'mempalaceAutoRecall',
   'mempalaceAutoSave',
+  'mempalaceSelfLearning',
+  'mempalaceAntiPatternMining',
+  'mempalaceSalienceDecay',
   'jobWorktreesEnabled',
   'multiAgentEnabled',
   'remoteHostEnabled',
@@ -285,6 +306,12 @@ export function getSettingToggleValue(settings: ClientSettings, key: ToggleKey):
       return settings.mempalaceAutoRecall !== false;
     case 'mempalaceAutoSave':
       return settings.mempalaceAutoSave !== false;
+    case 'mempalaceSelfLearning':
+      return settings.mempalaceSelfLearning !== false;
+    case 'mempalaceAntiPatternMining':
+      return settings.mempalaceAntiPatternMining !== false;
+    case 'mempalaceSalienceDecay':
+      return settings.mempalaceSalienceDecay !== false;
     case 'jobWorktreesEnabled':
       return settings.jobWorktreesEnabled === true;
     case 'multiAgentEnabled':

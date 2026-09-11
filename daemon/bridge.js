@@ -41,6 +41,18 @@ const MAX_GLOB_MATCHES = 500;
 /** @type {Map<string, { encoding: string, eol: string, bom: boolean }>} */
 const fileMeta = new Map();
 
+/**
+ * Managed long-running servers spun via `spawn_server`. Unlike `exec` (finite,
+ * timeout-killed, output-capped, killed on socket close), these persist across
+ * client reconnects, keep a ring buffer of recent output, and are only torn
+ * down by an explicit `stop_server` or daemon shutdown.
+ * @type {Map<string, any>}
+ */
+const servers = new Map();
+let serverSeq = 0;
+/** Ring-buffer size (lines) retained per managed server. */
+const SERVER_LOG_CAP = 800;
+
 function send(ws, payload) {
   if (ws.readyState === 1) ws.send(JSON.stringify(payload));
 }
@@ -245,6 +257,196 @@ async function resolveWriteRoot(msg) {
   }
   assertNotAppInstall(real, 'write');
   return real;
+}
+
+/**
+ * Build the child-process env for a command run in `execCwd`, PATH-prefixing an
+ * existing workspace .venv/bin (never creating one) so console scripts resolve.
+ * Mirrors the env setup in handleExec; shared by exec and spawn_server.
+ */
+async function buildExecEnv(execCwd) {
+  const env = { ...process.env, ABLIT_ROOT: execCwd };
+  const venvBin = path.join(execCwd, process.platform === 'win32' ? '.venv/Scripts' : '.venv/bin');
+  let hasVenv = false;
+  try {
+    hasVenv = (await stat(venvBin)).isDirectory();
+  } catch {
+    hasVenv = false;
+  }
+  if (hasVenv) {
+    const sep = process.platform === 'win32' ? ';' : ':';
+    env.PATH = `${venvBin}${sep}${env.PATH || ''}`;
+    env.VIRTUAL_ENV = path.join(execCwd, '.venv');
+  }
+  return env;
+}
+
+/** Best-effort dev-server URL/port sniff from a line of server output. */
+function detectServerUrl(text) {
+  const local = text.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d{2,5})?[^\s"'`]*/i);
+  if (local) return local[0].replace(/[.,)\]>]+$/, '').replace(/0\.0\.0\.0/, 'localhost');
+  const anyUrl = text.match(/https?:\/\/[^\s"'`]+/i);
+  if (anyUrl) return anyUrl[0].replace(/[.,)\]>]+$/, '');
+  const hostPort = text.match(/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):(\d{2,5})\b/i);
+  if (hostPort) return `http://localhost:${hostPort[1]}`;
+  const portWord = text.match(/\bport\s*[:=]?\s*(\d{2,5})\b/i);
+  if (portWord) return `http://localhost:${portWord[1]}`;
+  return '';
+}
+
+/** Serializable view of a managed server (omits the live child handle). */
+function serverPublic(s) {
+  return {
+    id: s.id,
+    pid: s.pid,
+    name: s.name,
+    command: s.command,
+    cwd: s.cwd,
+    status: s.status,
+    exitCode: s.exitCode,
+    url: s.url,
+    port: s.port,
+    startedAt: s.startedAt,
+    logLines: s.logs.length,
+  };
+}
+
+/** Kill a managed server's whole process group (falls back to the direct child). */
+function killServerTree(s, signal) {
+  if (!s || !s.pid) return;
+  try {
+    if (process.platform === 'win32') {
+      s.child.kill();
+    } else {
+      process.kill(-s.pid, signal || 'SIGTERM');
+    }
+  } catch {
+    try {
+      s.child.kill(signal || 'SIGTERM');
+    } catch {
+      /* already dead */
+    }
+  }
+}
+
+async function handleSpawnServer(ws, msg) {
+  const runId = msg.runId;
+  try {
+    const command = String(msg.command || '').trim();
+    if (!command) throw new Error('empty command');
+    if (isDeadly(command)) throw new Error('refused: deadly command blocked by local daemon');
+    const pinsRoot = typeof msg.root === 'string' && msg.root.trim() !== '';
+    let execCwd = ROOT;
+    try {
+      execCwd = await resolveWriteRoot(msg);
+    } catch (err) {
+      if (pinsRoot) throw err;
+      execCwd = ROOT;
+    }
+    if (!pinsRoot) assertWorkspaceNotInstall('spawn_server');
+    const env = await buildExecEnv(execCwd);
+    const child = spawn(command, {
+      cwd: execCwd,
+      shell: true,
+      env,
+      detached: process.platform !== 'win32',
+    });
+    serverSeq += 1;
+    const id = `srv_${Date.now().toString(36)}_${serverSeq}`;
+    const requestedPort = Number(msg.port) || 0;
+    const s = {
+      id,
+      pid: child.pid || 0,
+      child,
+      name: String(msg.name || '').trim() || command.split(/\s+/).slice(0, 3).join(' '),
+      command,
+      cwd: execCwd,
+      status: 'running',
+      exitCode: null,
+      url: requestedPort ? `http://localhost:${requestedPort}` : '',
+      port: requestedPort,
+      startedAt: new Date().toISOString(),
+      logs: [],
+    };
+    const append = (text, channel) => {
+      const lines = String(text).split(/\r?\n/);
+      for (const ln of lines) {
+        if (ln === '') continue;
+        s.logs.push(channel === 'stderr' ? `[err] ${ln}` : ln);
+        if (!s.url) {
+          const u = detectServerUrl(ln);
+          if (u) {
+            s.url = u;
+            const pm = u.match(/:(\d{2,5})(?:\/|$)/);
+            if (pm) s.port = Number(pm[1]);
+          }
+        }
+      }
+      if (s.logs.length > SERVER_LOG_CAP) s.logs.splice(0, s.logs.length - SERVER_LOG_CAP);
+    };
+    if (child.stdout) child.stdout.on('data', (b) => append(b.toString(), 'stdout'));
+    if (child.stderr) child.stderr.on('data', (b) => append(b.toString(), 'stderr'));
+    child.on('error', (err) => {
+      if (s.status === 'running') s.status = 'exited';
+      if (s.exitCode === null) s.exitCode = 1;
+      append(`[ablit] spawn error: ${err instanceof Error ? err.message : String(err)}`, 'stderr');
+    });
+    child.on('close', (code) => {
+      if (s.status === 'running') s.status = 'exited';
+      s.exitCode = code == null ? (s.exitCode ?? 0) : code;
+    });
+    servers.set(id, s);
+    send(ws, { runId, status: 'ok', server: serverPublic(s) });
+  } catch (err) {
+    send(ws, { runId, status: 'error', error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+function handleListServers(ws, msg) {
+  send(ws, {
+    runId: msg.runId,
+    status: 'ok',
+    servers: [...servers.values()].map(serverPublic),
+  });
+}
+
+function handleServerLogs(ws, msg) {
+  const s = servers.get(String(msg.id || ''));
+  if (!s) {
+    send(ws, { runId: msg.runId, status: 'error', error: 'server not found: ' + String(msg.id || '') });
+    return;
+  }
+  const n = Math.max(1, Math.min(SERVER_LOG_CAP, Number(msg.lines) || 200));
+  send(ws, {
+    runId: msg.runId,
+    status: 'ok',
+    logs: s.logs.slice(-n).join('\n'),
+    server: serverPublic(s),
+  });
+}
+
+function handleStopServer(ws, msg) {
+  const id = String(msg.id || '');
+  const s = servers.get(id);
+  if (!s) {
+    send(ws, { runId: msg.runId, status: 'error', error: 'server not found: ' + id });
+    return;
+  }
+  if (s.status === 'running') {
+    killServerTree(s, 'SIGTERM');
+    s.status = 'stopped';
+    // Escalate to SIGKILL if the process ignores SIGTERM.
+    setTimeout(() => {
+      try {
+        if (s.child && s.child.exitCode === null && s.child.signalCode === null) {
+          killServerTree(s, 'SIGKILL');
+        }
+      } catch {
+        /* already dead */
+      }
+    }, 3000);
+  }
+  send(ws, { runId: msg.runId, status: 'ok', server: serverPublic(s) });
 }
 
 async function handleExec(ws, msg) {
@@ -1474,6 +1676,22 @@ wss.on('connection', (ws, req) => {
       void handleDelete(ws, msg);
       return;
     }
+    if (type === 'spawn_server') {
+      void handleSpawnServer(ws, msg);
+      return;
+    }
+    if (type === 'list_servers') {
+      handleListServers(ws, msg);
+      return;
+    }
+    if (type === 'server_logs') {
+      handleServerLogs(ws, msg);
+      return;
+    }
+    if (type === 'stop_server') {
+      handleStopServer(ws, msg);
+      return;
+    }
   });
 });
 
@@ -1485,6 +1703,14 @@ let shuttingDown = false;
 async function shutdownBridge() {
   if (shuttingDown) return;
   shuttingDown = true;
+  // Tear down every managed background server so no orphaned dev servers linger.
+  for (const s of servers.values()) {
+    try {
+      killServerTree(s, 'SIGKILL');
+    } catch {
+      /* already dead */
+    }
+  }
   try {
     await mcp.disconnectAll();
   } catch (err) {

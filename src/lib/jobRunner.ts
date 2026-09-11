@@ -4,6 +4,7 @@ import { formatSkillsCatalogPrompt, formatVerifyStrictSkillPrompt, shouldAutoInj
 import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from "./projectMemory";
 import { filterPinnedProjectMemory } from "./projectRules";
 import { formatSessionMemory, mempalaceOpts } from "./mempalace";
+import { schedulePostRunLearning, enhancedMempalaceWake, type RunOutcomeSignals } from "./learningSignals";
 import { bridge } from "./bridgeClient";
 import { applyGrokEdits, parseGrokEdits } from "./grokLayer";
 import { enqueuePendingEdits } from "./applyInbox";
@@ -289,7 +290,13 @@ async function runJob(initial: Job, settings: ClientSettings) {
     }
     if (settings.mempalaceEnabled !== false && settings.mempalaceAutoRecall !== false) {
       try {
-        mempalaceBlock = await bridge.mempalaceWake(mempalaceOpts(settings, workspaceRoot));
+        const baseWake = await bridge.mempalaceWake(mempalaceOpts(settings, workspaceRoot));
+        mempalaceBlock = await enhancedMempalaceWake({
+          settings,
+          workspaceRoot,
+          bridge,
+          baseWake,
+        });
       } catch {
         mempalaceBlock = "";
       }
@@ -816,22 +823,59 @@ async function runJob(initial: Job, settings: ClientSettings) {
       });
       if (settings.mempalaceEnabled !== false && settings.mempalaceAutoSave !== false && bridge.connected) {
         const lastAsst = [...history].reverse().find((m) => m.role === "assistant");
-        const payload = formatSessionMemory(job.prompt || "", lastAsst?.content || "", {
-          model: active.defaultModel,
-          thread: `job ${job.id}`,
-        });
-        if (payload.trim()) {
+
+        // --- Self-learning distillation when enabled ---
+        if (settings.mempalaceSelfLearning !== false) {
+          const signals: RunOutcomeSignals = {
+            threadId: job.id,
+            stopReason: hitCap ? 'cap' : 'no_tools',
+            ms: (job.endedAt || Date.now()) - (job.startedAt || Date.now()),
+            turns,
+            toolsUsed: [...new Set(toolsUsed)],
+            proof: { write: toolsUsed.some((t) => t === 'write_file' || t === 'apply_diff'), verify: false, explore: false, proven: false },
+            theaterRetries: 0,
+            deepenPasses: 0,
+            provenImprovement: false,
+            verifyEvidence: false,
+          };
           try {
-            await bridge.mempalaceSave(payload, {
-              ...mempalaceOpts(settings, workspaceRoot),
-              room: "abliterated-jobs",
+            await schedulePostRunLearning({
+              signals,
+              userGoal: job.prompt || "",
+              assistantSummary: (lastAsst?.content || "").slice(0, 3000),
+              errorContext: "",
+              model: active.defaultModel,
+              threadTitle: `job ${job.id}`,
+              settings,
+              workspaceRoot,
+              bridge,
             });
-            job = appendLog(job, "filed session into MemPalace");
+            job = appendLog(job, "filed self-learning session into MemPalace");
           } catch (e) {
             job = appendLog(
               job,
-              `MemPalace save skipped: ${e instanceof Error ? e.message : String(e)}`,
+              `MemPalace learning save skipped: ${e instanceof Error ? e.message : String(e)}`,
             );
+          }
+        } else {
+          // --- Fallback: legacy raw transcript dump ---
+          const payload = formatSessionMemory(job.prompt || "", lastAsst?.content || "", {
+            model: active.defaultModel,
+            thread: `job ${job.id}`,
+          });
+          if (payload.trim()) {
+            try {
+              await bridge.mempalaceSave(payload, {
+                ...mempalaceOpts(settings, workspaceRoot),
+                room: "abliterated-jobs",
+              });
+              job = appendLog(job, "filed session into MemPalace");
+            } catch (e) {
+              job = appendLog(
+                job,
+                `MemPalace save skipped: ${e instanceof Error ? e.message : String(e)}`,
+              );
+            }
           }
         }
       }

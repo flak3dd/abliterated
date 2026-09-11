@@ -1059,6 +1059,7 @@ export default function App() {
           isDirty={workspace.isDirty}
           autoAcceptEdits={settings.autoAcceptEdits}
           autoRunShell={settings.autoRunShell}
+          onToggleAutoRunShell={() => patchSettings({ autoRunShell: !settingsRef.current.autoRunShell })}
           agentLabel={agentLabel}
           providerLabel={resolveActiveSettings(settings).label}
           provider={settings.inferenceProvider ?? 'abliteration'}

@@ -42,6 +42,8 @@ import { isMidRunMessageContent, stripMidRunPrefix } from '../../lib/agentHelper
 import { NO_CONTENT_REASONING_NOTE, stripThinkingWrappers } from '../../lib/agentPhase';
 import { StepTimeline } from './StepTimeline';
 import { parseCompletionFooter } from '../../lib/completionFooter';
+import { PromptSuggestions } from './PromptSuggestions';
+import { getPromptSuggestions } from '../../lib/promptSuggestions';
 import {
   PLAN_CODE_OMITTED_NOTE,
   liftReasoningWork,
@@ -458,6 +460,7 @@ function renderMessageContent(
   terminalTone: TerminalTone = 'discuss',
   skipHighlight = false,
   onOpenFile?: (path: string) => void,
+  autoRunCode = false,
 ) {
   return splitMessageContent(content).map((block, i) => {
     if (block.kind === 'diff') {
@@ -466,7 +469,7 @@ function renderMessageContent(
     }
     if (block.kind === 'shell') {
       if (writesLocked) return <CodeBlock key={i} lang="bash" code={block.code} skipHighlight={skipHighlight} />;
-      return <TerminalPane key={i} command={block.code} tone={terminalTone} />;
+      return <TerminalPane key={i} command={block.code} tone={terminalTone} autoRun={autoRunCode} />;
     }
     if (block.kind === 'code') {
       const resolved = !writesLocked ? resolveCodeFenceWrite(block.lang, block.code) : null;
@@ -495,6 +498,7 @@ function renderMessageContent(
 export type MessageBubbleProps = {
   message: Message;
   autoAcceptEdits: boolean;
+  autoRunShell?: boolean;
   /** Plan mode: hide Apply / Run / Commit so writes stay locked. */
   writesLocked?: boolean;
   /** Skip syntax highlight while the message is streaming (cheaper re-renders). */
@@ -510,6 +514,8 @@ export type MessageBubbleProps = {
   completionFooterEnabled?: boolean;
   /** One-click send (or fill) a Continue prompt from the completion footer. */
   onContinuePrompt?: (text: string) => void;
+  /** Fill/insert a prompt suggestion into the composer input bar without sending. */
+  onFillPrompt?: (text: string) => void;
   terminalTone?: TerminalTone;
   onApprovePlan?: () => void;
   onDeclinePlan?: () => void;
@@ -520,6 +526,7 @@ export type MessageBubbleProps = {
 function MessageBubbleInner({
   message: m,
   autoAcceptEdits,
+  autoRunShell = false,
   writesLocked = false,
   skipHighlight = false,
   grokResults,
@@ -531,6 +538,7 @@ function MessageBubbleInner({
   onShellExecuted,
   completionFooterEnabled = true,
   onContinuePrompt,
+  onFillPrompt,
   terminalTone = 'discuss',
   onApprovePlan,
   onDeclinePlan,
@@ -583,6 +591,18 @@ function MessageBubbleInner({
     return parseCompletionFooter(displayContent);
   }, [m.role, m.status, completionFooterEnabled, displayContent]);
 
+  const promptSuggestions = useMemo(() => {
+    if (m.role !== 'assistant' || m.status === 'streaming') return null;
+    if (!displayContent.trim() && !m.content.trim()) return null;
+    return getPromptSuggestions(displayContent || m.content || '', {
+      role: m.role,
+      mode: m.mode,
+      files: m.files,
+      footerOptions: footer?.options,
+      diagnosticsCount: m.diagnostics?.length,
+    });
+  }, [m.role, m.status, displayContent, m.content, m.mode, m.files, footer?.options, m.diagnostics]);
+
   const changeSummary = useMemo(() => {
     if (m.role !== 'assistant') return null;
     if (m.changeSummary) return m.changeSummary;
@@ -613,8 +633,9 @@ function MessageBubbleInner({
       terminalTone,
       skipHighlight,
       onOpenFile,
+      autoRunShell && m.status === 'complete',
     );
-  }, [mainContent, m.reasoning, autoAcceptEdits, m.status, writesLocked, terminalTone, skipHighlight, onOpenFile]);
+  }, [mainContent, m.reasoning, autoAcceptEdits, m.status, writesLocked, terminalTone, skipHighlight, onOpenFile, autoRunShell]);
 
   const hasAnswer = !!displayContent.trim();
   const reasoningLive = m.status === 'streaming' && !hasAnswer;
@@ -801,6 +822,7 @@ function MessageBubbleInner({
                 command={toolArgString(m.toolCall.arguments, ['command', 'cmd', 'script']) || m.content}
                 onExecuted={onShellExecuted ? (result) => onShellExecuted(m, result) : undefined}
                 tone={terminalTone}
+                autoRun={autoRunShell}
               />
             ) : m.toolCall.name === 'generate_image' ? (
               maybeImageResult(m.toolCall.result || m.content)
@@ -961,31 +983,22 @@ function MessageBubbleInner({
               </div>
             ) : null}
 
-            {footer ? (
+            {footer && (!changeSummary || changeSummary.changes.length === 0) ? (
               <div className="mt-3 border-t border-zinc-800 pt-2.5">
-                {(!changeSummary || changeSummary.changes.length === 0) && (
-                  <div className="mb-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-zinc-300">
-                    <span className="text-[10px] uppercase tracking-wider font-semibold text-emerald-400">Done · </span>
-                    {footer.summary}
-                  </div>
-                )}
-                <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-muted font-medium">Suggested Next Steps</div>
-                <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap">
-                  {footer.options.map((opt, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      title={opt}
-                      disabled={!onContinuePrompt}
-                      onClick={() => onContinuePrompt?.(opt)}
-                      className="rounded-[2px] border border-border bg-surface px-2.5 py-1 text-left font-mono text-[10px] leading-4 text-zinc-300 hover:border-sky-500/50 hover:text-sky-200 hover:bg-sky-950/20 transition-all disabled:opacity-40"
-                    >
-                      <span className="mr-1 text-sky-400 font-semibold">[{i + 1}]</span>
-                      {opt}
-                    </button>
-                  ))}
+                <div className="mb-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-zinc-300">
+                  <span className="text-[10px] uppercase tracking-wider font-semibold text-emerald-400">Done · </span>
+                  {footer.summary}
                 </div>
               </div>
+            ) : null}
+
+            {promptSuggestions ? (
+              <PromptSuggestions
+                suggestions={promptSuggestions}
+                onSend={onContinuePrompt}
+                onFill={onFillPrompt}
+                disabled={!onContinuePrompt}
+              />
             ) : null}
           </>
         )}

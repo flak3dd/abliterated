@@ -10,9 +10,10 @@ interface Props {
   command: string;
   onExecuted?: (result: string) => void;
   tone?: TerminalTone;
+  autoRun?: boolean;
 }
 
-export function TerminalPane({ command, onExecuted, tone = 'discuss' }: Props) {
+export function TerminalPane({ command, onExecuted, tone = 'discuss', autoRun = false }: Props) {
   const [output, setOutput] = useState('');
   const [exitCode, setExitCode] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
@@ -23,11 +24,20 @@ export function TerminalPane({ command, onExecuted, tone = 'discuss' }: Props) {
   const isFauxTool = /^(list_dir|read_file|file_outline|git_status|git_diff)\b/.test(trimmed);
   const isSuspiciousCommit = isSpuriousReviewCommit(command);
 
+  const autoRanRef = useRef(false);
+
   useEffect(() => {
     if (outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
   }, [output]);
+
+  useEffect(() => {
+    if (autoRun && !autoRanRef.current && !running && exitCode === null && bridge.connected && !isSuspiciousCommit) {
+      autoRanRef.current = true;
+      void run();
+    }
+  }, [autoRun, running, exitCode, isSuspiciousCommit]);
 
   const copy = async () => {
     try {
@@ -113,6 +123,11 @@ export function TerminalPane({ command, onExecuted, tone = 'discuss' }: Props) {
         ) : isFauxTool ? (
           <span className="rounded bg-amber-950/80 px-1.5 py-0.5 text-[9px] font-medium text-amber-300 border border-amber-800/60">
             IDE Tool
+          </span>
+        ) : null}
+        {autoRun && !isSuspiciousCommit ? (
+          <span className="rounded bg-amber-950/80 px-1.5 py-0.5 text-[9px] font-medium text-amber-300 border border-amber-800/60">
+            Auto-run
           </span>
         ) : null}
         <div className="ml-auto flex items-center gap-1.5">

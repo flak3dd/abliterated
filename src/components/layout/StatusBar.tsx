@@ -11,6 +11,7 @@ interface Props {
   isDirty: boolean;
   autoAcceptEdits: boolean;
   autoRunShell: boolean;
+  onToggleAutoRunShell?: () => void;
   agentLabel: string;
   providerLabel: string;
   provider: InferenceProvider;
@@ -36,6 +37,7 @@ export function StatusBar({
   isDirty,
   autoAcceptEdits,
   autoRunShell,
+  onToggleAutoRunShell,
   agentLabel,
   providerLabel,
   provider,
@@ -89,10 +91,26 @@ export function StatusBar({
           {isDirty ? '*' : ''}
         </span>
       ) : null}
-      <span className="shrink-0">
-        auto-accept {autoAcceptEdits ? 'on' : 'off'}
-        <span className="mx-1 text-zinc-700">·</span>
-        auto-run {autoRunShell ? 'on' : 'off'}
+      <span className="shrink-0 flex items-center gap-1">
+        <span>auto-accept {autoAcceptEdits ? 'on' : 'off'}</span>
+        <span className="text-zinc-700">·</span>
+        {onToggleAutoRunShell ? (
+          <button
+            type="button"
+            onClick={onToggleAutoRunShell}
+            className={cn(
+              'rounded px-1 py-0.2 transition-colors',
+              autoRunShell
+                ? 'text-amber-400 font-semibold bg-amber-950/60 hover:bg-amber-900/70'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800',
+            )}
+            title="Toggle Auto-run Code & Shell (click to switch)"
+          >
+            auto-run {autoRunShell ? 'on' : 'off'}
+          </button>
+        ) : (
+          <span>auto-run {autoRunShell ? 'on' : 'off'}</span>
+        )}
       </span>
       {providerLabel ? (
         <div className="relative shrink-0" ref={menuRef}>

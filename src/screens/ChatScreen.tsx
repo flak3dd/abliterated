@@ -13,6 +13,7 @@ import {
   MoreHorizontal,
   Download,
   Check,
+  Terminal,
 } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { DEEPEN_COMPLETENESS_CHAT_LABEL, DEEPEN_COMPLETENESS_TOOLTIP } from '../lib/deepenComplete';
@@ -780,6 +781,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                   key={m.id}
                   message={m}
                   autoAcceptEdits={autoAcceptEdits}
+                  autoRunShell={autoRunShell}
                   writesLocked={currentMode === 'plan' || currentMode === 'ask'}
                   terminalTone={currentMode === 'plan' ? 'plan' : currentMode === 'ask' ? 'discuss' : 'build'}
                   grokResults={grokById[m.id]}
@@ -792,6 +794,7 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                   onShellExecuted={handleShellExecuted}
                   completionFooterEnabled={completionFooterEnabled}
                   onContinuePrompt={handleContinuePrompt}
+                  onFillPrompt={fillInput}
                   skipHighlight={m.status === 'streaming'}
                   onApprovePlan={handleApprovePlan}
                   onDeclinePlan={handleDeclinePlan}
@@ -907,6 +910,32 @@ export const ChatScreen = forwardRef<ChatScreenHandle, Props>(function ChatScree
                   className="h-3 w-3 accent-emerald-400"
                 />
                 {DEEPEN_COMPLETENESS_CHAT_LABEL}
+              </label>
+              <label
+                className={cn(
+                  'flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-[2px] border px-2 py-0.5 font-mono text-[10px] transition-colors',
+                  autoRunShell
+                    ? 'border-amber-500/70 bg-amber-950/40 text-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.15)]'
+                    : 'border-border bg-background text-muted hover:border-zinc-700',
+                )}
+                title="Automatically execute code fences and shell commands via localhost bridge without manual confirm gating"
+              >
+                <Terminal size={11} className={autoRunShell ? 'text-amber-400' : 'text-zinc-500'} />
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-checked={autoRunShell}
+                  aria-label="Auto-run Code"
+                  checked={autoRunShell}
+                  onChange={() => {
+                    onSettingsChange?.({
+                      ...settings,
+                      autoRunShell: !autoRunShell,
+                    });
+                  }}
+                  className="h-3 w-3 accent-amber-400"
+                />
+                <span>Auto-run Code</span>
               </label>
               <div className="flex items-center rounded-[3px] border border-border bg-zinc-900/80 p-0.5">
                 {ALL_AGENT_MODES.map((m) => {

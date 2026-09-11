@@ -14,6 +14,9 @@ type McpRow = {
 
 export const MEMPALACE_MCP_NAME = 'mempalace';
 
+/** Re-export self-learning room constants for convenience. */
+export { ROOM_LESSONS, ROOM_ANTI_PATTERNS, ROOM_CONVENTIONS, ROOM_SKILLS, ROOM_SESSIONS, LEARNING_ROOMS } from './learningSignals';
+
 export const MEMPALACE_CATALOG_ENTRY = {
   id: 'mempalace',
   name: MEMPALACE_MCP_NAME,

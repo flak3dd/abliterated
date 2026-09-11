@@ -131,6 +131,7 @@ import { formatAutoLoadedSkillsPrompt, formatProjectMemoryPrompt } from '../lib/
 import { filterPinnedProjectMemory } from '../lib/projectRules';
 import { enqueuePendingEdits } from '../lib/applyInbox';
 import { formatSessionMemory, mempalaceOpts } from '../lib/mempalace';
+import { schedulePostRunLearning, enhancedMempalaceWake, type RunOutcomeSignals } from '../lib/learningSignals';
 import { buildModelAgentProfile } from '../lib/modelAgentProfile';
 import { peekFeatherlessModel } from '../lib/featherlessLimits';
 import { TASK_GRAPH_PATH, formatTaskGraphPrompt, parseTaskGraph, shouldUseTaskGraph } from '../lib/taskGraph';
@@ -789,8 +790,17 @@ export function useAgentLoop({
       if (settings.mempalaceEnabled !== false && settings.mempalaceAutoRecall !== false) {
         try {
           const opts = mempalaceOpts(settings, workspaceRoot);
-          const wake = await bridge.mempalaceWake(opts);
-          if (!cancelled) setMempalaceBlock(wake);
+          const baseWake = await bridge.mempalaceWake(opts);
+          if (!cancelled) {
+            // Augment with learned lessons + anti-pattern warnings
+            const enhanced = await enhancedMempalaceWake({
+              settings,
+              workspaceRoot,
+              bridge,
+              baseWake,
+            });
+            setMempalaceBlock(enhanced);
+          }
         } catch {
           if (!cancelled) setMempalaceBlock('');
         }
@@ -841,6 +851,7 @@ export function useAgentLoop({
     settings.mempalaceAutoRecall,
     settings.mempalacePalacePath,
     settings.mempalaceWing,
+    settings.mempalaceSelfLearning,
     workspaceRoot,
     bridgeStatus,
   ]);
@@ -1305,6 +1316,42 @@ export function useAgentLoop({
     ) {
       return;
     }
+
+    // --- Self-learning distillation (replaces raw transcript dump when enabled) ---
+    if (s.mempalaceSelfLearning !== false && meta.proof) {
+      const signals: RunOutcomeSignals = {
+        threadId: thread.id,
+        stopReason,
+        ms: endedAt - meta.startedAt,
+        turns: meta.turns,
+        toolsUsed: meta.tools,
+        proof: meta.proof,
+        theaterRetries: meta.theaterRetries || 0,
+        deepenPasses: meta.deepenPasses || 0,
+        provenImprovement: meta.provenImprovement || false,
+        verifyEvidence: meta.verifyEvidence || false,
+      };
+      // Get last few tool error messages for anti-pattern context
+      const toolErrors = rows
+        .filter((m) => m.role === 'tool' && m.toolCall?.status === 'error')
+        .map((m) => m.content || '')
+        .slice(-3)
+        .join('\n');
+      void schedulePostRunLearning({
+        signals,
+        userGoal: userText,
+        assistantSummary: (lastAsst?.content || '').slice(0, 3000),
+        errorContext: toolErrors,
+        model: thread.model || s.defaultModel,
+        threadTitle: thread.title || thread.id,
+        settings: s,
+        workspaceRoot,
+        bridge,
+      }).catch(() => { /* palace optional */ });
+      return; // self-learning handles session save via ROOM_SESSIONS
+    }
+
+    // --- Fallback: legacy raw transcript dump ---
     const payload = formatSessionMemory(userText, lastAsst?.content || '', {
       model: thread.model || s.defaultModel,
       thread: thread.title || thread.id,

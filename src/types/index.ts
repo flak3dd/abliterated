@@ -484,6 +484,12 @@ export interface ClientSettings {
   mempalaceAutoRecall: boolean;
   /** File the last user/assistant turn into the palace after each run. Default true when enabled. */
   mempalaceAutoSave: boolean;
+  /** Autonomous self-learning: distill lessons, anti-patterns, and skills from verified run outcomes. Default true. */
+  mempalaceSelfLearning: boolean;
+  /** Automatically mine negative execution patterns / traps when runs fail or require retries. Default true. */
+  mempalaceAntiPatternMining: boolean;
+  /** Apply salience decay to prioritize recent and reinforced memories. Default true. */
+  mempalaceSalienceDecay: boolean;
   /** Verify-strict quality loop (Build + skills auto-inject). Default true. */
   verifyStrictProfile: boolean;
   /** Unified agent mode: agent (full), ask (read-only), plan (research→approve), debug (systematic debug). Default 'agent'. */
