@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Bot,
   Check,
+  Brain,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -48,6 +49,7 @@ import {
 } from '../lib/zipDownload';
 import { looksWebInteractionDirective, looksBuildIntent } from '../lib/agentHelpers';
 import { runWebSearch } from '../lib/webSearch';
+import { classifyCliTurn, CLI_INTENT_META, type CliIntent } from '../lib/cliIntent';
 
 interface CliScreenProps {
   settings?: ClientSettings;
@@ -69,6 +71,8 @@ interface ChatMessage {
   truncated?: boolean;
   timestamp: string;
   command?: boolean;
+  // Classified intent for this turn (drives the intent chip). AI-mode user turns only.
+  intent?: CliIntent;
   // Shell execution metadata
   isShell?: boolean;
   shellCommand?: string;
@@ -1212,7 +1216,17 @@ Rules:
     const assistantMsgId = Math.random().toString(36).slice(2);
     const time = formatTime();
 
-    // Show the user's prompt immediately so any build-scope scaffold logs land after it.
+    // Classify the turn ONCE (the single, visible interpretation — see
+    // docs/CLI-ENHANCED-FLOW.md). agentHelpers supplies the authoritative
+    // build/web signals; the classifier folds in debug/edit/run/chat precedence.
+    const turnClass = classifyCliTurn(promptText, {
+      isBuild: looksBuildIntent(promptText),
+      isWeb: looksWebInteractionDirective(promptText),
+      hasWorkspace: Boolean(activeRoot || bridge.validWorkspaceRoot),
+    });
+
+    // Show the user's prompt immediately (tagged with its intent for the chip)
+    // so any build-scope scaffold logs land after it.
     setMessages((prev) => [
       ...prev,
       {
@@ -1220,21 +1234,17 @@ Rules:
         role: 'user',
         content: promptText,
         timestamp: time,
+        intent: turnClass.intent,
       },
     ]);
 
     // BUILD SCOPE · PHASE 1: scaffold the file structure before building out.
-    // Fires only for genuine build asks (not debug/fix questions) when a
+    // Gated on the classifier's build intent (build && !debug && !web) when a
     // workspace root is set and auto-scaffold is enabled.
-    const looksDebug =
-      /\b(error|fail(?:s|ed|ing)?|bug|crash|exception|traceback|stack\s*trace|debug|why\b|not\s+working|doesn'?t\s+work|broken)\b/i.test(
-        promptText,
-      );
     let didScaffold = false;
     if (
       autoScaffoldOnBuild &&
-      !looksDebug &&
-      looksBuildIntent(promptText) &&
+      turnClass.intent === 'build' &&
       bridge.connected &&
       (activeRoot || bridge.validWorkspaceRoot)
     ) {
@@ -1260,9 +1270,9 @@ Rules:
     setIsStreaming(true);
     abortCtrlRef.current = new AbortController();
 
-    // Proactive live web search when prompt directs a web interaction
+    // Proactive live web search when the turn is a web-interaction directive.
     let augmentedPrompt = promptText;
-    if (looksWebInteractionDirective(promptText)) {
+    if (turnClass.signals.isWeb) {
       showToast('[ WEB SEARCH: LIVE QUERY ]');
       addSystemMsg(`[Web Intelligence]: Querying live web for "${promptText}"...`);
       try {
@@ -1282,7 +1292,7 @@ Rules:
     }
 
     // Opt-in change summary — only on build/scaffold turns, not on every reply.
-    if (didScaffold || looksBuildIntent(promptText)) {
+    if (didScaffold || turnClass.intent === 'build') {
       augmentedPrompt = `${augmentedPrompt}\n\nEnd with a short "### Summary" (2-4 bullets): what you created or changed, the key files or commands, and how to verify.`;
     }
 
@@ -1290,6 +1300,8 @@ Rules:
     // extras (web results, build-out, summary) are appended to the user turn only when
     // they actually apply, so a normal reply carries no stacked/contradictory directives.
     const systemPrompt = `You are the Abliterated AI CLI assistant, an expert software engineer and systems architect operating in an uncensored local terminal environment. Answer directly, factually, and thoroughly, without moralizing or refusing. Provide complete, working code with no placeholders or stubs.
+
+Think briefly before answering: a minimal thought process — 1 to 3 short lines outlining your approach — then give the answer. Keep the thinking terse; do not restate the question or narrate at length.
 
 Do not hallucinate: never invent APIs, flags, parameters, library exports, or file paths. Reference only real, verified functions/packages or context already established here; if something is unverified, say so plainly instead of guessing.`;
 
@@ -2506,6 +2518,15 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
                 >
                   {msg.isShell ? (msg.shellCommand || msg.content) : msg.content}
                 </span>
+                {!msg.isShell && msg.intent && (
+                  <span
+                    className="text-[9px] font-bold uppercase tracking-wider shrink-0 select-none font-mono px-1.5 py-0.5 rounded border"
+                    style={{ borderColor: curPal.line, color: curPal.dim, backgroundColor: curPal.panel2 }}
+                    title={`Interpreted as a "${CLI_INTENT_META[msg.intent].label}" turn`}
+                  >
+                    {CLI_INTENT_META[msg.intent].glyph} {CLI_INTENT_META[msg.intent].label}
+                  </span>
+                )}
                 <span className="text-[10px] opacity-35 shrink-0 select-none font-mono">
                   {msg.timestamp}
                 </span>
@@ -2661,12 +2682,20 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
           const hasContentText = Boolean(cleanContent.trim());
           const hasReasoningText = Boolean(cleanReasoning.trim());
 
+          // Show the "thinking" box whenever reasoning exists: live while streaming
+          // (so the minimal thought process is visible during the response), and
+          // afterwards only when it is distinct from the final answer.
           const showSeparateThoughtBox =
-            hasContentText &&
             hasReasoningText &&
-            cleanReasoning !== cleanContent.trim();
+            (Boolean(msg.isStreaming) || (hasContentText && cleanReasoning !== cleanContent.trim()));
 
-          const mainAnswer = hasContentText ? cleanContent : cleanReasoning;
+          // Keep reasoning in the thinking box, not the answer body, while streaming.
+          // On a finished turn with no content, fall back to showing the reasoning.
+          const mainAnswer = hasContentText
+            ? cleanContent
+            : msg.isStreaming
+              ? ''
+              : cleanReasoning;
           const isExpanded = reasoningExpanded[msg.id] ?? thoughtsVisible;
           const parsedBlocks = parseContentBlocks(mainAnswer || '');
           const messageFiles = extractFilesFromMarkdown(mainAnswer || '');
@@ -2761,9 +2790,9 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
                     className="w-full flex items-center justify-between px-2.5 py-1.5 text-left font-bold opacity-80 hover:opacity-100 transition-opacity"
                     style={{ color: curPal.dim }}
                   >
-                    <span className="flex items-center gap-1.5">
-                      <Sparkles size={11} style={{ color: curPal.neon }} />
-                      THOUGHT TRACE ({cleanReasoning.length} chars)
+                    <span className="flex items-center gap-1.5 lowercase">
+                      <Brain size={11} style={{ color: curPal.neon }} />
+                      {msg.isStreaming && !hasContentText ? 'thinking…' : 'thinking'}
                     </span>
                     {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                   </button>
@@ -2961,7 +2990,20 @@ Please diagnose why this failed and provide the exact fix or corrected command.`
                 {/* 3 Prompt Suggestions after each completed AI response */}
                 {!msg.isStreaming && mainAnswer.trim() ? (
                   (() => {
-                    const suggestions = getPromptSuggestions(mainAnswer);
+                    // Context so suggestions relate to THIS response: the turn's
+                    // intent, the question it answered, and any files it produced.
+                    const myIdx = messages.findIndex((m) => m.id === msg.id);
+                    const priorUser =
+                      myIdx > 0
+                        ? [...messages.slice(0, myIdx)]
+                            .reverse()
+                            .find((m) => m.role === 'user' && !m.isShell)
+                        : undefined;
+                    const suggestions = getPromptSuggestions(mainAnswer, {
+                      mode: priorUser?.intent,
+                      userPrompt: priorUser?.content || '',
+                      files: messageFiles.map((f) => ({ path: f.name })),
+                    });
                     return (
                       <div
                         className="mt-2.5 pt-2 border-t flex flex-col gap-1.5"

@@ -12,6 +12,60 @@ export interface SuggestionContext {
   hasErrors?: boolean;
   footerOptions?: string[];
   diagnosticsCount?: number;
+  /** The user prompt this response answered — used to derive the topic so
+   * suggestions reference the same subject instead of generic "this". */
+  userPrompt?: string;
+}
+
+/**
+ * Best-effort subject of a response, so follow-up suggestions name the actual
+ * topic (e.g. "promises", "AuthService") rather than a generic "this". Prefers
+ * concrete artifacts in the response, then falls back to the user's question.
+ */
+export function deriveSubject(content: string, userPrompt?: string): string | null {
+  const text = content || '';
+  // 1. First markdown heading, stripped of question framing.
+  const h = text.match(/^#{1,4}\s+(.+?)\s*$/m);
+  if (h) {
+    const s = h[1]
+      .replace(/[?:.]+$/, '')
+      .replace(
+        /^(what(?:'s| is| are)|how (?:do|does|to)|why (?:do|does|is)|understanding|introduction to|overview of)\s+/i,
+        '',
+      )
+      .replace(/^(a|an|the)\s+/i, '')
+      .trim();
+    if (s && s.length >= 2 && s.length <= 40) return s;
+  }
+  // 2. First inline-code token (an API / symbol the answer centers on).
+  const code = text.match(/`([A-Za-z_$][\w$.]{1,40})`/);
+  if (code) return code[1];
+  // 3. A declared identifier INSIDE a fenced code block only (never prose like
+  //    "a function bundled together", which would wrongly yield "bundled").
+  const fenced = (text.match(/```[\s\S]*?```/g) || []).join('\n');
+  if (fenced) {
+    const id = fenced.match(/\b(?:function|class|def|interface|type|const|struct|enum)\s+([A-Za-z_$][\w$]{1,40})/);
+    if (id) return id[1];
+  }
+  // 4. Subject lifted from the user's question.
+  if (userPrompt) {
+    let s = userPrompt
+      .trim()
+      .replace(/^(please\s+|can you\s+|could you\s+|pls\s+)/i, '')
+      .replace(
+        /^(explain|describe|what(?:'s| is| are)|how (?:do|does|to)|why (?:do|does|is)|tell me about|show me|give me|help me with|write|implement|create|build|make)\s+/i,
+        '',
+      )
+      .replace(/^(a|an|the)\s+/i, '')
+      .replace(/\b(work|works|working|please|for me)\b/gi, '')
+      .replace(/\bin\s+[A-Za-z0-9.+#]+\s*$/i, '')
+      .replace(/[?.!]+$/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    s = s.split(/\s+/).filter(Boolean).slice(0, 5).join(' ');
+    if (s && s.length >= 3 && s.length <= 40) return s;
+  }
+  return null;
 }
 
 /** Sanitize a suggestion string by stripping prefixes, quotes, and trailing punctuation. */
@@ -191,11 +245,18 @@ export function getPromptSuggestions(
     add('Propose a concrete implementation plan based on these findings');
   }
 
-  // Heuristic G: Ask Mode / Conceptual explanation
-  if (context.mode === 'ask' || suggestions.length < 3) {
-    add('Can you provide a minimal working code example for this?');
-    add('How does this approach compare to alternative solutions?');
-    add('What are the common pitfalls and best practices to keep in mind?');
+  // Heuristic G: Ask / chat / conceptual explanation — reference the actual subject.
+  if (context.mode === 'ask' || context.mode === 'chat' || context.mode === 'web' || suggestions.length < 3) {
+    const subject = deriveSubject(raw, context.userPrompt);
+    if (subject) {
+      add(`Show a minimal, working code example of ${subject}`);
+      add(`What are the common pitfalls and best practices with ${subject}?`);
+      add(`How does ${subject} compare to alternative approaches?`);
+    } else {
+      add('Can you provide a minimal working code example for this?');
+      add('How does this approach compare to alternative solutions?');
+      add('What are the common pitfalls and best practices to keep in mind?');
+    }
   }
 
   // Fallback defaults to ensure exactly 3 distinct items
